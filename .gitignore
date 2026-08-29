@@ -1,0 +1,10 @@
+__pycache__/
+*.py[cod]
+.env
+.env.*
+output/
+*.sqlite3
+*.sqlite3-*
+*.zst
+*.incoming*
+verification.local.json
