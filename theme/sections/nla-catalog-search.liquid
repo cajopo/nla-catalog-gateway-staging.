@@ -1,0 +1,98 @@
+{{ 'nla-catalog.css' | asset_url | stylesheet_tag }}
+<script src="{{ 'nla-catalog.js' | asset_url }}" defer="defer"></script>
+
+<section
+  class="nla-catalog page-width"
+  data-nla-catalog
+  data-api-base="{{ section.settings.api_base | escape }}"
+  data-default-game="{{ section.settings.default_game | escape }}"
+  data-page-size="{{ section.settings.page_size }}"
+  aria-labelledby="NlaCatalogTitle-{{ section.id }}"
+>
+  <header class="nla-catalog__header">
+    <h1 id="NlaCatalogTitle-{{ section.id }}">{{ section.settings.heading | escape }}</h1>
+    {% if section.settings.intro != blank %}<div class="rte">{{ section.settings.intro }}</div>{% endif %}
+  </header>
+
+  <form class="nla-catalog__search" data-nla-search-form role="search" novalidate>
+    <div class="nla-catalog__game-field">{% render 'nla-game-selector', section: section %}</div>
+    <div class="nla-catalog__query-field">
+      <label class="nla-catalog__label" for="NlaQuery-{{ section.id }}">Nome della carta</label>
+      <input
+        id="NlaQuery-{{ section.id }}"
+        class="nla-catalog__input"
+        data-nla-query
+        name="q"
+        type="search"
+        autocomplete="off"
+        maxlength="120"
+        placeholder="Es. Lightning Bolt"
+        aria-autocomplete="list"
+        aria-controls="NlaSuggestions-{{ section.id }}"
+      >
+      <ul id="NlaSuggestions-{{ section.id }}" class="nla-catalog__suggestions" data-nla-suggestions role="listbox" hidden></ul>
+    </div>
+    <button class="button nla-catalog__submit" type="submit">Cerca</button>
+  </form>
+
+  <div class="nla-catalog__body">
+    <aside class="nla-catalog__filters" data-nla-filters aria-label="Filtri catalogo">
+      <div class="nla-catalog__filter">
+        <label for="NlaSet-{{ section.id }}">Espansione</label>
+        <select id="NlaSet-{{ section.id }}" data-nla-set><option value="">Tutte le espansioni</option></select>
+      </div>
+      <div class="nla-catalog__filter">
+        <label for="NlaLanguage-{{ section.id }}">Lingua</label>
+        <select id="NlaLanguage-{{ section.id }}" data-nla-language><option value="">Tutte le lingue</option></select>
+      </div>
+      <div class="nla-catalog__filter">
+        <label for="NlaRarity-{{ section.id }}">Rarità</label>
+        <select id="NlaRarity-{{ section.id }}" data-nla-rarity><option value="">Tutte le rarità</option></select>
+      </div>
+      <div class="nla-catalog__filter">
+        <label for="NlaAvailability-{{ section.id }}">Disponibilità</label>
+        <select id="NlaAvailability-{{ section.id }}" data-nla-availability>
+          <option value="">Tutte</option>
+          <option value="available">Disponibili</option>
+          <option value="sold-out">Esaurite</option>
+        </select>
+      </div>
+      <button type="button" class="button button--secondary" data-nla-clear>Rimuovi filtri</button>
+    </aside>
+
+    <div class="nla-catalog__results">
+      <p class="nla-catalog__status" data-nla-status role="status" aria-live="polite"></p>
+      <div class="nla-catalog__grid" data-nla-grid aria-busy="false"></div>
+      <div class="nla-catalog__load-more-wrap"><button type="button" class="button" data-nla-load-more hidden>Carica altri</button></div>
+    </div>
+  </div>
+
+  <noscript><p>Per consultare il catalogo completo è necessario attivare JavaScript.</p></noscript>
+</section>
+
+{% schema %}
+{
+  "name": "Catalogo NLA completo",
+  "tag": "section",
+  "class": "section",
+  "settings": [
+    { "type": "text", "id": "heading", "label": "Titolo", "default": "Catalogo carte singole" },
+    { "type": "richtext", "id": "intro", "label": "Introduzione", "default": "<p>Cerca una carta e consulta tutte le stampe, comprese quelle momentaneamente esaurite.</p>" },
+    {
+      "type": "select",
+      "id": "default_game",
+      "label": "Gioco predefinito",
+      "default": "magic",
+      "options": [
+        { "value": "magic", "label": "Magic: The Gathering" },
+        { "value": "pokemon", "label": "Pokémon" },
+        { "value": "yugioh", "label": "Yu-Gi-Oh!" },
+        { "value": "one-piece", "label": "One Piece" }
+      ]
+    },
+    { "type": "text", "id": "api_base", "label": "API base URL", "default": "/apps/nla-catalog", "info": "In produzione lasciare /apps/nla-catalog. Nel solo clone di staging può essere usato un endpoint HTTPS diretto." },
+    { "type": "range", "id": "page_size", "label": "Risultati per caricamento", "min": 12, "max": 60, "step": 12, "default": 24 }
+  ],
+  "presets": [{ "name": "Catalogo NLA completo" }]
+}
+{% endschema %}
