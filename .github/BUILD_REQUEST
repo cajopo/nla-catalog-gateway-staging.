@@ -1,3 +1,0 @@
-NLA catalog gateway bootstrap requested on 2026-08-30.
-Security baseline retry: FastAPI 0.141.1 / Starlette 1.6.0.
-The workflow must stop before build if the protected Shopify Bulk URL is unavailable.

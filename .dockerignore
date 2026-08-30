@@ -1,0 +1,15 @@
+.git
+.github
+.venv
+.pytest_cache
+.ruff_cache
+.coverage
+htmlcov
+build
+dist
+data
+bootstrap
+*.sqlite*
+*.jsonl*
+*.zip
+*.tar.gz

@@ -1,10 +1,33 @@
+# Python
 __pycache__/
 *.py[cod]
+.venv/
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+build/
+dist/
+*.egg-info/
+
+# Local configuration and secrets
 .env
 .env.*
-output/
+!.env.example
+
+# Runtime/catalog data: never commit Shopify snapshots or generated indexes
+data/
+*.sqlite
 *.sqlite3
-*.sqlite3-*
-*.zst
-*.incoming*
-verification.local.json
+*.db
+*.jsonl
+*.jsonl.gz
+*.tar.gz
+*.zip
+bootstrap/
+
+# Editors and operating systems
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
