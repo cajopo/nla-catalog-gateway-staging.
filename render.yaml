@@ -1,0 +1,37 @@
+services:
+  - type: web
+    name: nla-catalog-gateway-staging
+    runtime: docker
+    region: frankfurt
+    plan: starter
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /readyz
+    autoDeploy: false
+    numInstances: 1
+    disk:
+      name: nla-catalog-data
+      mountPath: /var/data
+      sizeGB: 2
+    envVars:
+      - key: ENVIRONMENT
+        value: staging
+      - key: DATABASE_PATH
+        value: /var/data/catalog.sqlite3
+      - key: SNAPSHOT_PATH
+        value: /var/data/shopify-snapshot.jsonl
+      - key: EXPECTED_PRODUCT_COUNT
+        value: "291791"
+      - key: AUTO_BOOTSTRAP
+        value: "true"
+      - key: PUBLIC_BASE_URL
+        value: https://nextlevelarena.it
+      - key: ALLOWED_ORIGINS
+        value: https://nextlevelarena.it,https://www.nextlevelarena.it
+      - key: REQUIRE_APP_PROXY
+        value: "false"
+      - key: CURSOR_SECRET
+        generateValue: true
+      - key: SHOPIFY_SHOP
+        sync: false
+      - key: SHOPIFY_ADMIN_TOKEN
+        sync: false
