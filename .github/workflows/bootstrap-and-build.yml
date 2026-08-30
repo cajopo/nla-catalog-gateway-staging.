@@ -1,0 +1,87 @@
+name: Bootstrap source and build verified catalog
+
+on:
+  workflow_dispatch:
+    inputs:
+      bulk_url:
+        description: Temporary Shopify Bulk JSONL download URL
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: nla-catalog-bootstrap
+  cancel-in-progress: false
+
+env:
+  EXPECTED_SNAPSHOT_BYTES: "360853830"
+  EXPECTED_PRODUCTS: "291791"
+  SOURCE_BUNDLE_SHA256: "8bd0ef386f4187f8b7c7440af1b082a8256c0be5f5172fd3aa1bea60ae4d2541"
+
+jobs:
+  bootstrap:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.13"
+
+      - name: Verify and extract reviewed source bundle
+        run: |
+          cat bootstrap/source.tar.gz.b64.part-* | base64 --decode > /tmp/nla-source.tar.gz
+          echo "$SOURCE_BUNDLE_SHA256  /tmp/nla-source.tar.gz" | sha256sum --check --strict
+          python - <<'PY'
+          import tarfile
+          from pathlib import Path
+
+          archive = Path("/tmp/nla-source.tar.gz")
+          with tarfile.open(archive, "r:gz") as source:
+              for member in source.getmembers():
+                  path = Path(member.name)
+                  if path.is_absolute() or ".." in path.parts:
+                      raise SystemExit(f"unsafe archive path: {member.name}")
+                  if member.issym() or member.islnk():
+                      raise SystemExit(f"links are not allowed in source bundle: {member.name}")
+              source.extractall(".", filter="data")
+          PY
+          chmod 0755 scripts/entrypoint.sh scripts/ci_build_verified_catalog.sh
+
+      - name: Install runtime, tests and dependency auditor
+        run: |
+          python -m pip install --disable-pip-version-check -r requirements.txt
+          python -m pip install --disable-pip-version-check pip-audit==2.10.1
+          python -m pip check
+          pip-audit -r requirements.txt --progress-spinner=off
+
+      - name: Build, verify and smoke-test catalog runtime
+        env:
+          BULK_URL: ${{ inputs.bulk_url }}
+        run: bash scripts/ci_build_verified_catalog.sh
+
+      - name: Replace bootstrap with reviewed source and verified runtime
+        env:
+          GH_PUSH_TOKEN: ${{ github.token }}
+        run: |
+          rm -rf bootstrap .github/workflows/bootstrap-and-build.yml
+          git config user.name "nla-catalog-builder[bot]"
+          git config user.email "nla-catalog-builder[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "Bootstrap NLA catalog gateway and verified runtime"
+          auth="$(printf 'x-access-token:%s' "$GH_PUSH_TOKEN" | base64 -w0)"
+          git -c http.https://github.com/.extraheader="AUTHORIZATION: basic $auth" push origin HEAD:main
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: nla-catalog-bootstrap-report
+          path: |
+            data/catalog-manifest.json
+            /tmp/snapshot.sha256
+          retention-days: 14
