@@ -30,19 +30,22 @@ Unknown product types, unknown source record types, conflicting games, conflicti
 - `sealed` and `accessory` require a commercial title; sealed subtype detection cannot turn an unknown product into sealed.
 - The taxonomy contains no stock transformation. Commercial sealed/accessory inventory and prices remain Shopify values.
 - Unknown records remain countable and reportable; they are not silently discarded.
+- Tags inherited from PowerTools, such as `Near Mint` and `Normal`, do not create single-card facets on a sealed record.
 
 ## Live sealed evidence
 
-The four ACTIVE live products with exact `productType = Magic Display` are frozen as fixtures. The mapping classifies all four as `magic/sealed` without referencing their GIDs:
+A schema-validated Admin query was executed read-only on 31 August 2026. The four ACTIVE products with exact `productType = Magic Display` are frozen as fixtures. The mapping classifies all four as `magic/sealed` without referencing their GIDs:
 
-| Product | Expected subtype |
-|---|---|
-| Edge of Eternities Collector Booster Box | `collector-booster-box` |
-| Ikoria: Lair of Behemoths Booster Box | `booster-box` |
-| Magic: The Gathering Foundations Collector Booster Box | `collector-booster-box` |
-| Outlaws of Thunder Junction Collector Booster Box | `collector-booster-box` |
+| Product | Language | Inventory | Price | Expected subtype |
+|---|---|---:|---:|---|
+| Edge of Eternities Collector Booster Box | English | 2 | EUR 399.99 | `collector-booster-box` |
+| Ikoria: Lair of Behemoths Booster Box | Russian | 2 | EUR 249.99 | `booster-box` |
+| Magic: The Gathering Foundations Collector Booster Box | English | 2 | EUR 600.00 | `collector-booster-box` |
+| Outlaws of Thunder Junction Collector Booster Box | English | 1 | EUR 300.00 | `collector-booster-box` |
 
-A fifth product with the same structured type would follow the same rule automatically. A new product type remains `unclassified` until the versioned mapping is extended and reviewed.
+All four have matching `sync.productid` and `powertools.id`, tracked inventory, `DENY` policy and an Online Store publication. A fifth product with the same structured type would follow the same rule automatically. A new product type remains `unclassified` until the versioned mapping is extended and reviewed.
+
+The Ikoria fixture is deliberately Russian. This prevents a future adapter from hard-coding English or deriving language from the product family.
 
 ## Legacy prototype finding
 
