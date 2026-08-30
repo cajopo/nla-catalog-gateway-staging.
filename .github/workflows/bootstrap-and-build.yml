@@ -55,6 +55,15 @@ jobs:
           PY2
           chmod 0755 scripts/entrypoint.sh scripts/ci_build_verified_catalog.sh
 
+      - name: Apply security dependency baseline
+        run: |
+          cat > requirements.txt <<'REQ'
+          fastapi==0.141.1
+          starlette==1.6.0
+          uvicorn[standard]==0.48.0
+          httpx==0.28.1
+          REQ
+
       - name: Install runtime, tests and dependency auditor
         run: |
           python -m pip install --disable-pip-version-check -r requirements.txt
