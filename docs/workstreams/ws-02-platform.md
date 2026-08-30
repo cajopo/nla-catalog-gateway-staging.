@@ -24,7 +24,7 @@ Every component of the archived monolithic prototype is accounted for below. `Ke
 | `.env.example` | Rewritten later | Environment contract belongs with the runtime/security workstreams; no secret-shaped placeholders are needed in the foundation. |
 | `.github/dependabot.yml` | Rewritten now | Kept as a small, canonical dependency update policy. |
 | `.github/workflows/ci.yml` | Rewritten now | Tests, formatting, preflight, build and container smoke actually execute. |
-| `.github/workflows/codeql.yml` | Rewritten now | Separate static-analysis workflow with current major action. |
+| `.github/workflows/codeql.yml` | Rewritten now | CodeQL runs queries, gates on zero SARIF findings and stores the report as an artifact. Repository Code Scanning upload is unavailable on the current private user-owned repository. |
 | `.ruff.toml` | Rewritten now | Configuration is consolidated into `pyproject.toml`. |
 | `Dockerfile` | Rewritten now | Minimal non-root foundation image; runtime server arrives separately. |
 | `README.md` | Rewritten now | Removes hard-coded catalog claims and documents only approved boundaries. |
@@ -56,6 +56,10 @@ Every component of the archived monolithic prototype is accounted for below. `Ke
 | `theme/snippets/nla-game-selector.liquid` | Deferred | WS-10 THEME. |
 | `theme/templates/page.nla-catalog.json` | Deferred | WS-10 THEME. |
 
+## CodeQL operating mode
+
+The current repository is private and user-owned; GitHub accepted the CodeQL extraction and query execution but rejected SARIF upload because Code Scanning is not enabled. The workflow therefore uses the action's documented `upload: never` mode, parses the generated SARIF, fails on any finding and uploads that SARIF as a normal short-lived Actions artifact for independent review. Enabling GitHub Code Scanning later changes only the presentation/upload path, not the security gate.
+
 ## Acceptance evidence
 
 Required on the pull request:
@@ -64,6 +68,6 @@ Required on the pull request:
 2. no workflow has `contents: write` or performs `git push`;
 3. Python 3.12 and 3.13 jobs execute lint, format, tests, preflight and package build;
 4. dependency audit succeeds;
-5. CodeQL completes;
-6. container build and smoke succeed;
+5. CodeQL query execution succeeds, SARIF contains zero security findings and the artifact is retained;
+6. container build and smoke succeeds;
 7. independent review before merge.

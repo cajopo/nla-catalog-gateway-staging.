@@ -10,8 +10,6 @@ on:
 permissions:
   actions: read
   contents: read
-  packages: read
-  security-events: write
 
 jobs:
   analyze:
@@ -19,7 +17,37 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-      - uses: github/codeql-action/init@v4
+      - uses: github/codeql-action/init@cdf488f595d80d6e07e03d4674febd5ab45fa938 # v4.37.9
         with:
+          build-mode: none
           languages: python
-      - uses: github/codeql-action/analyze@v4
+      - uses: github/codeql-action/analyze@cdf488f595d80d6e07e03d4674febd5ab45fa938 # v4.37.9
+        with:
+          output: ../codeql-results
+          upload: never
+      - name: Enforce zero CodeQL security findings
+        run: |
+          python - <<'PY'
+          import glob
+          import json
+          import sys
+
+          paths = sorted(glob.glob("../codeql-results/*.sarif"))
+          if not paths:
+              raise SystemExit("CodeQL produced no SARIF file")
+          findings = []
+          for path in paths:
+              with open(path, encoding="utf-8") as handle:
+                  document = json.load(handle)
+              for run in document.get("runs", []):
+                  findings.extend(run.get("results", []))
+          print(f"CodeQL SARIF files: {len(paths)}; security findings: {len(findings)}")
+          sys.exit(1 if findings else 0)
+          PY
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0 # v7.0.1
+        if: always()
+        with:
+          name: codeql-sarif
+          path: ../codeql-results/*.sarif
+          if-no-files-found: error
+          retention-days: 14
