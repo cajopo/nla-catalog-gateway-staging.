@@ -1,0 +1,11 @@
+{
+  "mode": "create-only",
+  "targetRole": "UNPUBLISHED",
+  "files": [
+    "assets/nla-catalog.css",
+    "assets/nla-catalog.js",
+    "sections/nla-catalog-search.liquid",
+    "snippets/nla-game-selector.liquid",
+    "templates/page.nla-catalog.json"
+  ]
+}
