@@ -1,0 +1,14 @@
+{
+  "sections": {
+    "main": {
+      "type": "nla-catalog-search",
+      "settings": {
+        "heading": "Catalogo carte singole",
+        "default_game": "magic",
+        "api_base": "/apps/nla-catalog",
+        "page_size": 24
+      }
+    }
+  },
+  "order": ["main"]
+}
