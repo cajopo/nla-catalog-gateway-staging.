@@ -40,6 +40,8 @@ def files_to_scan() -> list[Path]:
         if not path.is_file():
             continue
         relative = path.relative_to(ROOT)
+        if path.name == ".coverage" or path.name.startswith(".coverage."):
+            continue
         if any(part in IGNORED_DIRS for part in relative.parts):
             continue
         files.append(path)
