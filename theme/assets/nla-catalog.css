@@ -1,0 +1,91 @@
+.nla-catalog {
+  --nla-border: rgba(var(--color-foreground), 0.18);
+  --nla-surface: rgb(var(--color-background));
+  --nla-muted: rgba(var(--color-foreground), 0.68);
+  padding-block: 3rem 5rem;
+}
+.nla-catalog__header { margin-bottom: 2rem; }
+.nla-catalog__header h1 { margin-bottom: .75rem; }
+.nla-catalog__search {
+  display: grid;
+  grid-template-columns: minmax(13rem, .7fr) minmax(18rem, 2fr) auto;
+  gap: 1rem;
+  align-items: end;
+  margin-bottom: 2rem;
+}
+.nla-catalog__game-field, .nla-catalog__query-field { position: relative; }
+.nla-catalog__label, .nla-catalog__filter label {
+  display: block;
+  margin-bottom: .45rem;
+  font-size: .9rem;
+  font-weight: 600;
+}
+.nla-catalog__select, .nla-catalog__input, .nla-catalog__filter select {
+  width: 100%;
+  min-height: 4.4rem;
+  padding: .9rem 1.2rem;
+  color: rgb(var(--color-foreground));
+  background: var(--nla-surface);
+  border: 1px solid var(--nla-border);
+  border-radius: var(--inputs-radius, .4rem);
+  font: inherit;
+}
+.nla-catalog__suggestions {
+  position: absolute;
+  z-index: 20;
+  top: calc(100% + .4rem);
+  left: 0;
+  right: 0;
+  max-height: 26rem;
+  overflow-y: auto;
+  margin: 0;
+  padding: .5rem;
+  list-style: none;
+  background: var(--nla-surface);
+  border: 1px solid var(--nla-border);
+  border-radius: .5rem;
+  box-shadow: 0 1rem 3rem rgba(0,0,0,.16);
+}
+.nla-catalog__suggestion-button {
+  display: grid;
+  grid-template-columns: 4rem 1fr;
+  gap: .9rem;
+  align-items: center;
+  width: 100%;
+  padding: .7rem;
+  color: inherit;
+  text-align: left;
+  background: transparent;
+  border: 0;
+  border-radius: .35rem;
+  cursor: pointer;
+}
+.nla-catalog__suggestion-button:hover, .nla-catalog__suggestion-button:focus-visible { background: rgba(var(--color-foreground), .07); }
+.nla-catalog__suggestion-button img { width: 4rem; height: 5.6rem; object-fit: contain; }
+.nla-catalog__suggestion-meta { display: block; margin-top: .2rem; color: var(--nla-muted); font-size: .85rem; }
+.nla-catalog__body { display: grid; grid-template-columns: minmax(15rem, 22rem) minmax(0, 1fr); gap: 2rem; }
+.nla-catalog__filters { align-self: start; padding: 1.4rem; border: 1px solid var(--nla-border); border-radius: .6rem; }
+.nla-catalog__filter { margin-bottom: 1.1rem; }
+.nla-catalog__status { min-height: 2.2rem; margin: 0 0 1rem; color: var(--nla-muted); }
+.nla-catalog__grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 1.4rem; }
+.nla-catalog-card { display: flex; flex-direction: column; min-width: 0; overflow: hidden; background: var(--nla-surface); border: 1px solid var(--nla-border); border-radius: .6rem; }
+.nla-catalog-card__media { position: relative; display: grid; place-items: center; aspect-ratio: 5/7; padding: .8rem; background: rgba(var(--color-foreground), .035); }
+.nla-catalog-card__media img { width: 100%; height: 100%; object-fit: contain; }
+.nla-catalog-card__badge { position: absolute; top: .7rem; right: .7rem; padding: .35rem .65rem; color: rgb(var(--color-background)); background: rgb(var(--color-foreground)); border-radius: 999px; font-size: .78rem; font-weight: 700; }
+.nla-catalog-card__body { display: flex; flex: 1; flex-direction: column; gap: .45rem; padding: 1rem; }
+.nla-catalog-card__title { margin: 0; font-size: 1rem; line-height: 1.35; }
+.nla-catalog-card__set, .nla-catalog-card__meta { margin: 0; color: var(--nla-muted); font-size: .85rem; }
+.nla-catalog-card__price { margin: auto 0 .5rem; font-weight: 700; }
+.nla-catalog-card__link { width: 100%; text-align: center; }
+.nla-catalog__load-more-wrap { display: flex; justify-content: center; margin-top: 2rem; }
+.nla-catalog__empty { grid-column: 1/-1; padding: 4rem 1rem; text-align: center; }
+.nla-catalog__error { color: rgb(var(--color-foreground)); font-weight: 600; }
+@media screen and (max-width: 989px) { .nla-catalog__grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+@media screen and (max-width: 749px) {
+  .nla-catalog__search, .nla-catalog__body { grid-template-columns: 1fr; }
+  .nla-catalog__filters { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .8rem; }
+  .nla-catalog__filter { margin: 0; }
+  .nla-catalog__filters .button { grid-column: 1/-1; }
+  .nla-catalog__grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .9rem; }
+}
+@media screen and (max-width: 420px) { .nla-catalog__grid { grid-template-columns: 1fr; } }
