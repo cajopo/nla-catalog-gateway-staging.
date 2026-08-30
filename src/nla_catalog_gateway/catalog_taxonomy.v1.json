@@ -1,0 +1,35 @@
+{
+  "version": "2026-08-31.1",
+  "gameAliases": {
+    "magic": "magic",
+    "magic: the gathering": "magic",
+    "pokemon": "pokemon",
+    "pokémon": "pokemon",
+    "yu-gi-oh!": "yugioh",
+    "yugioh": "yugioh",
+    "one piece": "one-piece",
+    "one-piece": "one-piece",
+    "onepiece": "one-piece"
+  },
+  "productTypes": {
+    "Magic Display": {
+      "game": "magic",
+      "family": "sealed"
+    }
+  },
+  "sourceRecordTypes": {
+    "single": "single",
+    "sealed": "sealed",
+    "accessory": "accessory"
+  },
+  "sealedSubtypes": [
+    {
+      "subtype": "collector-booster-box",
+      "contains": ["collector booster box"]
+    },
+    {
+      "subtype": "booster-box",
+      "contains": ["booster box"]
+    }
+  ]
+}

@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "generatedDate": "2026-08-31",
+  "taxonomyVersion": "2026-08-31.1",
+  "families": ["single", "sealed", "accessory", "unclassified"],
+  "supportedExactProductTypes": {
+    "Magic Display": {
+      "game": "magic",
+      "family": "sealed"
+    }
+  },
+  "liveFixtureCount": 4,
+  "unknownProductTypeDisposition": "unclassified",
+  "mappingContainsProductIds": false,
+  "fullBaselineClassificationStatus": "blocked-on-ws-01-fresh-snapshot"
+}

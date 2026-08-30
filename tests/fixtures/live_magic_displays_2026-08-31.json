@@ -1,0 +1,30 @@
+[
+  {
+    "productGid": "gid://shopify/Product/11676412608780",
+    "productType": "Magic Display",
+    "tags": ["Magic", "Magic Display", "Edge of Eternities", "English"],
+    "commercialTitle": "Edge of Eternities Collector Booster Box",
+    "expectedSubtype": "collector-booster-box"
+  },
+  {
+    "productGid": "gid://shopify/Product/11676436332812",
+    "productType": "Magic Display",
+    "tags": ["Magic", "Magic Display", "Ikoria: Lair of Behemoths", "English"],
+    "commercialTitle": "Ikoria: Lair of Behemoths Booster Box",
+    "expectedSubtype": "booster-box"
+  },
+  {
+    "productGid": "gid://shopify/Product/11676358738188",
+    "productType": "Magic Display",
+    "tags": ["Magic", "Magic Display", "Magic: The Gathering Foundations", "English"],
+    "commercialTitle": "Magic: The Gathering Foundations Collector Booster Box",
+    "expectedSubtype": "collector-booster-box"
+  },
+  {
+    "productGid": "gid://shopify/Product/11676239429900",
+    "productType": "Magic Display",
+    "tags": ["Magic", "Magic Display", "Outlaws of Thunder Junction", "English"],
+    "commercialTitle": "Outlaws of Thunder Junction Collector Booster Box",
+    "expectedSubtype": "collector-booster-box"
+  }
+]
