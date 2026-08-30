@@ -13,12 +13,12 @@ concurrency:
 env:
   EXPECTED_SNAPSHOT_BYTES: "360853830"
   EXPECTED_PRODUCTS: "291791"
-  SOURCE_BUNDLE_SHA256: "528289d87b913e6fe9a0092eec8f427b8b2eba3a239cc3f3c7641bc4b1035c84"
+  SOURCE_BUNDLE_SHA256: "8bd0ef386f4187f8b7c7440af1b082a8256c0be5f5172fd3aa1bea60ae4d2541"
 
 jobs:
   bootstrap:
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
+    timeout-minutes: 75
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
@@ -31,8 +31,8 @@ jobs:
 
       - name: Verify and extract reviewed source bundle
         run: |
-          test -f bootstrap/source.tar.gz
-          cp bootstrap/source.tar.gz /tmp/nla-source.tar.gz
+          test "$(find bootstrap -maxdepth 1 -type f -name 'source.tar.gz.b64.part-*' | wc -l)" -eq 5
+          cat bootstrap/source.tar.gz.b64.part-* | base64 --decode > /tmp/nla-source.tar.gz
           echo "$SOURCE_BUNDLE_SHA256  /tmp/nla-source.tar.gz" | sha256sum --check --strict
           python - <<'PY2'
           import tarfile
@@ -66,7 +66,7 @@ jobs:
         env:
           GH_PUSH_TOKEN: ${{ github.token }}
         run: |
-          rm -rf bootstrap
+          rm -rf bootstrap .github/workflows/bootstrap-and-build.yml
           git config user.name "nla-catalog-builder[bot]"
           git config user.email "nla-catalog-builder[bot]@users.noreply.github.com"
           git add -A

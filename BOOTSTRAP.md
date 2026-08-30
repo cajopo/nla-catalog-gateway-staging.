@@ -1,20 +1,19 @@
 # NLA Catalog Gateway bootstrap
 
-Questo bootstrap temporaneo serve a trasferire nel repository il sorgente del gateway già revisionato e a costruire il database esclusivamente dallo snapshot Shopify reale.
+Questo bootstrap temporaneo trasferisce nel repository il gateway già revisionato e costruisce il database esclusivamente dallo snapshot Shopify reale.
 
-L’archivio sorgente è deterministico e viene verificato tramite SHA-256 prima dell’estrazione. Il workflow scarica poi il JSONL Bulk dalla secret privata `SHOPIFY_BULK_URL`, costruisce SQLite, esegue tutti i test sul database reale, ricostruisce l’artefatto compresso e prova il container con limite di 512 MB.
+Il sorgente è già presente in cinque frammenti testuali sotto `bootstrap/`. Il workflow li ricompone, verifica SHA-256, estrae soltanto percorsi sicuri, scarica il JSONL Bulk dalla repository secret `SHOPIFY_BULK_URL`, costruisce SQLite, esegue i test sul database reale, ricostruisce l’artefatto compresso e prova il container con limite di 512 MB.
 
 Non sono presenti mutation su prodotti, inventario, TCG PowerTools, temi, carrello, checkout o ordini.
 
 ## Gate manuale
 
 1. Rinominare il repository in `nla-catalog-gateway-staging`, eliminando il punto finale.
-2. Caricare l’archivio fornito come `bootstrap/source.tar.gz` sul ramo `main`.
-3. Creare la repository secret Actions `SHOPIFY_BULK_URL` con l’URL temporaneo del Bulk Shopify.
-4. Eseguire una volta **Bootstrap source and build verified catalog**.
+2. Creare la repository secret Actions `SHOPIFY_BULK_URL` con l’URL temporaneo del Bulk Shopify.
+3. Eseguire una volta **Bootstrap source and build verified catalog**.
 
-SHA-256 atteso dell’archivio:
+SHA-256 atteso del sorgente ricomposto:
 
-`528289d87b913e6fe9a0092eec8f427b8b2eba3a239cc3f3c7641bc4b1035c84`
+`8bd0ef386f4187f8b7c7440af1b082a8256c0be5f5172fd3aa1bea60ae4d2541`
 
-Dopo un’esecuzione riuscita, il workflow rimuove automaticamente la directory `bootstrap/`. Il workflow temporaneo verrà eliminato dopo la verifica del risultato.
+Dopo un’esecuzione riuscita, il workflow rimuove automaticamente la directory `bootstrap/` e il workflow temporaneo. Rimane il workflow ricorrente `Build verified catalog artifact`.
