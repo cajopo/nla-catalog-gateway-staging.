@@ -1,0 +1,143 @@
+{
+  "caps": {
+    "24999": {
+      "games": {
+        "Magic": {
+          "duplicateSourceIdGroups": 0,
+          "firstRange": [
+            1,
+            251367
+          ],
+          "lastRange": [
+            778087,
+            899229
+          ],
+          "maximumShardSize": 24999,
+          "minimumShardSize": 22538,
+          "productCount": 122534,
+          "shardCount": 5
+        },
+        "OnePiece": {
+          "duplicateSourceIdGroups": 0,
+          "firstRange": [
+            690368,
+            898828
+          ],
+          "lastRange": [
+            690368,
+            898828
+          ],
+          "maximumShardSize": 11662,
+          "minimumShardSize": 11662,
+          "productCount": 11662,
+          "shardCount": 1
+        },
+        "Pokemon": {
+          "duplicateSourceIdGroups": 0,
+          "firstRange": [
+            273532,
+            564670
+          ],
+          "lastRange": [
+            825226,
+            899221
+          ],
+          "maximumShardSize": 24999,
+          "minimumShardSize": 21606,
+          "productCount": 71604,
+          "shardCount": 3
+        },
+        "YuGiOh": {
+          "duplicateSourceIdGroups": 0,
+          "firstRange": [
+            101788,
+            402349
+          ],
+          "lastRange": [
+            797807,
+            899149
+          ],
+          "maximumShardSize": 24999,
+          "minimumShardSize": 10994,
+          "productCount": 85991,
+          "shardCount": 4
+        }
+      },
+      "totalProducts": 291791,
+      "totalShards": 13
+    },
+    "4999": {
+      "games": {
+        "Magic": {
+          "duplicateSourceIdGroups": 0,
+          "firstRange": [
+            1,
+            6229
+          ],
+          "lastRange": [
+            888582,
+            899229
+          ],
+          "maximumShardSize": 4999,
+          "minimumShardSize": 2558,
+          "productCount": 122534,
+          "shardCount": 25
+        },
+        "OnePiece": {
+          "duplicateSourceIdGroups": 0,
+          "firstRange": [
+            690368,
+            799231
+          ],
+          "lastRange": [
+            866014,
+            898828
+          ],
+          "maximumShardSize": 4999,
+          "minimumShardSize": 1664,
+          "productCount": 11662,
+          "shardCount": 3
+        },
+        "Pokemon": {
+          "duplicateSourceIdGroups": 0,
+          "firstRange": [
+            273532,
+            278531
+          ],
+          "lastRange": [
+            890187,
+            899221
+          ],
+          "maximumShardSize": 4999,
+          "minimumShardSize": 1618,
+          "productCount": 71604,
+          "shardCount": 15
+        },
+        "YuGiOh": {
+          "duplicateSourceIdGroups": 0,
+          "firstRange": [
+            101788,
+            107259
+          ],
+          "lastRange": [
+            885501,
+            899149
+          ],
+          "maximumShardSize": 4999,
+          "minimumShardSize": 1008,
+          "productCount": 85991,
+          "shardCount": 18
+        }
+      },
+      "totalProducts": 291791,
+      "totalShards": 61
+    }
+  },
+  "generatedDate": "2026-08-31",
+  "schemaVersion": 1,
+  "sourceDatabase": {
+    "quickCheck": "ok",
+    "recordTypeColumnPresent": false,
+    "sha256": "128d1cf834aef5629d9a06c75f1e3c79614912839eb16aea2a4c4d6c7c87f08b"
+  }
+}
