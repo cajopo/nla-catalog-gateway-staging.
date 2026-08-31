@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import runpy
 import shutil
 import subprocess
 import sys
 from pathlib import Path
+from urllib.parse import quote
 
 import pytest
 
@@ -110,6 +112,10 @@ def test_force_added_generated_directories_are_rejected(
         "source.7z.001",
         "source.part-002",
         "source.z01",
+        "source.r00",
+        "source.R99",
+        "source.r000",
+        "source.s00",
         "source.003",
         "source.7z",
         "source.rar",
@@ -210,6 +216,32 @@ def test_ambiguous_workflow_structures_fail_closed(
         "git `\npush origin main",
         'git p"ush" origin main',
         "git -c credential.helper= push origin main",
+        "bash -c 'git push origin main'",
+        "sh -lc 'git push origin main'",
+        "sh -x -c 'git push origin main'",
+        "env sh -c 'git push origin main'",
+        "env -- sh -c 'git push origin main'",
+        "env -i sh -c 'git push origin main'",
+        "command -- git push origin main",
+        "/bin/sh -c 'git push origin main'",
+        'cmd /c "git push origin main"',
+        'cmd /q /c "git push origin main"',
+        "cmd /c g^it p^ush origin main",
+        'powershell -NoProfile -Command "git push origin main"',
+        'pwsh -c "git push origin main"',
+        "bash -c $'git push origin main'",
+        "g`it p`ush origin main",
+        "& 'C:\\Program Files\\Git\\cmd\\git.exe' push origin main",
+        "PowerShell -Command \"& ('g'+'it') push origin main\"",
+        "PowerShell -Command \"& ('g'+'i'+'t') push origin main\"",
+        "echo `git push origin main`",
+        "echo x`git push origin main`",
+        "value=x`git push origin main`",
+        "exec git push origin main",
+        "cmd /c call g^it p^ush origin main",
+        "eval 'git push origin main'",
+        "Start-Process git -ArgumentList push",
+        "Start-Process -FilePath git -ArgumentList push",
     ],
 )
 def test_obfuscated_git_push_is_rejected(tmp_path: Path, command: str) -> None:
@@ -230,12 +262,41 @@ def test_obfuscated_git_push_is_rejected(tmp_path: Path, command: str) -> None:
         "git status",
         'echo "git push origin main"',
         "printf '%s' 'git push'",
+        "echo \"bash -c 'git push origin main'\"",
+        "printf '%s' 'cmd /c git push origin main'",
+        'Write-Output "g`it p`ush origin main"',
+        "bash -c 'git status'",
+        "sh -x",
+        "cmd /q",
+        "powershell -NoProfile",
+        'cmd /c "echo git push origin main"',
+        "pwsh -Command 'Write-Output \"git push origin main\"'",
+        "echo '`git push origin main`'",
+        "Start-Process git -ArgumentList --version",
+        "Start-Process echo -ArgumentList 'git push origin main'",
     ],
 )
 def test_safe_shell_commands_are_not_rejected(tmp_path: Path, command: str) -> None:
     workflow = f"permissions: read-all\njobs:\n  test:\n    steps:\n      - run: {command}\n"
     root = _repo(tmp_path, {".github/workflows/test.yml": workflow})
     assert "workflow:git_push" not in _reasons(preflight.run_preflight(root))
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "bash -c",
+        "powershell -EncodedCommand synthetic-payload",
+        "sudo -u user git push origin main",
+        "time -p git push origin main",
+    ],
+)
+def test_ambiguous_shell_wrappers_fail_closed(tmp_path: Path, command: str) -> None:
+    workflow = (
+        f"permissions: read-all\njobs:\n  test:\n    steps:\n      - run: |\n          {command}\n"
+    )
+    root = _repo(tmp_path, {".github/workflows/test.yml": workflow})
+    assert "workflow:ambiguous_run_step" in _reasons(preflight.run_preflight(root))
 
 
 @pytest.mark.parametrize(
@@ -249,6 +310,18 @@ def test_safe_shell_commands_are_not_rejected(tmp_path: Path, command: str) -> N
             "        with:\n"
             "          persist-credentials: ${{ false }}\n"
         ),
+        (
+            "      - uses: actions/checkout@v4\n"
+            "        with:\n"
+            "          persist-credentials: 'false'\n"
+        ),
+        (
+            "      - uses: actions/checkout@v4\n"
+            "        with:\n"
+            '          persist-credentials: "FALSE"\n'
+        ),
+        ("      - uses: actions/checkout@v4\n        with:\n          persist-credentials: null\n"),
+        ("      - uses: actions/checkout@v4\n        with:\n          persist-credentials: 0\n"),
     ],
 )
 def test_checkout_credentials_missing_true_or_ambiguous_fail(
@@ -260,8 +333,7 @@ def test_checkout_credentials_missing_true_or_ambiguous_fail(
     assert "workflow:checkout_persist_credentials" in _reasons(preflight.run_preflight(root))
 
 
-@pytest.mark.parametrize("value", ["false", "'false'", '"FALSE"'])
-def test_checkout_with_explicit_false_passes(tmp_path: Path, value: str) -> None:
+def test_checkout_with_boolean_false_passes(tmp_path: Path) -> None:
     workflow = (
         "permissions: read-all\n"
         "jobs:\n"
@@ -269,7 +341,7 @@ def test_checkout_with_explicit_false_passes(tmp_path: Path, value: str) -> None
         "    steps:\n"
         "      - uses: actions/checkout@v4\n"
         "        with:\n"
-        f"          persist-credentials: {value}\n"
+        "          persist-credentials: false\n"
     )
     root = _repo(tmp_path, {".github/workflows/test.yml": workflow})
     assert preflight.run_preflight(root)["ok"] is True
@@ -321,6 +393,54 @@ def test_percent_encoded_capability_url_is_rejected(tmp_path: Path) -> None:
     assert "secret:signed_capability_url" in _reasons(preflight.run_preflight(root))
 
 
+@pytest.mark.parametrize("escaping", ["json", "html", "numeric_html", "unicode_json"])
+def test_escaped_capability_urls_are_rejected(tmp_path: Path, escaping: str) -> None:
+    host = "storage." + "googleapis.com"
+    parameter = "X-Goog-" + "Signature"
+    if escaping == "json":
+        url = f"https:\\/\\/{host}\\/object?Expires=1&{parameter}=abcdef123456"
+    elif escaping == "html":
+        url = f"https://{host}/object?Expires=1&amp;{parameter}=abcdef123456"
+    elif escaping == "numeric_html":
+        url = f"https://{host}/object?Expires=1&#x26;{parameter}=abcdef123456"
+    else:
+        url = (
+            f"https:\\u002f\\u002f{host}\\u002fobject\\u003fExpires"
+            f"\\u003d1\\u0026{parameter}\\u003dabcdef123456"
+        )
+    root = _repo(tmp_path, {"payload.json": json.dumps({"url": url})})
+    assert "secret:signed_capability_url" in _reasons(preflight.run_preflight(root))
+
+
+def test_unicode_escaped_url_components_are_rejected(tmp_path: Path) -> None:
+    scheme = "h" + r"\u0074" + "tps:"
+    host = "stor" + r"\u0061" + "ge." + "googleapis.com"
+    parameter = "X-Goog-Sign" + r"\u0061" + "ture"
+    content = f'{{"url":"{scheme}\\/\\/{host}\\/object?{parameter}=abcdef123456"}}'
+    root = _repo(tmp_path, {"payload.json": content})
+    assert "secret:signed_capability_url" in _reasons(preflight.run_preflight(root))
+
+
+def test_multilevel_percent_encoded_capability_url_is_rejected(tmp_path: Path) -> None:
+    host = "bucket.s3." + "amazonaws.com"
+    parameter = "X-Amz-" + "Signature"
+    encoded = f"https://{host}/object?{parameter}=abcdef123456"
+    for _ in range(4):
+        encoded = quote(encoded, safe="")
+    root = _repo(tmp_path, {"notes.txt": encoded})
+    assert "secret:signed_capability_url" in _reasons(preflight.run_preflight(root))
+
+
+def test_nonconvergent_url_encoding_fails_closed(tmp_path: Path) -> None:
+    host = "storage." + "googleapis.com"
+    parameter = "X-Goog-" + "Signature"
+    encoded = f"https://{host}/object?{parameter}=abcdef123456"
+    for _ in range(preflight.MAX_URL_DECODE_STEPS + 2):
+        encoded = quote(encoded, safe="")
+    root = _repo(tmp_path, {"notes.txt": encoded})
+    assert "secret:ambiguous_capability_url_encoding" in _reasons(preflight.run_preflight(root))
+
+
 def test_deceptive_or_unsigned_capability_urls_pass(tmp_path: Path) -> None:
     host = "amazonaws." + "com.example.org"
     marker = "Signature"
@@ -333,6 +453,16 @@ def test_deceptive_or_unsigned_capability_urls_pass(tmp_path: Path) -> None:
             )
         },
     )
+    assert preflight.run_preflight(root)["ok"] is True
+
+
+def test_multilevel_encoded_deceptive_host_passes(tmp_path: Path) -> None:
+    host = "amazonaws." + "com.example.org"
+    parameter = "X-Amz-" + "Signature"
+    encoded = f"https://{host}/object?{parameter}=abcdef123456"
+    for _ in range(4):
+        encoded = quote(encoded, safe="")
+    root = _repo(tmp_path, {"notes.txt": encoded})
     assert preflight.run_preflight(root)["ok"] is True
 
 
@@ -412,6 +542,176 @@ def test_placeholder_and_low_entropy_values_are_not_flagged(tmp_path: Path) -> N
             "test.txt": f"{key_name}={'a' * 20}\n",
         },
     )
+    assert preflight.run_preflight(root)["ok"] is True
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "ProdExample_A7f9Q2zLm4Ns8Vk1",
+        "fake-A7f9Q2zLm4Ns8Vk1",
+        "dummy-A7f9Q2zLm4Ns8Vk1",
+        "your-api-key-A7f9Q2zLm4Ns8Vk1",
+        "change-me-placeholder-A7f9Q2zLm4Ns8Vk1",
+        "not-a-secret-A7f9Q2zLm4Ns8Vk1",
+    ],
+)
+def test_placeholder_substrings_cannot_hide_credentials(
+    tmp_path: Path,
+    value: str,
+) -> None:
+    key_name = "CLIENT_" + "SECRET"
+    root = _repo(tmp_path, {"config.env": f"{key_name}={value}\n"})
+    assert any(
+        reason.startswith("secret:credential_assignment")
+        for reason in _reasons(preflight.run_preflight(root))
+    )
+
+
+def test_explicit_secret_template_is_a_safe_placeholder(tmp_path: Path) -> None:
+    key_name = "CLIENT_" + "SECRET"
+    value = "${{ secrets.CLIENT_SECRET }}"
+    root = _repo(tmp_path, {"config.env": f'{key_name}="{value}"\n'})
+    assert preflight.run_preflight(root)["ok"] is True
+
+
+def test_specific_token_is_never_suppressed_as_a_placeholder(tmp_path: Path) -> None:
+    prefix = "gh" + "p_"
+    value = prefix + "fake" + "A7f9Q2zLm4Ns8Vk1" * 2
+    root = _repo(tmp_path, {"notes.txt": value})
+    assert "secret:github_token" in _reasons(preflight.run_preflight(root))
+
+
+@pytest.mark.parametrize(
+    ("escaped_prefix", "suffix", "reason"),
+    [
+        ("gh" + r"\u0070" + "_", "ABCDEFGHIJKLMNOPQRSTUVWXYZ012345", "github_token"),
+        ("g" + r"\u0068" + "p_", "ABCDEFGHIJKLMNOPQRSTUVWXYZ012345", "github_token"),
+        ("shp" + r"\u0061" + "t_", "ABCDEFGHIJKLMNOPQRSTUVWXYZ012345", "shopify_token"),
+        ("s" + r"\u0068" + "pat_", "ABCDEFGHIJKLMNOPQRSTUVWXYZ012345", "shopify_token"),
+        ("AKI" + r"\u0041", "ABCDEFGHIJKLMNOP", "aws_access_key_id"),
+        ("A" + r"\u004b" + "IA", "ABCDEFGHIJKLMNOP", "aws_access_key_id"),
+    ],
+)
+def test_unicode_escaped_specific_secrets_are_rejected(
+    tmp_path: Path,
+    escaped_prefix: str,
+    suffix: str,
+    reason: str,
+) -> None:
+    root = _repo(tmp_path, {"payload.json": f'{{"note":"{escaped_prefix}{suffix}"}}'})
+    assert f"secret:{reason}" in _reasons(preflight.run_preflight(root))
+
+
+@pytest.mark.parametrize(
+    "key_name",
+    ["CLIENT_SECR" + r"\u0045" + "T", "passw" + r"\u006f" + "rd"],
+)
+def test_unicode_escaped_credential_key_is_rejected(
+    tmp_path: Path,
+    key_name: str,
+) -> None:
+    value = "AbCdEfGhIjKlMnOpQrStUvWxYz012345"
+    root = _repo(tmp_path, {"payload.json": f'{{"{key_name}":"{value}"}}'})
+    assert any(
+        reason.startswith("secret:credential_assignment:")
+        for reason in _reasons(preflight.run_preflight(root))
+    )
+
+
+@pytest.mark.parametrize(
+    "document",
+    [
+        {"products": [{"id": "PRODUCT_GID", "title": "Card", "variants": []}]},
+        [{"id": "PRODUCT_GID", "handle": "card", "variants": []}],
+        {
+            "data": {
+                "products": {
+                    "edges": [{"node": {"id": "PRODUCT_GID", "status": "ACTIVE", "title": "Card"}}]
+                }
+            }
+        },
+    ],
+)
+def test_small_shopify_product_snapshots_are_rejected(
+    tmp_path: Path,
+    document: object,
+) -> None:
+    product_gid = "gid://shopify/" + "Product/123"
+    serialized = json.dumps(document).replace("PRODUCT_GID", product_gid)
+    root = _repo(tmp_path, {"products-export.json": serialized})
+    assert "forbidden_shopify_snapshot" in _reasons(preflight.run_preflight(root))
+
+
+def test_canonical_numeric_product_snapshot_is_rejected(tmp_path: Path) -> None:
+    document = {"products": [{"id": 123, "title": "Card", "variants": []}]}
+    root = _repo(tmp_path, {"products.json": json.dumps(document)})
+    assert "forbidden_shopify_snapshot" in _reasons(preflight.run_preflight(root))
+
+
+def test_noncanonical_numeric_product_snapshot_is_rejected(tmp_path: Path) -> None:
+    document = {"products": [{"id": 123, "title": "Card", "variants": []}]}
+    root = _repo(tmp_path, {"catalog.json": json.dumps(document)})
+    assert "forbidden_shopify_snapshot" in _reasons(preflight.run_preflight(root))
+
+
+def test_canonical_top_level_product_list_is_rejected(tmp_path: Path) -> None:
+    document = [{"id": 123, "title": "Card", "variants": []}]
+    root = _repo(tmp_path, {"products.json": json.dumps(document)})
+    assert "forbidden_shopify_snapshot" in _reasons(preflight.run_preflight(root))
+
+
+def test_canonical_nonempty_list_is_treated_as_a_snapshot(tmp_path: Path) -> None:
+    root = _repo(tmp_path, {"products.json": json.dumps([{"enabled": True}])})
+    assert "forbidden_shopify_snapshot" in _reasons(preflight.run_preflight(root))
+
+
+@pytest.mark.parametrize(
+    "id_key",
+    ["id", "admin_graphql_api_id", "gid", "shopify_product_gid"],
+)
+def test_shopify_product_gid_identity_keys_are_rejected(
+    tmp_path: Path,
+    id_key: str,
+) -> None:
+    product_gid = "gid://shopify/" + "Product/123"
+    document = {id_key: product_gid, "product_type": "Single", "variants": []}
+    root = _repo(tmp_path, {"catalog.json": json.dumps(document)})
+    assert "forbidden_shopify_snapshot" in _reasons(preflight.run_preflight(root))
+
+
+@pytest.mark.parametrize(
+    "product_id",
+    [
+        "gid://shopify/Product/0",
+        "gid://shopify/Product/0123",
+        "gid://shopify/product/123",
+        "gid://example/Product/123",
+    ],
+)
+def test_shopify_gid_near_misses_in_config_are_safe(
+    tmp_path: Path,
+    product_id: str,
+) -> None:
+    document = {"default": {"id": product_id, "title": "Example"}}
+    root = _repo(tmp_path, {"config.json": json.dumps(document)})
+    assert preflight.run_preflight(root)["ok"] is True
+
+
+def test_declarative_products_config_is_not_a_snapshot(tmp_path: Path) -> None:
+    product_gid = "gid://shopify/" + "Product/123"
+    document = {
+        "products": {"enabled": True, "page_size": 50},
+        "references": {"default_product_gid": product_gid},
+    }
+    root = _repo(tmp_path, {"products.json": json.dumps(document)})
+    assert preflight.run_preflight(root)["ok"] is True
+
+
+def test_featured_product_reference_is_not_a_snapshot(tmp_path: Path) -> None:
+    product_gid = "gid://shopify/" + "Product/123"
+    document = {"featured_product": {"id": product_gid, "title": "Hero"}}
+    root = _repo(tmp_path, {"config.json": json.dumps(document)})
     assert preflight.run_preflight(root)["ok"] is True
 
 
@@ -542,10 +842,43 @@ def test_ambiguous_permission_values_fail_closed(
         ("git --version", False),
         ("git -- push", True),
         ("/usr/bin/git -c=color.ui=never push", True),
+        ("env", False),
+        ("env -u NAME git status", False),
+        ("env --unset=NAME git status", False),
+        ("env -u", None),
+        ("env --unknown git status", None),
+        ("command -p git push", True),
+        ("command -v git", False),
+        ("command -V git", False),
+        ("command git status", False),
+        ("Start-Process -NoNewWindow", None),
+        ("Start-Process -FilePath", None),
     ],
 )
-def test_shell_token_scanner_distinguishes_commands(script: str, expected: bool) -> None:
+def test_shell_token_scanner_distinguishes_commands(
+    script: str,
+    expected: bool | None,
+) -> None:
     assert preflight._contains_git_push(script) is expected
+
+
+def test_shell_scanner_bounds_fail_closed() -> None:
+    oversized = "x" * (preflight.MAX_SHELL_SCAN_CHARS + 1)
+    assert preflight._contains_git_push(oversized) is None
+    assert (
+        preflight._contains_git_push("bash -c 'git status'", _depth=preflight.MAX_SHELL_SCAN_DEPTH)
+        is None
+    )
+    backtick = "`"
+    assert preflight._contains_git_push(f"echo {backtick}unterminated") is None
+    assert (
+        preflight._contains_git_push(
+            f"echo {backtick}git status{backtick}",
+            _depth=preflight.MAX_SHELL_SCAN_DEPTH,
+        )
+        is None
+    )
+    assert preflight._backtick_substitutions(f"g{backtick}it") == []
 
 
 def test_unbalanced_shell_quote_fails_closed(tmp_path: Path) -> None:
@@ -572,6 +905,55 @@ def test_malformed_url_and_repeated_encoding_are_safe() -> None:
     assert preflight._is_signed_capability_url("https://[broken?sig=value") is False
     repeatedly_encoded = "https://example.org/%25252541"
     assert preflight._is_signed_capability_url(repeatedly_encoded) is False
+    nonconvergent = "%41"
+    for _ in range(preflight.MAX_URL_DECODE_STEPS + 1):
+        nonconvergent = quote(nonconvergent, safe="")
+    assert preflight._is_signed_capability_url(nonconvergent) is None
+
+
+def test_url_decoder_size_bound_distinguishes_plain_and_encoded_text() -> None:
+    plain = "a" * (preflight.MAX_URL_DECODE_CHARS + 1)
+    encoded = plain + "%41"
+    assert preflight._decode_url_text(plain) == (plain, True)
+    assert preflight._decode_url_text(encoded) == (encoded, False)
+
+
+def test_repeated_url_findings_are_deduplicated() -> None:
+    host = "storage." + "googleapis.com"
+    parameter = "X-Goog-" + "Signature"
+    signed_url = f"https://{host}/object?{parameter}=abcdef123456"
+    assert (
+        preflight.secret_failures(signed_url + "\n" + signed_url).count("signed_capability_url")
+        == 1
+    )
+
+    nonconvergent = "%41"
+    for _ in range(preflight.MAX_URL_DECODE_STEPS + 1):
+        nonconvergent = quote(nonconvergent, safe="")
+    assert (
+        preflight.secret_failures(nonconvergent + "\n" + nonconvergent).count(
+            "ambiguous_capability_url_encoding"
+        )
+        == 1
+    )
+
+
+def test_shopify_snapshot_helpers_scan_complete_json_without_false_positives() -> None:
+    assert preflight._looks_like_shopify_snapshot(Path("notes.txt"), "{}") is False
+    assert preflight._looks_like_shopify_snapshot(Path("config.json"), "{") is False
+    large_config = list(range(2_050))
+    assert preflight._contains_shopify_product(large_config) is False
+    assert (
+        preflight._looks_like_shopify_snapshot(Path("large-config.json"), json.dumps(large_config))
+        is False
+    )
+
+
+def test_shopify_snapshot_scan_cannot_be_hidden_behind_filler() -> None:
+    product_gid = "gid://shopify/" + "Product/123"
+    product = {"id": product_gid, "title": "Card", "variants": []}
+    document = [product, *range(2_050)]
+    assert preflight._looks_like_shopify_snapshot(Path("catalog.json"), json.dumps(document))
 
 
 def test_unsupported_mode_and_large_blob_are_rejected(
