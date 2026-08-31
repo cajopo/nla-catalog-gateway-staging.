@@ -66,7 +66,7 @@ def test_every_explicit_write_permission_form_is_rejected(
         "permissions: {}",
         "permissions: {contents: read, actions: none}",
         "permissions:\n  contents: read\n  actions: none",
-        "jobs:\n  test:\n    permissions:\n      contents: read",
+        "permissions: read-all\njobs:\n  test:\n    permissions:\n      contents: read",
     ],
 )
 def test_read_only_permission_forms_pass(tmp_path: Path, permissions: str) -> None:
@@ -82,6 +82,34 @@ def test_alias_or_noncanonical_permissions_fail_closed(tmp_path: Path) -> None:
     assert preflight.run_preflight(root)["failures"] == [
         {"path": ".github/workflows/test.yml", "reason": "workflow:ambiguous_permissions"}
     ]
+
+
+def test_missing_top_level_permissions_fails_closed(tmp_path: Path) -> None:
+    root = _repo(
+        tmp_path,
+        {".github/workflows/test.yml": "jobs:\n  test:\n    runs-on: ubuntu-latest\n"},
+    )
+    reasons = [item["reason"] for item in preflight.run_preflight(root)["failures"]]
+    assert "workflow:missing_top_level_permissions" in reasons
+
+
+def test_quoted_permissions_key_is_checked(tmp_path: Path) -> None:
+    root = _repo(
+        tmp_path,
+        {".github/workflows/test.yml": '"permissions": {contents: write}\n'},
+    )
+    reasons = [item["reason"] for item in preflight.run_preflight(root)["failures"]]
+    assert "workflow:contents_or_scope_write" in reasons
+
+
+@pytest.mark.parametrize("name", ["catalog.jsonl.gz", "source.tar.gz", "index.zst"])
+def test_force_added_compressed_catalog_artifacts_are_rejected(
+    tmp_path: Path,
+    name: str,
+) -> None:
+    root = _repo(tmp_path, {name: "not really compressed"})
+    reasons = [item["reason"] for item in preflight.run_preflight(root)["failures"]]
+    assert "forbidden_artifact_type" in reasons
 
 
 def test_yaml_hash_inside_quotes_is_not_treated_as_comment(tmp_path: Path) -> None:
