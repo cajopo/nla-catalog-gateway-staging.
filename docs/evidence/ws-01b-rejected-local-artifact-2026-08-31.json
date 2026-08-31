@@ -1,0 +1,40 @@
+{
+  "schemaVersion": 1,
+  "generatedDate": "2026-08-31",
+  "artifact": {
+    "bytes": 958955520,
+    "quickCheck": "ok",
+    "sha256": "7c20fe5c2662c5fbdf09a5170b9bff5a9d89f5ffb2f2bdf0ab50d612a945b181"
+  },
+  "classification": {
+    "products": 291795,
+    "searchable": 291795,
+    "byFamily": {
+      "sealed": 4,
+      "single": 291791,
+      "unclassified": 0
+    },
+    "emptyProductType": 291795,
+    "emptyTags": 291795,
+    "singlesClassifiedOnlyByCollection": 291791
+  },
+  "reproducedFalseClassifications": [
+    {
+      "sourceId": "812410",
+      "name": "Rare Set - Wings of the Captain (OP06)",
+      "classifiedAs": "single"
+    },
+    {
+      "sourceId": "294127",
+      "name": "25x Online Code Card",
+      "classifiedAs": "single"
+    },
+    {
+      "sourceId": "15522",
+      "name": "Goblin Token (Red 1/1)",
+      "classifiedAs": "single"
+    }
+  ],
+  "disposition": "rejected_as_canonical_baseline",
+  "replacement": "fresh_structured_shopify_snapshot_plus_reviewed_fail_closed_classifier"
+}
