@@ -24,7 +24,7 @@ Every component of the archived monolithic prototype is accounted for below. `Ke
 | `.env.example` | Rewritten later | Environment contract belongs with the runtime/security workstreams; no secret-shaped placeholders are needed in the foundation. |
 | `.github/dependabot.yml` | Rewritten now | Kept as a small, canonical dependency update policy. |
 | `.github/workflows/ci.yml` | Rewritten now | Tests, formatting, preflight, build and container smoke actually execute. |
-| `.github/workflows/codeql.yml` | Rewritten now | CodeQL runs queries, gates on zero SARIF findings and stores the report as an artifact. Repository Code Scanning upload is unavailable on the current private user-owned repository. |
+| `.github/workflows/codeql.yml` | Rewritten now | CodeQL runs queries, distinguishes security results from extractor diagnostics, gates on zero security findings and stores the SARIF as an artifact. |
 | `.ruff.toml` | Rewritten now | Configuration is consolidated into `pyproject.toml`. |
 | `Dockerfile` | Rewritten now | Minimal non-root foundation image; runtime server arrives separately. |
 | `README.md` | Rewritten now | Removes hard-coded catalog claims and documents only approved boundaries. |
@@ -58,7 +58,9 @@ Every component of the archived monolithic prototype is accounted for below. `Ke
 
 ## CodeQL operating mode
 
-The current repository is private and user-owned; GitHub accepted the CodeQL extraction and query execution but rejected SARIF upload because Code Scanning is not enabled. The workflow therefore uses the action's documented `upload: never` mode, parses the generated SARIF, fails on any finding and uploads that SARIF as a normal short-lived Actions artifact for independent review. Enabling GitHub Code Scanning later changes only the presentation/upload path, not the security gate.
+The current repository is private and user-owned; GitHub accepts CodeQL extraction and query execution but rejects Code Scanning upload because that repository feature is not enabled. The workflow therefore uses the action's documented `upload: never` mode, parses the generated SARIF and uploads it as a normal short-lived Actions artifact.
+
+SARIF also contains extractor diagnostics and metric results. Those are reported separately; only rules explicitly tagged as security findings fail the security gate. This avoids both false green builds and the earlier false failure caused by counting a Python extractor diagnostic as a vulnerability. Enabling GitHub Code Scanning later changes only the presentation/upload path, not the query execution or gate.
 
 ## Acceptance evidence
 
@@ -69,5 +71,5 @@ Required on the pull request:
 3. Python 3.12 and 3.13 jobs execute lint, format, tests, preflight and package build;
 4. dependency audit succeeds;
 5. CodeQL query execution succeeds, SARIF contains zero security findings and the artifact is retained;
-6. container build and smoke succeed;
+6. container build and smoke succeeds;
 7. independent review before merge.
