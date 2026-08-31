@@ -1,11 +1,20 @@
 from __future__ import annotations
 
+import importlib.util
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
-from scripts import preflight_repo as preflight
+
+PREFLIGHT_PATH = Path(__file__).resolve().parents[1] / "scripts" / "preflight_repo.py"
+PREFLIGHT_SPEC = importlib.util.spec_from_file_location("nla_repo_preflight", PREFLIGHT_PATH)
+if PREFLIGHT_SPEC is None or PREFLIGHT_SPEC.loader is None:  # pragma: no cover
+    raise RuntimeError("cannot load repository preflight module")
+preflight = importlib.util.module_from_spec(PREFLIGHT_SPEC)
+sys.modules[PREFLIGHT_SPEC.name] = preflight
+PREFLIGHT_SPEC.loader.exec_module(preflight)
 
 GIT_EXECUTABLE = shutil.which("git")
 if GIT_EXECUTABLE is None:  # pragma: no cover - Git is guaranteed in CI
