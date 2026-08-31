@@ -23,7 +23,16 @@ FORBIDDEN_TRACKED_DIRS = {
     "dist",
     "htmlcov",
 }
-FORBIDDEN_SUFFIXES = {".db", ".jsonl", ".sqlite", ".sqlite3", ".zip"}
+FORBIDDEN_FILE_ENDINGS = (
+    ".db",
+    ".jsonl",
+    ".jsonl.gz",
+    ".sqlite",
+    ".sqlite3",
+    ".tar.gz",
+    ".zip",
+    ".zst",
+)
 SECRET_PATTERNS = {
     "github_token": re.compile(r"\b(?:ghp|github_pat)_[A-Za-z0-9_]{20,}\b"),
     "shopify_access_token": re.compile(r"\bshpat_[A-Za-z0-9]{20,}\b"),
@@ -38,7 +47,10 @@ PERMISSION_ENTRY = re.compile(
     r"^[A-Za-z0-9_-]+\s*:\s*([\"']?)(read|none|write)\1\s*$",
     re.IGNORECASE,
 )
-PERMISSIONS_HEADER = re.compile(r"^(\s*)permissions\s*:\s*(.*?)\s*$", re.IGNORECASE)
+PERMISSIONS_HEADER = re.compile(
+    r"^(\s*)(?:permissions|['\"]permissions['\"])\s*:\s*(.*?)\s*$",
+    re.IGNORECASE,
+)
 
 
 class PreflightError(RuntimeError):
@@ -106,6 +118,7 @@ def workflow_permission_failures(text: str) -> list[str]:
     """Return permission violations for top-level and job-level mappings."""
     lines = text.splitlines()
     failures: list[str] = []
+    top_level_permissions_seen = False
     index = 0
     while index < len(lines):
         line = _strip_yaml_comment(lines[index]).rstrip()
@@ -114,6 +127,8 @@ def workflow_permission_failures(text: str) -> list[str]:
             index += 1
             continue
         base_indent = len(header.group(1).expandtabs(2))
+        if base_indent == 0:
+            top_level_permissions_seen = True
         inline_value = header.group(2).strip()
         if inline_value:
             reason = _inline_permissions_reason(inline_value)
@@ -142,6 +157,8 @@ def workflow_permission_failures(text: str) -> list[str]:
             index += 1
         if not saw_entry:
             failures.append("ambiguous_permissions")
+    if not top_level_permissions_seen:
+        failures.append("missing_top_level_permissions")
     return failures
 
 
@@ -188,7 +205,8 @@ def run_preflight(root: Path) -> dict[str, Any]:
             continue
         if any(part in FORBIDDEN_TRACKED_DIRS for part in relative.parts):
             failures.append({"path": relative_text, "reason": "forbidden_tracked_path"})
-        if path.suffix.lower() in FORBIDDEN_SUFFIXES or ".b64.part-" in path.name:
+        lower_name = path.name.casefold()
+        if lower_name.endswith(FORBIDDEN_FILE_ENDINGS) or ".b64.part-" in lower_name:
             failures.append({"path": relative_text, "reason": "forbidden_artifact_type"})
         if path.stat().st_size > MAX_TRACKABLE_BYTES:
             failures.append({"path": relative_text, "reason": "file_larger_than_5_mib"})
