@@ -67,7 +67,7 @@ GENERIC_SECRET_ASSIGNMENT = re.compile(
         )
         [A-Z0-9_.-]*
     )
-    \s*[:=]\s*
+    [ \t]*[:=][ \t]*
     (?:[bru]{0,2})?
     (?P<quote>["']?)
     (?P<value>[A-Za-z0-9+/=_.:-]{16,})
