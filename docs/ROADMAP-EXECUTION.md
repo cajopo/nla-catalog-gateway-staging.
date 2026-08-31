@@ -1,6 +1,6 @@
 # NLA catalog gateway — execution roadmap
 
-Last reconciled: 2026-08-31T20:08:44+02:00
+Last reconciled: 2026-08-31T22:22:00+02:00
 
 ## Dependency order
 
@@ -14,10 +14,10 @@ verified staging service. Live cutover remains a separate owner decision.
 
 | WS | Issue | Current state | Verified source | Next executable action |
 |---|---:|---|---|---|
-| Platform/CI | #6 | IN_PROGRESS | PR #20 at `e5c7e92`, CI red | Harden scanner/gates, test, push candidate |
+| Platform/CI | #6 | REVIEW | PR #20 carries code baseline `bac82b1`; its CI and CodeQL are green | Rerun gates on docs-inclusive head, independent final review |
 | Sharding spike | #8 | BACKLOG | PR #21 closed/unmerged | Reproduce later only if limited fallback has value |
 | Taxonomy | #19 | BACKLOG | PR #22 closed/unmerged | Reimplement contract after Platform |
-| Data/Bulk | #5 | BLOCKED | PR #23–#25 closed/unmerged; data root missing | Freeze contract, then provision/verify external data |
+| Data/Bulk | #5 | BLOCKED | PR #23–#25 closed/unmerged; real data root missing | Freeze code contract after Platform; real-baseline proof remains blocked |
 | Pagination | #7 | BACKLOG | No accepted PR | Start after data schema/generation contract |
 | Search | #9 | BACKLOG | No accepted PR | Build independent oracle before SQL |
 | Filters | #10 | BACKLOG | No accepted PR | Freeze canonical parser/algebra before SQL |
@@ -34,9 +34,10 @@ verified staging service. Live cutover remains a separate owner decision.
 
 ### Wave 0 — Platform
 
-Exit only when all checks pass on one exact SHA: Python 3.12/3.13 lint, format, tests,
-preflight and build; development dependency audit; container smoke; CodeQL/SARIF; clean
-checkout review; no unresolved Blocker/Critical/High finding.
+Code SHA `bac82b1` passes Python 3.12/3.13 lint, format, 243 tests at 100% line/branch,
+preflight, isolated build, development dependency audit, container smoke, and CodeQL/SARIF.
+Exit still requires those checks on the final documentation-inclusive SHA, a clean-checkout
+review of that exact SHA, and no unresolved Blocker/Critical/High finding.
 
 ### Wave 1 — Canonical data contracts
 

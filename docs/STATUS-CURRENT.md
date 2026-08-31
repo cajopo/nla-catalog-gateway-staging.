@@ -1,6 +1,6 @@
 # NLA catalog gateway — current status
 
-Last verified: 2026-08-31T20:08:44+02:00
+Last verified: 2026-08-31T22:22:00+02:00
 Repository: `cajopo/nla-catalog-gateway-staging.`
 
 This document records observed state. Git, GitHub, reproducible tests, and fresh read-only
@@ -9,47 +9,60 @@ data checks take precedence over older reports.
 ## Repository truth
 
 - Current branch: `agent/platform-ci`.
-- Current and remote head: `e5c7e92201fb8c1204680733a53f2fcf8feda4af`.
+- Platform code baseline carried by this documentation revision:
+  `bac82b122b96366799ee5da481490af38a25a2eb`.
 - `main`: `4e1c2a3e8e75c1d6f264e63a9b9c29e4f4bb8310`.
 - Pull request [#20](https://github.com/cajopo/nla-catalog-gateway-staging./pull/20) is
   open, draft, unmerged, and based on `main`.
 - The only untracked path observed is the pre-existing local `.codex/` directory. It is
-  not part of the reviewed revision and must not be committed.
+  not part of the candidate revision and must not be committed.
 - No tracked Shopify snapshot, SQLite database, compressed catalog artifact, build output,
-  or credential was found in the current tree.
+  credential, or signed capability URL was found in the candidate tree.
 
-GitHub currently contains 17 issues and 8 pull requests. Pull requests #21 through #25
-are real, closed without merge, and must be treated as review material rather than completed
-work. Pull requests #26 through #28 do not exist.
+GitHub contains 17 issues and 8 pull requests. Pull requests #21 through #25 are real,
+closed without merge, and remain review material rather than completed work. Pull requests
+#26 through #28 do not exist.
 
 ## Platform gate
 
-The current PR #20 CI run is red because repository preflight rejects two scanner-result
-literals in its own tests. The remaining jobs reached these results on the same head:
+The code baseline `bac82b1` is green. It is not yet eligible for merge because CI and CodeQL
+must rerun on the documentation-inclusive head containing this file, and an independent
+clean-checkout review must approve that same final revision.
 
 | Check | Result | Evidence |
 |---|---|---|
-| Ruff check | PASS | Python 3.12 and 3.13 CI; repeated locally on 3.13 |
-| Ruff format check | PASS | Python 3.12 and 3.13 CI; repeated locally on 3.13 |
-| Pytest | PASS | 51/51 on Python 3.12 and 3.13; package coverage 100% |
-| Repository preflight | FAIL | Two self-matches in `tests/test_preflight_repo.py` |
-| Package build | SKIPPED in CI | Blocked by the earlier preflight step |
-| Dependency audit | PASS in CI | Current runtime-only audit scope |
-| Container build and smoke | PASS in CI | Foundation image output validated |
-| CodeQL/SARIF | PASS in CI | Zero security findings under the configured gate |
-| Independent final review | MISSING | Existing review targets the red head |
+| Ruff check and format | PASS | Local frozen diff and CI Python 3.12/3.13 |
+| Pytest | PASS | 243/243, zero skipped/xfailed, 554 statements and 278 branches at 100% |
+| Repository preflight | PASS | Exact indexed candidate; 22 tracked files, zero findings |
+| Package build | PASS | Isolated sdist and wheel on Python 3.12/3.13 CI |
+| Dependency audit | PASS | Development/build environment; no known vulnerabilities |
+| Container build and smoke | PASS | Non-root foundation image and expected read-only JSON |
+| CodeQL/SARIF | PASS | Zero security findings under the configured gate |
+| Independent final review | PENDING | Required after the final documentation commit |
 
-PR #20 is recoverable, but it is not eligible for merge. Fresh review found the following
-unresolved acceptance gaps:
+Exact remote evidence:
 
-- scanner self-match blocks both Python jobs;
-- a whole-line test marker can hide a real credential or signed capability URL;
-- generic secret parsing misses quoted punctuation and other supported forms;
-- split or quoted shell tokens can evade the `git push` check;
-- preflight does not enforce `persist-credentials: false` on every checkout;
-- artifact checks have case and archive/multipart gaps;
-- dependency audit does not cover the development/build environment;
-- the 100% coverage report does not include the security-critical preflight module.
+- [CI run 33435265263](https://github.com/cajopo/nla-catalog-gateway-staging./actions/runs/33435265263), success;
+- [CodeQL run 33435265071](https://github.com/cajopo/nla-catalog-gateway-staging./actions/runs/33435265071), success;
+- Python 3.12 and 3.13 each completed lint, format, tests, preflight, and isolated build;
+- dependency audit and container smoke completed without skipped steps.
+
+The earlier independent review of `621460d` was `CHANGES REQUIRED`. Commit `bac82b1`
+closes its High findings for shell wrappers, JSON/percent-escaped capability URLs,
+placeholder suppression, small Shopify snapshots, strict checkout booleans, and multipart
+RAR artifacts. Additional working-diff red-team probes found and then verified fixes for
+`env`/`command` options, Bash substitutions, `cmd` caret/`call`, `eval`, PowerShell paths and
+literal concatenation, Unicode-escaped tokens, bounded decoding, and numeric REST snapshots.
+
+Two fail-closed limitations remain documented as Medium, not bypasses:
+
+- a heredoc containing a literal executable-looking `git push` line is rejected;
+- JSON that intentionally preserves a token-like Unicode escape literally may be rejected.
+
+The local MySQL Shell Python 3.13 runtime cannot create an isolated build environment because
+its copied runtime lacks SSL. Local `--no-isolation` build passes, and the exact candidate's
+isolated build passes on both supported CI interpreters; this is a host limitation, not a
+release bypass.
 
 ## Data and artifact availability
 
@@ -77,12 +90,12 @@ provisioned and independently verified.
 
 ## Immediate execution order
 
-1. Harden PR #20 and make all local Platform tests and preflight pass.
-2. Push one candidate SHA and require all CI/CodeQL jobs to pass on that exact SHA.
-3. Run an independent clean-checkout adversarial review and resolve applicable threads.
-4. Merge Platform only if there are no Blocker, Critical, or High findings.
-5. Rebase new Taxonomy, Data/Bulk, and Runtime-contract workstreams on the merged Platform
-   foundation. Do not resurrect closed branches wholesale.
+1. Require CI and CodeQL to pass on the documentation-inclusive final SHA.
+2. Run an independent clean-checkout adversarial review on the same final SHA.
+3. Resolve all applicable PR #20 threads, update its body, and mark it ready for review.
+4. Merge Platform only if no Blocker, Critical, or High finding remains.
+5. Start Taxonomy, Data/Bulk, and Runtime-contract workstreams from merged `main`; do not
+   resurrect closed branches wholesale.
 
 No Shopify, PowerTools, Render, theme, product, price, or inventory mutation is authorized
 by this status document.

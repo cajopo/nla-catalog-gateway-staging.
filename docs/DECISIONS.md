@@ -40,6 +40,20 @@
 - Consequence: the PR remains unmergeable until one new SHA has green CI and an independent
   review with no unresolved Blocker/Critical/High findings.
 
+## D-005 — Keep repository preflight conservative at ambiguous shell and escape boundaries
+
+- Status: accepted technical execution decision on 2026-08-31.
+- Evidence: code candidate `bac82b122b96366799ee5da481490af38a25a2eb`, CI run
+  `33435265263`, CodeQL run `33435265071`, and working-diff adversarial probes.
+- Decision: the Platform gate fails closed when a workflow command or encoded secret-like
+  value cannot be interpreted safely within bounded parsing. Two known conservative false
+  positives are retained: executable-looking `git push` text inside a heredoc and a JSON value
+  intentionally preserving a token-like Unicode escape literally.
+- Consequence: these cases require rewriting the workflow/fixture into an unambiguous form.
+  They do not permit a push, credential, signed URL, snapshot, or generated artifact to pass.
+  A future structured parser may narrow them in a separate reviewed workstream; the current
+  PR will not grow an unbounded shell or serialization interpreter.
+
 ## Reserved decisions
 
 The following are not delegated technical details and require Jacopo: paid hosting or

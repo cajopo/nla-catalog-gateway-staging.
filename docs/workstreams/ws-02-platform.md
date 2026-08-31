@@ -73,3 +73,20 @@ Required on the pull request:
 5. CodeQL query execution succeeds, SARIF contains zero security findings and the artifact is retained;
 6. container build and smoke succeeds;
 7. independent review before merge.
+
+## Candidate evidence — 2026-08-31
+
+Code candidate: `bac82b122b96366799ee5da481490af38a25a2eb`.
+
+- CI run `33435265263`: success on Python 3.12 and 3.13; 243 tests, zero
+  skipped/xfailed, 100% line/branch coverage, preflight over 22 indexed files, isolated
+  sdist/wheel build, development dependency audit, and container smoke.
+- CodeQL run `33435265071`: success; the zero-security-finding gate and SARIF artifact step
+  both completed.
+- Independent review of predecessor `621460d` required changes; all High findings have
+  regression tests in the candidate. Final independent review remains required on the
+  documentation-inclusive SHA before merge.
+- Known fail-closed limitations: heredoc text containing an executable-looking `git push`
+  line and deliberately literal token-like Unicode escapes in JSON may be rejected.
+
+No Shopify, PowerTools, theme, Render, or catalog data mutation occurred.
