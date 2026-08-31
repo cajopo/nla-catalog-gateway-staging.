@@ -34,9 +34,7 @@ def test_force_added_generated_file_is_rejected(tmp_path: Path) -> None:
     root = _repo(tmp_path, {"dist/catalog.json": "{}"})
     report = preflight.run_preflight(root)
     assert report["ok"] is False
-    assert report["failures"] == [
-        {"path": "dist/catalog.json", "reason": "forbidden_tracked_path"}
-    ]
+    assert report["failures"] == [{"path": "dist/catalog.json", "reason": "forbidden_tracked_path"}]
 
 
 @pytest.mark.parametrize(
