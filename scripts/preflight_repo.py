@@ -175,11 +175,7 @@ def tracked_files(root: Path) -> list[Path]:
         )
     except (OSError, subprocess.CalledProcessError) as exc:
         raise PreflightError(f"cannot enumerate tracked files: {exc}") from exc
-    relative_paths = [
-        Path(item.decode("utf-8"))
-        for item in completed.stdout.split(b"\0")
-        if item
-    ]
+    relative_paths = [Path(item.decode("utf-8")) for item in completed.stdout.split(b"\0") if item]
     return sorted(root / relative for relative in relative_paths)
 
 
