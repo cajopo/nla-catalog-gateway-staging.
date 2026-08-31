@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import re
+import shutil
 import subprocess
 from pathlib import Path
 from typing import Any
@@ -146,9 +147,12 @@ def workflow_permission_failures(text: str) -> list[str]:
 
 def tracked_files(root: Path) -> list[Path]:
     """List exactly the files Git would include in the reviewed revision."""
+    git_executable = shutil.which("git")
+    if git_executable is None:
+        raise PreflightError("git executable not found")
     try:
-        completed = subprocess.run(
-            ["git", "-C", str(root), "ls-files", "-z"],
+        completed = subprocess.run(  # noqa: S603 - fixed executable and arguments
+            [git_executable, "-C", str(root), "ls-files", "-z"],
             check=True,
             capture_output=True,
         )
