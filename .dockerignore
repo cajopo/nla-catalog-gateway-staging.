@@ -8,8 +8,12 @@ htmlcov
 build
 dist
 data
+output
 bootstrap
 *.sqlite*
+*.db*
 *.jsonl*
 *.zip
 *.tar.gz
+*.tgz
+*.zst
