@@ -6,12 +6,14 @@ from __future__ import annotations
 import json
 import math
 import re
+import shlex
 import shutil
 import subprocess
 from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+from urllib.parse import parse_qsl, unquote, urlsplit
 
 import yaml
 from yaml.constructor import ConstructorError
@@ -33,48 +35,96 @@ FORBIDDEN_TRACKED_DIRS = {
 }
 FORBIDDEN_FILE_PATTERN = re.compile(
     r"(?:"
-    r"\.(?:db|sqlite|sqlite3)(?:[-.](?:journal|shm|wal|backup|bak|tmp))?"
-    r"|\.jsonl(?:\.[a-z0-9]+)?"
-    r"|\.tar\.gz"
-    r"|\.tgz"
-    r"|\.zip"
-    r"|\.zst"
+    r"\.(?:db|sqlite|sqlite3)(?:[-.](?:journal|shm|wal|backup|bak|tmp))*"
+    r"|\.jsonl"
+    r"|\.tar(?:\.(?:gz|bz2|xz|zst))?"
+    r"|\.(?:tgz|tbz2?|txz|zip|7z|rar|gz|bz2|xz|zst)"
+    r"|\.(?:b64|base64)"
+    r"|\.part(?:[-._]?\d+)?"
+    r"|\.z\d{2}"
+    r"|\.\d{3}"
     r")\Z",
+    re.IGNORECASE,
+)
+FORBIDDEN_FILE_WITH_WRAPPERS_PATTERN = re.compile(
+    r"(?:"
+    r"(?:"
+    r"\.(?:db|sqlite|sqlite3)(?:[-.](?:journal|shm|wal|backup|bak|tmp))*"
+    r"|\.jsonl"
+    r"|\.tar(?:\.(?:gz|bz2|xz|zst))?"
+    r"|\.(?:tgz|tbz2?|txz|zip|7z|rar|gz|bz2|xz|zst)"
+    r")"
+    r"(?:\.(?:b64|base64))?"
+    r"|\.(?:b64|base64)"
+    r")"
+    r"(?:\.part(?:[-._]?\d+)?|\.\d{3})?\Z",
     re.IGNORECASE,
 )
 SPECIFIC_SECRET_PATTERNS = {
     "aws_access_key_id": re.compile(r"\b(?:AKIA|ASIA)[A-Z0-9]{16}\b"),
-    "github_token": re.compile(r"\b(?:ghp|github_pat)_[A-Za-z0-9_]{20,}\b"),
-    "shopify_access_token": re.compile(r"\bshpat_[A-Za-z0-9]{20,}\b"),
-    "shopify_shared_secret": re.compile(r"\bshpss_[A-Za-z0-9]{20,}\b"),
-    "private_key": re.compile(r"-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----"),
+    "github_token": re.compile(
+        r"(?<![A-Za-z0-9_])(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,})"
+        r"(?![A-Za-z0-9_])"
+    ),
+    "shopify_token": re.compile(
+        r"(?<![A-Za-z0-9_])shp(?:at|ca|pa|ss)_[A-Za-z0-9]{20,}(?![A-Za-z0-9_])"
+    ),
+    "private_key": re.compile(r"-----BEGIN (?:RSA |EC |OPENSSH |DSA |ENCRYPTED )?PRIVATE KEY-----"),
 }
-GENERIC_SECRET_ASSIGNMENT = re.compile(
-    r"""(?ix)
-    \b
-    (?P<name>
-        [A-Z0-9_.-]*
-        (?:
-            API[_-]?KEY
-            |ACCESS[_-]?KEY
-            |ACCESS[_-]?TOKEN
-            |AUTH[_-]?TOKEN
-            |CLIENT[_-]?SECRET
-            |PASSWORD
-            |PASSWD
-            |PRIVATE[_-]?TOKEN
-            |SECRET
-        )
-        [A-Z0-9_.-]*
+CREDENTIAL_NAME_PATTERN = r"""
+    [A-Z0-9_.-]*
+    (?:
+        API[_-]?KEY
+        |ACCESS[_-]?KEY
+        |ACCESS[_-]?TOKEN
+        |AUTH[_-]?TOKEN
+        |CLIENT[_-]?SECRET
+        |PASSWORD
+        |PASSWD
+        |PRIVATE[_-]?TOKEN
+        |SECRET[_-]?KEY
+        |SECRET
     )
+    [A-Z0-9_.-]*
+"""
+UNQUOTED_CREDENTIAL_ASSIGNMENT = re.compile(
+    r"""
+    (?:
+        ^[ \t]*(?:-[ \t]+)?(?:export[ \t]+)?
+        |[,\{][ \t]*
+    )
+    (?P<name>"""
+    + CREDENTIAL_NAME_PATTERN
+    + r""")
     [ \t]*[:=][ \t]*
-    (?:[bru]{0,2})?
-    (?P<quote>["']?)
-    (?P<value>[A-Za-z0-9+/=_.:-]{16,})
-    (?P=quote)
-    """
+    (?:
+        "(?P<double_value>(?:\\.|[^"\\\r\n]){16,})"
+        |'(?P<single_value>(?:\\.|[^'\\\r\n]){16,})'
+        |(?P<bare_value>[^\s#;,\}\]]{16,})
+    )
+    """,
+    re.IGNORECASE | re.VERBOSE,
 )
-ALLOWLIST_MARKER = "pragma: allowlist " + "secret"
+QUOTED_CREDENTIAL_ASSIGNMENT = re.compile(
+    r"""
+    (?:^[ \t]*(?:-[ \t]+)?|[,\{][ \t]*)
+    (?P<key_quote>["'])
+    (?P<name>"""
+    + CREDENTIAL_NAME_PATTERN
+    + r""")
+    (?P=key_quote)
+    [ \t]*:[ \t]*
+    (?:
+        "(?P<double_value>(?:\\.|[^"\\\r\n]){16,})"
+        |'(?P<single_value>(?:\\.|[^'\\\r\n]){16,})'
+    )
+    """,
+    re.IGNORECASE | re.VERBOSE,
+)
+CREDENTIAL_ASSIGNMENT_PATTERNS = (
+    UNQUOTED_CREDENTIAL_ASSIGNMENT,
+    QUOTED_CREDENTIAL_ASSIGNMENT,
+)
 PLACEHOLDER_MARKERS = (
     "change-me",
     "changeme",
@@ -86,10 +136,18 @@ PLACEHOLDER_MARKERS = (
     "test-only",
     "your-",
 )
-GIT_PUSH_PATTERN = re.compile(
-    r"\bgit\b[ \t]+(?:-[^;\r\n|&]+[ \t]+)*push\b",
-    re.IGNORECASE,
-)
+URL_PATTERN = re.compile(r"https?://[^\s<>\"']+", re.IGNORECASE)
+SHELL_SEPARATORS = {";", "&", "&&", "|", "||", "(", ")"}
+GIT_OPTIONS_WITH_VALUES = {
+    "-c",
+    "-C",
+    "--config-env",
+    "--exec-path",
+    "--git-dir",
+    "--namespace",
+    "--super-prefix",
+    "--work-tree",
+}
 
 
 class PreflightError(RuntimeError):
@@ -220,8 +278,77 @@ def _permission_failures(value: Any) -> list[str]:
     return failures
 
 
-def _normalized_shell(script: str) -> str:
-    return re.sub(r"\\[ \t]*\r?\n[ \t]*", " ", script)
+def _shell_tokens(script: str) -> list[str] | None:
+    normalized = re.sub(r"(?:\\|`)[ \t]*\r?\n[ \t]*", "", script)
+    normalized = normalized.replace("\r\n", "\n").replace("\r", "\n").replace("\n", ";")
+    lexer = shlex.shlex(normalized, posix=True, punctuation_chars=";&|()")
+    lexer.commenters = "#"
+    lexer.whitespace_split = True
+    try:
+        return list(lexer)
+    except ValueError:
+        return None
+
+
+def _contains_git_push(script: str) -> bool | None:
+    tokens = _shell_tokens(script)
+    if tokens is None:
+        return None
+
+    command_start = True
+    index = 0
+    while index < len(tokens):
+        token = tokens[index]
+        if token in SHELL_SEPARATORS:
+            command_start = True
+            index += 1
+            continue
+        if not command_start:
+            index += 1
+            continue
+
+        if token in {"!", "command", "env", "if", "sudo", "then", "time"} or (
+            "=" in token and not token.startswith("=")
+        ):
+            index += 1
+            continue
+        command_start = False
+        if Path(token).name.casefold() not in {"git", "git.exe"}:
+            index += 1
+            continue
+
+        index += 1
+        while index < len(tokens) and tokens[index] not in SHELL_SEPARATORS:
+            option = tokens[index]
+            if option == "--":
+                index += 1
+                break
+            if not option.startswith("-"):
+                break
+            index += 1
+            if option in GIT_OPTIONS_WITH_VALUES and "=" not in option and index < len(tokens):
+                index += 1
+        if index < len(tokens) and tokens[index].casefold() == "push":
+            return True
+    return False
+
+
+def _checkout_failures(step: dict[Any, Any]) -> list[str]:
+    uses = step.get("uses")
+    if uses is None:
+        return []
+    if not isinstance(uses, str):
+        return ["ambiguous_uses_step"]
+    if uses.partition("@")[0].casefold() != "actions/checkout":
+        return []
+
+    inputs = step.get("with")
+    if not isinstance(inputs, dict):
+        return ["checkout_persist_credentials"]
+    value = inputs.get("persist-credentials")
+    if value is False or (isinstance(value, str) and value.casefold() == "false"):
+        return []
+    return ["checkout_persist_credentials"]
 
 
 def workflow_failures(text: str) -> list[str]:
@@ -261,12 +388,17 @@ def workflow_failures(text: str) -> list[str]:
             if not isinstance(step, dict):
                 failures.append("invalid_step")
                 continue
+            failures.extend(_checkout_failures(step))
             if "run" not in step:
                 continue
             script = step["run"]
             if not isinstance(script, str):
                 failures.append("invalid_run_step")
-            elif GIT_PUSH_PATTERN.search(_normalized_shell(script)):
+                continue
+            contains_push = _contains_git_push(script)
+            if contains_push is None:
+                failures.append("ambiguous_run_step")
+            elif contains_push:
                 failures.append("git_push")
     return failures
 
@@ -282,35 +414,58 @@ def _looks_like_placeholder(value: str) -> bool:
     return any(marker in normalized for marker in PLACEHOLDER_MARKERS)
 
 
+def _is_signed_capability_url(raw_url: str) -> bool:
+    decoded = raw_url
+    for _ in range(3):
+        next_value = unquote(decoded)
+        if next_value == decoded:
+            break
+        decoded = next_value
+    try:
+        parsed = urlsplit(decoded)
+        host = (parsed.hostname or "").casefold()
+    except ValueError:
+        return False
+    parameter_names = {
+        name.casefold() for name, _ in parse_qsl(parsed.query, keep_blank_values=True)
+    }
+
+    google_host = host == "storage.googleapis.com" or host.endswith(".storage.googleapis.com")
+    amazon_host = host == "amazonaws.com" or host.endswith(".amazonaws.com")
+    azure_host = host == "blob.core.windows.net" or host.endswith(".blob.core.windows.net")
+    if google_host and parameter_names.intersection(
+        {"googleaccessid", "signature", "x-goog-signature"}
+    ):
+        return True
+    if amazon_host and parameter_names.intersection(
+        {"awsaccesskeyid", "signature", "x-amz-signature"}
+    ):
+        return True
+    return azure_host and "sig" in parameter_names
+
+
 def secret_failures(text: str) -> list[str]:
     failures: list[str] = []
     for name, pattern in SPECIFIC_SECRET_PATTERNS.items():
         if pattern.search(text):
             failures.append(name)
 
-    capability_hosts = (
-        "storage." + "googleapis.com",
-        "amazonaws." + "com",
-        "blob.core." + "windows.net",
-    )
-    signature_markers = (
-        "x-goog-" + "signature=",
-        "x-amz-" + "signature=",
-        "googleaccessid=",
-        "sig=",
-    )
     for line in text.splitlines():
-        if ALLOWLIST_MARKER in line.casefold():
-            continue
-        normalized = line.casefold()
-        if any(host in normalized for host in capability_hosts) and any(
-            marker in normalized for marker in signature_markers
-        ):
+        if any(_is_signed_capability_url(match.group(0)) for match in URL_PATTERN.finditer(line)):
             failures.append("signed_capability_url")
-        for match in GENERIC_SECRET_ASSIGNMENT.finditer(line):
-            value = match.group("value")
-            if not _looks_like_placeholder(value) and _shannon_entropy(value) >= 2.5:
-                failures.append(f"credential_assignment:{match.group('name').casefold()}")
+        for pattern in CREDENTIAL_ASSIGNMENT_PATTERNS:
+            for match in pattern.finditer(line):
+                value = next(
+                    candidate
+                    for candidate in (
+                        match.group("double_value"),
+                        match.group("single_value"),
+                        match.groupdict().get("bare_value"),
+                    )
+                    if candidate is not None
+                )
+                if not _looks_like_placeholder(value) and _shannon_entropy(value) >= 2.5:
+                    failures.append(f"credential_assignment:{match.group('name').casefold()}")
     return failures
 
 
@@ -333,9 +488,12 @@ def run_preflight(root: Path) -> dict[str, Any]:
             continue
         if blob.mode not in {"100644", "100755"}:
             failures.append({"path": relative_text, "reason": f"unsupported_git_mode:{blob.mode}"})
-        if any(part in FORBIDDEN_TRACKED_DIRS for part in relative.parts):
+        if any(part.casefold() in FORBIDDEN_TRACKED_DIRS for part in relative.parts):
             failures.append({"path": relative_text, "reason": "forbidden_tracked_path"})
-        if FORBIDDEN_FILE_PATTERN.search(relative.name):
+        forbidden_filename = FORBIDDEN_FILE_PATTERN.search(
+            relative.name
+        ) or FORBIDDEN_FILE_WITH_WRAPPERS_PATTERN.search(relative.name)
+        if forbidden_filename:
             failures.append({"path": relative_text, "reason": "forbidden_artifact_type"})
         if len(blob.content) > MAX_TRACKABLE_BYTES:
             failures.append({"path": relative_text, "reason": "file_larger_than_5_mib"})

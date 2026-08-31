@@ -33,7 +33,7 @@ jobs:
       - run: python -m pip install -e '.[dev]'
       - run: ruff check .
       - run: ruff format --check .
-      - run: pytest --cov=nla_catalog_gateway --cov-report=term-missing
+      - run: pytest --cov=nla_catalog_gateway --cov=scripts --cov-report=term-missing
       - run: python scripts/preflight_repo.py
       - run: python -m build
 
@@ -48,7 +48,8 @@ jobs:
         with:
           python-version: "3.13"
           cache: pip
-      - run: python -m pip install . pip-audit==2.10.1
+      - run: python -m pip install --upgrade pip
+      - run: python -m pip install -e '.[dev]' 'setuptools>=77' wheel pip-audit==2.10.1
       - run: python -m pip check
       - run: pip-audit --local --progress-spinner=off
 

@@ -29,7 +29,7 @@ addopts = "-ra --strict-config --strict-markers"
 
 [tool.coverage.run]
 branch = true
-source = ["nla_catalog_gateway"]
+source = ["nla_catalog_gateway", "scripts"]
 
 [tool.coverage.report]
 fail_under = 100
