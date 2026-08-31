@@ -113,13 +113,7 @@ def test_force_added_catalog_artifacts_are_rejected(
             "jobs: {test: {permissions: write-all, runs-on: ubuntu-latest, "
             'steps: [{run: "true"}]}}\n'
         ),
-        (
-            "permissions: read-all\n"
-            "jobs:\n"
-            "  test:\n"
-            "    permissions:\n"
-            "      contents: 'write'\n"
-        ),
+        ("permissions: read-all\njobs:\n  test:\n    permissions:\n      contents: 'write'\n"),
     ],
 )
 def test_every_write_permission_form_is_rejected(
@@ -140,13 +134,7 @@ def test_every_write_permission_form_is_rejected(
         "permissions: {}",
         "permissions: {contents: read, actions: none}",
         "permissions:\n  contents: read\n  actions: none",
-        (
-            "permissions: read-all\n"
-            "jobs:\n"
-            "  test:\n"
-            "    permissions:\n"
-            "      contents: read\n"
-        ),
+        ("permissions: read-all\njobs:\n  test:\n    permissions:\n      contents: read\n"),
     ],
 )
 def test_read_only_permission_forms_pass(
@@ -160,15 +148,9 @@ def test_read_only_permission_forms_pass(
 def test_missing_top_level_permissions_fails_closed(tmp_path: Path) -> None:
     root = _repo(
         tmp_path,
-        {
-            ".github/workflows/test.yml": (
-                "jobs:\n  test:\n    runs-on: ubuntu-latest\n"
-            )
-        },
+        {".github/workflows/test.yml": ("jobs:\n  test:\n    runs-on: ubuntu-latest\n")},
     )
-    assert "workflow:missing_top_level_permissions" in _reasons(
-        preflight.run_preflight(root)
-    )
+    assert "workflow:missing_top_level_permissions" in _reasons(preflight.run_preflight(root))
 
 
 @pytest.mark.parametrize(
@@ -229,9 +211,7 @@ def test_signed_capability_url_is_rejected(tmp_path: Path) -> None:
     signature = "X-Goog-" + "Signature"
     url = f"https://{host}/bucket/object?{signature}=abcdef123456"
     root = _repo(tmp_path, {"notes.txt": url + "\n"})
-    assert "secret:signed_capability_url" in _reasons(
-        preflight.run_preflight(root)
-    )
+    assert "secret:signed_capability_url" in _reasons(preflight.run_preflight(root))
 
 
 def test_specific_tokens_and_private_keys_are_rejected(tmp_path: Path) -> None:
@@ -251,10 +231,7 @@ def test_placeholder_and_explicit_allowlist_are_not_flagged(tmp_path: Path) -> N
         tmp_path,
         {
             "config.env.example": f"{key_name}=change-me-placeholder\n",
-            "test.txt": (
-                f"{key_name}=AbCdEfGhIjKlMnOpQrStUvWx "
-                "# pragma: allowlist secret\n"
-            ),
+            "test.txt": (f"{key_name}=AbCdEfGhIjKlMnOpQrStUvWx # pragma: allowlist secret\n"),
         },
     )
     assert preflight.run_preflight(root)["ok"] is True
@@ -276,9 +253,7 @@ def test_non_utf8_tracked_file_is_rejected(tmp_path: Path) -> None:
     _git(tmp_path, "init")
     (tmp_path / "binary.bin").write_bytes(b"\xff")
     _git(tmp_path, "add", "-f", ".")
-    assert "non_utf8_repository_file" in _reasons(
-        preflight.run_preflight(tmp_path)
-    )
+    assert "non_utf8_repository_file" in _reasons(preflight.run_preflight(tmp_path))
 
 
 def test_tracked_symlink_is_rejected(tmp_path: Path) -> None:
