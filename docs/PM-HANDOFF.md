@@ -1,17 +1,14 @@
 # PM handoff — Next Level Arena catalog gateway
 
-Updated 2026-08-31T22:22:00+02:00.
+Updated 2026-09-01T00:18:16+02:00.
 
 Copyable update:
 
-> Platform PR #20 has a verified code candidate at `bac82b1`. Its exact CI and CodeQL runs
-> are green on Python 3.12/3.13: 243 tests, zero skipped/xfailed, 100% line and branch
-> coverage across package and security-critical scripts, preflight over 22 indexed files,
-> isolated package build, development dependency audit, container smoke, and zero CodeQL
-> security findings. The earlier independent review's High findings were fixed and additional
-> adversarial shell, escaped-URL, token, and Shopify-snapshot bypasses were reproduced and
-> closed before commit. Two conservative false positives remain documented, neither is a
-> bypass. The PR is deliberately still draft: canonical evidence is included, and CI plus a
-> new independent review must pass on that documentation-inclusive SHA before merge. `NLA_DATA_ROOT` remains
-> unavailable, so no real baseline is claimed. No Shopify, PowerTools, Render, theme, product,
-> price, or inventory mutation occurred. No owner decision is currently required.
+> Platform PR #20 remains draft. Final review of the earlier green head `f211b26` found a
+> real High gap around dynamic executables and Git verbs; corrected code baseline `8047ba6`
+> now has green CI/CodeQL, 409 tests with zero skipped/xfailed and 100% line/branch coverage,
+> isolated builds, audit, Docker smoke, preflight over 23 files, and a 77-danger/33-safe
+> red-team pass. The scanner is intentionally bounded: static inline commands are allowlisted,
+> dynamic/unknown execution fails closed, and transitive scripts are outside semantic proof.
+> Evidence must still be committed, rerun, and independently reviewed on one exact final SHA
+> before merge. `NLA_DATA_ROOT` remains missing; no live or commercial system was changed.

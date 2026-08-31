@@ -42,7 +42,8 @@
 
 ## D-005 — Keep repository preflight conservative at ambiguous shell and escape boundaries
 
-- Status: accepted technical execution decision on 2026-08-31.
+- Status: accepted technical execution decision on 2026-08-31; workflow-command scope is
+  clarified and partially superseded by D-006.
 - Evidence: code candidate `bac82b122b96366799ee5da481490af38a25a2eb`, CI run
   `33435265263`, CodeQL run `33435265071`, and working-diff adversarial probes.
 - Decision: the Platform gate fails closed when a workflow command or encoded secret-like
@@ -53,6 +54,24 @@
   They do not permit a push, credential, signed URL, snapshot, or generated artifact to pass.
   A future structured parser may narrow them in a separate reviewed workstream; the current
   PR will not grow an unbounded shell or serialization interpreter.
+
+## D-006 — Bound workflow execution checks to static capability controls
+
+- Status: accepted technical execution decision on 2026-09-01; final exact-SHA review pending.
+- Evidence: final review of green documentation head `f211b261cbf4237149b0f45a2d3a79d3476cf4ba`
+  returned `CHANGES REQUIRED` for dynamic executable and Git-subcommand bypasses; corrected
+  code baseline `8047ba6ae314d39189f3d0ac72303cb532f05d48`, CI run `33445224607`,
+  CodeQL run `33445224609`, and a 77-danger/33-safe working-diff red-team matrix.
+- Decision: inline workflow commands use a static positive allowlist. Dynamic or unknown
+  executable, dispatcher target, or Git-subcommand positions fail closed. Workflow
+  permissions must remain read-only, workflow secret references are rejected, and checkout
+  credentials must be disabled with `persist-credentials: false`.
+- Capability boundary: the repository preflight does not semantically interpret Python,
+  Docker, or arbitrary scripts invoked transitively. Its PASS is a bounded defense-in-depth
+  claim, not absolute proof that no indirect program could ever mutate repository state.
+- Consequence: ambiguous inline execution must be rewritten into a statically auditable form.
+  Changes to transitive-script analysis require a separate, testable decision rather than an
+  implicit claim of complete shell or program interpretation.
 
 ## Reserved decisions
 

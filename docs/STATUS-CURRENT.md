@@ -1,6 +1,6 @@
 # NLA catalog gateway — current status
 
-Last verified: 2026-08-31T22:22:00+02:00
+Last verified: 2026-09-01T00:18:16+02:00
 Repository: `cajopo/nla-catalog-gateway-staging.`
 
 This document records observed state. Git, GitHub, reproducible tests, and fresh read-only
@@ -10,7 +10,7 @@ data checks take precedence over older reports.
 
 - Current branch: `agent/platform-ci`.
 - Platform code baseline carried by this documentation revision:
-  `bac82b122b96366799ee5da481490af38a25a2eb`.
+  `8047ba6ae314d39189f3d0ac72303cb532f05d48`.
 - `main`: `4e1c2a3e8e75c1d6f264e63a9b9c29e4f4bb8310`.
 - Pull request [#20](https://github.com/cajopo/nla-catalog-gateway-staging./pull/20) is
   open, draft, unmerged, and based on `main`.
@@ -25,15 +25,15 @@ closed without merge, and remain review material rather than completed work. Pul
 
 ## Platform gate
 
-The code baseline `bac82b1` is green. It is not yet eligible for merge because CI and CodeQL
+The code baseline `8047ba6` is green. It is not yet eligible for merge because CI and CodeQL
 must rerun on the documentation-inclusive head containing this file, and an independent
-clean-checkout review must approve that same final revision.
+clean-checkout review must approve that same final revision. PR #20 remains draft.
 
 | Check | Result | Evidence |
 |---|---|---|
 | Ruff check and format | PASS | Local frozen diff and CI Python 3.12/3.13 |
-| Pytest | PASS | 243/243, zero skipped/xfailed, 554 statements and 278 branches at 100% |
-| Repository preflight | PASS | Exact indexed candidate; 22 tracked files, zero findings |
+| Pytest | PASS | 409/409, zero skipped/xfailed, 790 statements and 416 branches at 100% |
+| Repository preflight | PASS | Exact indexed candidate; 23 tracked files, zero findings |
 | Package build | PASS | Isolated sdist and wheel on Python 3.12/3.13 CI |
 | Dependency audit | PASS | Development/build environment; no known vulnerabilities |
 | Container build and smoke | PASS | Non-root foundation image and expected read-only JSON |
@@ -42,17 +42,27 @@ clean-checkout review must approve that same final revision.
 
 Exact remote evidence:
 
-- [CI run 33435265263](https://github.com/cajopo/nla-catalog-gateway-staging./actions/runs/33435265263), success;
-- [CodeQL run 33435265071](https://github.com/cajopo/nla-catalog-gateway-staging./actions/runs/33435265071), success;
+- [CI run 33445224607](https://github.com/cajopo/nla-catalog-gateway-staging./actions/runs/33445224607), success;
+- [CodeQL run 33445224609](https://github.com/cajopo/nla-catalog-gateway-staging./actions/runs/33445224609), success;
 - Python 3.12 and 3.13 each completed lint, format, tests, preflight, and isolated build;
-- dependency audit and container smoke completed without skipped steps.
+- dependency audit and container smoke completed without skipped steps;
+- CodeQL job `99662692010` completed every step, including the zero-security-finding gate;
+  the SARIF contains zero security findings and two diagnostics.
 
-The earlier independent review of `621460d` was `CHANGES REQUIRED`. Commit `bac82b1`
-closes its High findings for shell wrappers, JSON/percent-escaped capability URLs,
-placeholder suppression, small Shopify snapshots, strict checkout booleans, and multipart
-RAR artifacts. Additional working-diff red-team probes found and then verified fixes for
-`env`/`command` options, Bash substitutions, `cmd` caret/`call`, `eval`, PowerShell paths and
-literal concatenation, Unicode-escaped tokens, bounded decoding, and numeric REST snapshots.
+The documentation-inclusive head `f211b26` passed CI run `33436231899` and CodeQL run
+`33436231910`, but its final independent review was `CHANGES REQUIRED`: dynamic executable
+and Git-subcommand expansions could evade the static workflow check. Code baseline `8047ba6`
+implements the bounded correction. Its working-diff red team passes 77/77 dangerous probes
+and 33/33 safe controls. Local lint, format, test, coverage, and preflight gates also pass;
+isolated builds are evidenced by the exact remote CI run.
+
+The corrected contract is deliberately bounded. Inline workflow commands are accepted only
+through a static positive allowlist; a dynamic or unknown executable, wrapper target, or Git
+subcommand fails closed. The capability boundary also requires read-only permissions, rejects
+workflow secret references, and requires checkout credentials to be disabled with
+`persist-credentials: false`. Python, Docker and other scripts invoked transitively are not
+semantically interpreted by this preflight, so a passing result is defense in depth rather
+than absolute proof about every possible indirect execution path. See D-006.
 
 Two fail-closed limitations remain documented as Medium, not bypasses:
 
@@ -90,7 +100,8 @@ provisioned and independently verified.
 
 ## Immediate execution order
 
-1. Require CI and CodeQL to pass on the documentation-inclusive final SHA.
+1. Commit the corrected evidence and require CI and CodeQL to pass on that
+   documentation-inclusive final SHA.
 2. Run an independent clean-checkout adversarial review on the same final SHA.
 3. Resolve all applicable PR #20 threads, update its body, and mark it ready for review.
 4. Merge Platform only if no Blocker, Critical, or High finding remains.

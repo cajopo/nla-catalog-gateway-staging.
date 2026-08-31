@@ -1,5 +1,10 @@
 # SAL NLA — 2026-08-31T22:22:00+02:00
 
+> **SUPERSEDED / CORRECTION — 2026-09-01:** this is a historical snapshot, not current
+> merge evidence. Although documentation head `f211b26` later passed CI and CodeQL, its final
+> independent review returned `CHANGES REQUIRED` for dynamic executable and Git-subcommand
+> bypasses. Use `SAL-2026-09-01-platform-final-candidate.md` for the corrected state.
+
 | WS | Issue | Branch | PR | SHA | CI | Review | Stato | Blocco | Prossima azione |
 |---|---:|---|---:|---|---|---|---|---|---|
 | Platform/CI | #6 | `agent/platform-ci` | #20 | `bac82b1` code baseline | CI `33435265263` and CodeQL `33435265071` PASS | Predecessor CHANGES REQUIRED; candidate red-team PASS for High findings; final exact-SHA review pending | REVIEW | Documentation-inclusive head not yet green/reviewed | Rerun gates, independent review |

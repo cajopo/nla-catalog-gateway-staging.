@@ -74,19 +74,31 @@ Required on the pull request:
 6. container build and smoke succeeds;
 7. independent review before merge.
 
-## Candidate evidence — 2026-08-31
+## Corrected candidate evidence — 2026-09-01
 
-Code candidate: `bac82b122b96366799ee5da481490af38a25a2eb`.
+Code baseline: `8047ba6ae314d39189f3d0ac72303cb532f05d48`.
 
-- CI run `33435265263`: success on Python 3.12 and 3.13; 243 tests, zero
-  skipped/xfailed, 100% line/branch coverage, preflight over 22 indexed files, isolated
-  sdist/wheel build, development dependency audit, and container smoke.
-- CodeQL run `33435265071`: success; the zero-security-finding gate and SARIF artifact step
-  both completed.
-- Independent review of predecessor `621460d` required changes; all High findings have
-  regression tests in the candidate. Final independent review remains required on the
-  documentation-inclusive SHA before merge.
+- CI run `33445224607`: success on Python 3.12 and 3.13; 409 tests, zero
+  skipped/xfailed, 790 statements and 416 branches at 100%, preflight over 23 indexed files,
+  isolated sdist/wheel build, development dependency audit, and container smoke.
+- CodeQL run `33445224609`: success; job `99662692010`, the zero-security-finding gate, and
+  SARIF artifact step all completed. The SARIF contains zero security findings and two
+  diagnostic results.
+- Documentation-inclusive predecessor `f211b26` had green CI/CodeQL but final independent
+  review returned `CHANGES REQUIRED` for dynamic executable and Git-subcommand expansions.
+  The corrected working diff passes 77/77 dangerous probes and 33/33 safe controls.
+- Local lint, format, full test, coverage, and preflight gates pass. Isolated builds are
+  evidenced by the exact remote CI run.
+- Inline commands now follow a bounded static positive allowlist; dynamic or unknown
+  executable, dispatcher, and Git-subcommand positions fail closed. The capability boundary
+  also enforces read-only permissions, rejects workflow secret references, and requires
+  `persist-credentials: false`.
+- Python, Docker, and arbitrary scripts invoked transitively are not semantically interpreted;
+  preflight PASS is therefore defense in depth, not absolute proof over indirect execution.
+- Final independent clean-checkout review remains required on the documentation-inclusive SHA
+  before merge.
 - Known fail-closed limitations: heredoc text containing an executable-looking `git push`
   line and deliberately literal token-like Unicode escapes in JSON may be rejected.
 
+`NLA_DATA_ROOT` remains `MISSING`; no real catalog baseline is claimed. PR #20 remains draft.
 No Shopify, PowerTools, theme, Render, or catalog data mutation occurred.
