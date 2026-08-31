@@ -17,14 +17,26 @@ dist/
 
 # Runtime/catalog data: never commit Shopify snapshots or generated indexes
 data/
+output/
+bootstrap/
 *.sqlite
 *.sqlite3
 *.db
+*.sqlite-journal
+*.sqlite-wal
+*.sqlite-shm
+*.sqlite3-journal
+*.sqlite3-wal
+*.sqlite3-shm
+*.db-journal
+*.db-wal
+*.db-shm
 *.jsonl
-*.jsonl.gz
+*.jsonl.*
 *.tar.gz
+*.tgz
 *.zip
-bootstrap/
+*.zst
 
 # Editors and operating systems
 .vscode/
