@@ -1,15 +1,23 @@
 from __future__ import annotations
 
+import shutil
 import subprocess
 from pathlib import Path
 
 import pytest
-
 from scripts import preflight_repo as preflight
+
+GIT_EXECUTABLE = shutil.which("git")
+if GIT_EXECUTABLE is None:  # pragma: no cover - Git is guaranteed in CI
+    raise RuntimeError("git executable not found")
 
 
 def _git(root: Path, *args: str) -> None:
-    subprocess.run(["git", "-C", str(root), *args], check=True, capture_output=True)
+    subprocess.run(  # noqa: S603 - fixed executable and test-controlled arguments
+        [GIT_EXECUTABLE, "-C", str(root), *args],
+        check=True,
+        capture_output=True,
+    )
 
 
 def _repo(tmp_path: Path, files: dict[str, str]) -> Path:
