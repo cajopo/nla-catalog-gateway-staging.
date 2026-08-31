@@ -1,0 +1,98 @@
+query NlaCatalogSnapshot {
+  products {
+    edges {
+      node {
+        __typename
+        id
+        handle
+        title
+        status
+        vendor
+        productType
+        tags
+        createdAt
+        updatedAt
+        publishedAt
+        onlineStoreUrl
+        totalInventory
+        tracksInventory
+        featuredMedia {
+          ... on MediaImage {
+            __typename
+            id
+            alt
+            image {
+              url
+              altText
+              width
+              height
+            }
+          }
+        }
+        syncProductId: metafield(namespace: "sync", key: "productid") {
+          type
+          value
+        }
+        powertoolsId: metafield(namespace: "powertools", key: "id") {
+          type
+          value
+        }
+        resourcePublicationsV2(first: 100) {
+          edges {
+            node {
+              __typename
+              isPublished
+              publishDate
+              publication {
+                id
+                autoPublish
+                catalog {
+                  id
+                  title
+                }
+              }
+            }
+          }
+        }
+        variants {
+          edges {
+            node {
+              __typename
+              id
+              title
+              sku
+              price
+              compareAtPrice
+              inventoryQuantity
+              inventoryPolicy
+              updatedAt
+              inventoryItem {
+                __typename
+                id
+                tracked
+                inventoryLevels(first: 50) {
+                  edges {
+                    node {
+                      __typename
+                      id
+                      location {
+                        id
+                        name
+                      }
+                      quantities(
+                        names: ["available", "on_hand", "committed", "reserved", "incoming"]
+                      ) {
+                        name
+                        quantity
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

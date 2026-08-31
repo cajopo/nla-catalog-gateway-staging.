@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 1,
+  "generatedDate": "2026-08-31",
+  "query": {
+    "path": "graphql/catalog_snapshot.graphql",
+    "bytes": 2168,
+    "lines": 98,
+    "sha256": "7c23beb66608c085fc92d0b87399781b9f1693be9335ee98d72fa5335d70a704",
+    "schemaValidation": "pass",
+    "liveSingleProductProbe": "pass"
+  },
+  "bulkOperation": {
+    "id": "gid://shopify/BulkOperation/9766734758156",
+    "createdAt": "2026-08-31T00:08:37Z",
+    "initialStatus": "CREATED",
+    "userErrors": 0,
+    "latestObservedStatus": "RUNNING",
+    "latestObservedObjectCount": 323897
+  },
+  "mutationScope": "read_only_export",
+  "rawSnapshotCommitted": false,
+  "temporarySignedUrlRetained": false,
+  "terminalValidationStatus": "pending"
+}
