@@ -24,6 +24,8 @@ ROOT = Path(__file__).resolve().parents[1]
 MAX_TRACKABLE_BYTES = 5 * 1024 * 1024
 MAX_SHELL_SCAN_CHARS = 32 * 1024
 MAX_SHELL_SCAN_DEPTH = 3
+MAX_HEREDOC_QUEUE = 8
+MAX_WORKFLOW_SCAN_NODES = 10_000
 MAX_URL_DECODE_CHARS = 128 * 1024
 MAX_URL_DECODE_STEPS = 6
 FORBIDDEN_TRACKED_DIRS = {
@@ -143,11 +145,71 @@ PLACEHOLDER_VALUE_PATTERN = re.compile(
     re.IGNORECASE,
 )
 URL_PATTERN = re.compile(r"https?://[^\s<>\"']+", re.IGNORECASE)
-SHELL_SEPARATORS = {";", "&", "&&", "|", "||", "(", ")"}
+SHELL_SEPARATORS = {";", "&", "&&", "|", "|&", "||", "(", ")"}
 SHELL_COMMAND_PREFIXES = {"!", "command", "env", "exec", "if", "sudo", "then", "time"}
+SHELL_CONTROL_FLOW_WORDS = {
+    "case",
+    "catch",
+    "do",
+    "done",
+    "elif",
+    "else",
+    "esac",
+    "fi",
+    "finally",
+    "for",
+    "foreach",
+    "function",
+    "if",
+    "select",
+    "switch",
+    "then",
+    "trap",
+    "try",
+    "until",
+    "while",
+    "{",
+    "}",
+}
 POSIX_SHELL_EXECUTABLES = {"bash", "dash", "ksh", "sh", "zsh"}
 CMD_EXECUTABLES = {"cmd", "cmd.exe"}
 POWERSHELL_EXECUTABLES = {"powershell", "powershell.exe", "pwsh", "pwsh.exe"}
+SAFE_DIRECT_EXECUTABLES = {
+    ":",
+    "cat",
+    "declare",
+    "docker",
+    "echo",
+    "export",
+    "false",
+    "get-command",
+    "git",
+    "new-item",
+    "pip-audit",
+    "printf",
+    "pytest",
+    "readonly",
+    "ruff",
+    "set",
+    "set-content",
+    "set-item",
+    "si",
+    "start-process",
+    "true",
+    "typeset",
+    "write-output",
+}
+SAFE_GIT_SUBCOMMANDS = {
+    "cat-file",
+    "diff",
+    "log",
+    "ls-files",
+    "rev-parse",
+    "show",
+    "status",
+    "version",
+}
+SAFE_GIT_CONFIG_KEYS = {"color.ui"}
 GIT_OPTIONS_WITH_VALUES = {
     "-c",
     "-C",
@@ -189,6 +251,31 @@ POWERSHELL_LITERAL_CONCAT_PATTERN = re.compile(
     r"['\"][A-Za-z0-9_.-]+['\"][ \t]*\)",
 )
 POWERSHELL_LITERAL_PATTERN = re.compile(r"(['\"])([A-Za-z0-9_.-]+)\1")
+ANSI_C_QUOTE_PATTERN = re.compile(r"\$'(?P<body>(?:\\.|[^'\\])*)'")
+HEREDOC_DELIMITER_PATTERN = re.compile(r"[A-Za-z_][A-Za-z0-9_]{0,63}\Z")
+PYTHON_EXECUTABLE_PATTERN = re.compile(r"(?:python(?:3(?:\.\d+)?)?|py)(?:\.exe)?\Z", re.I)
+CMD_COMMAND_OPTION_PATTERN = re.compile(
+    r"/(?:(?:(?:[audsq])|(?:[efv]:(?:on|off)))/)*"
+    r"(?P<mode>c|k)(?P<payload>.*)\Z",
+    re.IGNORECASE,
+)
+POWERSHELL_COMMAND_OPTIONS = {
+    f"{prefix}{name[:length]}"
+    for prefix in ("-", "/")
+    for name in ("command",)
+    for length in range(1, len(name) + 1)
+}
+POWERSHELL_ENCODED_COMMAND_OPTIONS = {
+    f"{prefix}{name[:length]}"
+    for prefix in ("-", "/")
+    for name in ("encodedcommand",)
+    for length in range(1, len(name) + 1)
+}
+WORKFLOW_EXPRESSION_PATTERN = re.compile(r"\$\{\{.*?\}\}", re.DOTALL)
+SECRETS_IDENTIFIER_PATTERN = re.compile(
+    r"(?<![A-Za-z0-9_])secrets(?![A-Za-z0-9_])",
+    re.IGNORECASE,
+)
 
 
 class PreflightError(RuntimeError):
@@ -319,11 +406,138 @@ def _permission_failures(value: Any) -> list[str]:
     return failures
 
 
+def _heredoc_openers(line: str) -> list[tuple[int, int, str, bool]] | None:
+    """Return supported heredoc operators outside quotes and comments."""
+    openers: list[tuple[int, int, str, bool]] = []
+    in_single_quote = False
+    in_double_quote = False
+    index = 0
+    while index < len(line):
+        character = line[index]
+        if character == "\\" and not in_single_quote:
+            index += 2
+            continue
+        if character == "'" and not in_double_quote:
+            in_single_quote = not in_single_quote
+            index += 1
+            continue
+        if character == '"' and not in_single_quote:
+            in_double_quote = not in_double_quote
+            index += 1
+            continue
+        if character == "#" and not in_single_quote and not in_double_quote:
+            break
+        if (
+            character != "<"
+            or in_single_quote
+            or in_double_quote
+            or not line.startswith("<<", index)
+        ):
+            index += 1
+            continue
+        if line.startswith("<<<", index):
+            index += 3
+            continue
+
+        start = index
+        index += 2
+        if index < len(line) and line[index] == "-":
+            return None
+        while index < len(line) and line[index] in " \t":
+            index += 1
+        if index == len(line):
+            return None
+
+        quoted = line[index] == "'"
+        if line[index] == '"':
+            return None
+        if quoted:
+            delimiter_start = index + 1
+            delimiter_end = line.find("'", delimiter_start)
+            if delimiter_end == -1:
+                return None
+            delimiter = line[delimiter_start:delimiter_end]
+            end = delimiter_end + 1
+            if end < len(line) and line[end] not in " \t;&|()<>#":
+                return None
+        else:
+            delimiter_start = index
+            while index < len(line) and line[index] not in " \t;&|()<>":
+                index += 1
+            delimiter = line[delimiter_start:index]
+            end = index
+        if HEREDOC_DELIMITER_PATTERN.fullmatch(delimiter) is None:
+            return None
+        openers.append((start, end, delimiter, quoted))
+        index = end
+    return openers
+
+
+def _supported_python_heredoc_header(
+    line: str,
+    openers: list[tuple[int, int, str, bool]],
+) -> bool:
+    characters = list(line)
+    for start, end, _, _ in openers:
+        characters[start:end] = " " * (end - start)
+    header = "".join(characters)
+    lexer = shlex.shlex(header, posix=True, punctuation_chars=";&|()")
+    lexer.commenters = "#"
+    lexer.whitespace_split = True
+    try:
+        tokens = list(lexer)
+    except ValueError:
+        return False
+    if not tokens or any(token in SHELL_SEPARATORS for token in tokens):
+        return False
+    return PYTHON_EXECUTABLE_PATTERN.fullmatch(_executable_name(tokens[0])) is not None
+
+
+def _mask_heredoc_bodies(script: str) -> str | None:
+    """Mask data sent directly to Python while preserving shell syntax."""
+    masked: list[str] = []
+    pending: list[tuple[str, bool]] = []
+    for line in script.splitlines(keepends=True):
+        content = line.rstrip("\r\n")
+        newline = line[len(content) :]
+        if pending:
+            delimiter, quoted = pending[0]
+            if content == delimiter:
+                pending.pop(0)
+            elif not quoted and ("$" in content or "`" in content):
+                return None
+            masked.append(newline)
+            continue
+
+        openers = _heredoc_openers(content)
+        if openers is None:
+            return None
+        if not openers:
+            masked.append(line)
+            continue
+        if len(openers) > MAX_HEREDOC_QUEUE or not _supported_python_heredoc_header(
+            content, openers
+        ):
+            return None
+        pending.extend((delimiter, quoted) for _, _, delimiter, quoted in openers)
+        masked.append(line)
+    if pending:
+        return None
+    return "".join(masked)
+
+
+def _normalize_ansi_c_quote(match: re.Match[str]) -> str:
+    body = match.group("body")
+    if "\\" in body:
+        return "$__PREFLIGHT_DYNAMIC_ANSI_C__"
+    return f"'{body}'"
+
+
 def _shell_tokens(script: str) -> list[str] | None:
     normalized = re.sub(r"(?:\\|`)[ \t]*\r?\n[ \t]*", "", script)
     normalized = re.sub(r"`(?=[A-Za-z0-9_])", "", normalized)
     normalized = re.sub(r"\^(?=[A-Za-z0-9_])", "", normalized)
-    normalized = re.sub(r"\$'((?:\\.|[^'\\])*)'", r"'\1'", normalized)
+    normalized = ANSI_C_QUOTE_PATTERN.sub(_normalize_ansi_c_quote, normalized)
     normalized = POWERSHELL_LITERAL_CONCAT_PATTERN.sub(
         lambda match: "".join(
             part.group(2) for part in POWERSHELL_LITERAL_PATTERN.finditer(match.group(0))
@@ -341,7 +555,20 @@ def _shell_tokens(script: str) -> list[str] | None:
 
 
 def _executable_name(token: str) -> str:
-    return token.replace("\\", "/").rsplit("/", 1)[-1].casefold()
+    return token.lstrip("@").replace("\\", "/").rsplit("/", 1)[-1].casefold()
+
+
+def _is_dynamic_command_token(token: str) -> bool:
+    """Identify shell-expanded tokens only where they select a command or Git verb."""
+    if token in {"$", "@"} or "$" in token or token.startswith("&("):
+        return True
+    if re.search(
+        r"![^!\s]+!|%[^%\s]+%|%(?:[0-9*]|~[A-Za-z0-9_$:.-]+)"
+        r"|%%?(?:~[A-Za-z]*?)?[A-Za-z](?![A-Za-z0-9_])",
+        token,
+    ):
+        return True
+    return any(marker in token for marker in ("*", "?", "[", "{", "}"))
 
 
 def _command_end(tokens: list[str], start: int) -> int:
@@ -397,10 +624,12 @@ def _command_executable(tokens: list[str], start: int, end: int) -> int | None:
                 return None
             continue
         break
+    if index < end and _is_dynamic_command_token(tokens[index]):
+        return None
     return index
 
 
-def _git_command_pushes(tokens: list[str], executable: int, end: int) -> bool:
+def _git_command_pushes(tokens: list[str], executable: int, end: int) -> bool | None:
     index = executable + 1
     while index < end:
         option = tokens[index]
@@ -409,10 +638,51 @@ def _git_command_pushes(tokens: list[str], executable: int, end: int) -> bool:
             break
         if not option.startswith("-"):
             break
-        index += 1
-        if option in GIT_OPTIONS_WITH_VALUES and "=" not in option and index < end:
+        config_value: str | None = None
+        if option == "--config-env" or option.startswith("--config-env="):
+            return None
+        if option == "-c":
+            if index + 1 == end:
+                return None
+            config_value = tokens[index + 1]
+            index += 2
+        elif option.startswith("-c="):
+            config_value = option.partition("=")[2]
             index += 1
-    return index < end and tokens[index].casefold() == "push"
+        elif option in GIT_OPTIONS_WITH_VALUES:
+            if index + 1 == end:
+                return None
+            index += 2
+        else:
+            index += 1
+        if config_value is not None:
+            if _is_dynamic_command_token(config_value) or "=" not in config_value:
+                return None
+            config_key = config_value.partition("=")[0].casefold()
+            if config_key not in SAFE_GIT_CONFIG_KEYS:
+                return None
+    if index == end:
+        return False
+    if _is_dynamic_command_token(tokens[index]):
+        return None
+    subcommand = tokens[index].casefold()
+    if subcommand == "push":
+        return True
+    if subcommand in SAFE_GIT_SUBCOMMANDS:
+        return False
+    return None
+
+
+def _contains_git_helper_environment_identifier(token: str) -> bool:
+    return (
+        re.search(
+            r"(?:^|[^A-Za-z0-9_])(?:\$?env:)?(?:git_[A-Za-z0-9_]+|pager)"
+            r"(?:\Z|[^A-Za-z0-9_])",
+            token,
+            re.IGNORECASE,
+        )
+        is not None
+    )
 
 
 def _wrapped_shell_payload(
@@ -432,22 +702,32 @@ def _wrapped_shell_payload(
         return False, None
     if name in CMD_EXECUTABLES:
         for index, argument in enumerate(arguments):
-            if argument.casefold() in {"/c", "/k"}:
-                payload = " ".join(arguments[index + 1 :])
+            command_option = CMD_COMMAND_OPTION_PATTERN.fullmatch(argument)
+            if command_option is not None:
+                payload_parts = [command_option.group("payload"), *arguments[index + 1 :]]
+                payload = " ".join(part for part in payload_parts if part)
                 return True, payload or None
+            if re.search(r"/[ck]", argument, re.IGNORECASE):
+                return True, None
         return False, None
     if name in POWERSHELL_EXECUTABLES:
         for index, argument in enumerate(arguments):
             normalized = argument.casefold()
-            if normalized in {"-encodedcommand", "-enc", "-e"}:
+            if normalized in POWERSHELL_ENCODED_COMMAND_OPTIONS:
                 return True, None
-            if normalized in {"-command", "-c"}:
+            if normalized in POWERSHELL_COMMAND_OPTIONS:
                 payload = " ".join(arguments[index + 1 :])
                 return True, payload or None
         return False, None
-    if name in {"call", "eval"}:
+    if name in {"call", "eval", "iex", "invoke-expression"}:
         payload = " ".join(arguments)
         return True, payload or None
+    if name in {"foreach-object", "icm", "invoke-command"}:
+        return True, None
+    if name in {".", "alias", "source"}:
+        return True, None
+    if name in {"start", "start.exe"}:
+        return True, None
     if name == "start-process":
         file_path: str | None = None
         for index, argument in enumerate(arguments):
@@ -459,8 +739,12 @@ def _wrapped_shell_payload(
                 break
         if file_path is None:
             return True, None
+        if _is_dynamic_command_token(file_path):
+            return True, None
         if _executable_name(file_path) not in {"git", "git.exe"}:
             return False, None
+        if any(_is_dynamic_command_token(argument) for argument in arguments):
+            return True, None
         if any(argument.strip("',").casefold() == "push" for argument in arguments):
             return True, "git push"
         return False, None
@@ -470,37 +754,62 @@ def _wrapped_shell_payload(
 def _contains_git_push(script: str, *, _depth: int = 0) -> bool | None:
     if len(script) > MAX_SHELL_SCAN_CHARS or _depth > MAX_SHELL_SCAN_DEPTH:
         return None
-    substitutions = _backtick_substitutions(script)
-    if substitutions is None:
+    masked_script = _mask_heredoc_bodies(script)
+    if masked_script is None:
+        return None
+    script = masked_script
+    backtick_scan = _scan_backtick_substitutions(script)
+    if backtick_scan is None:
         continued_script = re.sub(r"(?:\\|`)[ \t]*\r?\n[ \t]*", "", script)
-        substitutions = _backtick_substitutions(continued_script)
-        if substitutions is None:
+        backtick_scan = _scan_backtick_substitutions(continued_script)
+        if backtick_scan is None:
             return None
+        script = continued_script
+    substitutions, marked_script = backtick_scan
     for payload in substitutions:
         if _depth >= MAX_SHELL_SCAN_DEPTH:
             return None
         nested = _contains_git_push(payload, _depth=_depth + 1)
         if nested is not False:
             return nested
-    tokens = _shell_tokens(script)
+    tokens = _shell_tokens(marked_script)
     if tokens is None:
         return None
 
     index = 0
+    git_environment_configured = False
     while index < len(tokens):
+        if tokens[index : index + 2] in (["&", "("], ["&", "{"]):
+            return None
         if tokens[index] in SHELL_SEPARATORS:
             index += 1
             continue
+        if tokens[index].casefold() in SHELL_CONTROL_FLOW_WORDS:
+            return None
         end = _command_end(tokens, index)
+        if index + 2 < end and tokens[index + 1 : index + 3] == ["()", "{"]:
+            return None
         executable = _command_executable(tokens, index, end)
         if executable is None:
             return None
         if executable == end:
+            if any(
+                _contains_git_helper_environment_identifier(token) for token in tokens[index:end]
+            ):
+                git_environment_configured = True
             index = end
             continue
         name = _executable_name(tokens[executable])
-        if name in {"git", "git.exe"} and _git_command_pushes(tokens, executable, end):
-            return True
+        if name in CMD_EXECUTABLES:
+            end = len(tokens)
+        if any(_contains_git_helper_environment_identifier(token) for token in tokens[index:end]):
+            git_environment_configured = True
+        if name in {"git", "git.exe"}:
+            if git_environment_configured:
+                return None
+            pushes = _git_command_pushes(tokens, executable, end)
+            if pushes is not False:
+                return pushes
         wrapped, payload = _wrapped_shell_payload(tokens, executable, end)
         if wrapped:
             if payload is None or _depth >= MAX_SHELL_SCAN_DEPTH:
@@ -508,12 +817,25 @@ def _contains_git_push(script: str, *, _depth: int = 0) -> bool | None:
             nested = _contains_git_push(payload, _depth=_depth + 1)
             if nested is not False:
                 return nested
+            index = end
+            continue
+        direct_name = name.removesuffix(".exe")
+        if (
+            direct_name not in SAFE_DIRECT_EXECUTABLES
+            and name not in POSIX_SHELL_EXECUTABLES
+            and name not in CMD_EXECUTABLES
+            and name not in POWERSHELL_EXECUTABLES
+            and PYTHON_EXECUTABLE_PATTERN.fullmatch(name) is None
+        ):
+            return None
         index = end
     return False
 
 
-def _backtick_substitutions(script: str) -> list[str] | None:
+def _scan_backtick_substitutions(script: str) -> tuple[list[str], str] | None:
     payloads: list[str] = []
+    marked_parts: list[str] = []
+    last_marked = 0
     in_single_quote = False
     in_double_quote = False
     index = 0
@@ -541,8 +863,16 @@ def _backtick_substitutions(script: str) -> list[str] | None:
                 continue
             return None
         payloads.append(script[index + 1 : closing])
+        marked_parts.extend((script[last_marked:index], "$__PREFLIGHT_DYNAMIC_BACKTICK__"))
+        last_marked = closing + 1
         index = closing + 1
-    return payloads
+    marked_parts.append(script[last_marked:])
+    return payloads, "".join(marked_parts)
+
+
+def _backtick_substitutions(script: str) -> list[str] | None:
+    scan = _scan_backtick_substitutions(script)
+    return None if scan is None else scan[0]
 
 
 def _checkout_failures(step: dict[Any, Any]) -> list[str]:
@@ -563,6 +893,38 @@ def _checkout_failures(step: dict[Any, Any]) -> list[str]:
     return ["checkout_persist_credentials"]
 
 
+def _workflow_secret_reference(document: Any) -> bool | None:
+    stack = [document]
+    seen_containers: set[int] = set()
+    scanned_nodes = 0
+    while stack:
+        scanned_nodes += 1
+        if scanned_nodes > MAX_WORKFLOW_SCAN_NODES:
+            return None
+        current = stack.pop()
+        if isinstance(current, str):
+            if any(
+                SECRETS_IDENTIFIER_PATTERN.search(expression)
+                for expression in WORKFLOW_EXPRESSION_PATTERN.findall(current)
+            ):
+                return True
+            continue
+        if not isinstance(current, (dict, list)):
+            continue
+        identity = id(current)
+        if identity in seen_containers:
+            continue
+        seen_containers.add(identity)
+        if isinstance(current, dict):
+            if any(isinstance(key, str) and key.casefold() == "secrets" for key in current):
+                return True
+            for key, value in current.items():
+                stack.extend((key, value))
+        else:
+            stack.extend(current)
+    return False
+
+
 def workflow_failures(text: str) -> list[str]:
     """Inspect parsed workflow permissions and shell steps."""
     try:
@@ -573,6 +935,11 @@ def workflow_failures(text: str) -> list[str]:
         return ["invalid_yaml"]
 
     failures: list[str] = []
+    capability_reference = _workflow_secret_reference(document)
+    if capability_reference is None:
+        failures.append("ambiguous_secret_reference")
+    elif capability_reference:
+        failures.append("secret_reference")
     if "permissions" not in document:
         failures.append("missing_top_level_permissions")
     else:

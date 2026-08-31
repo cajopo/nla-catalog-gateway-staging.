@@ -187,6 +187,45 @@ def test_missing_top_level_permissions_fails_closed(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize(
+    "jobs",
+    [
+        "  test:\n    steps:\n      - run: echo safe\n"
+        "        env:\n          TOKEN: ${{ secrets.PAT }}\n",
+        "  test:\n    steps:\n      - run: echo safe\n"
+        "        env:\n          TOKEN: \"${{ secrets['PAT'] }}\"\n",
+        "  test:\n    steps:\n      - run: echo safe\n"
+        "        env:\n          PAYLOAD: ${{ toJSON(secrets) }}\n",
+        "  call:\n    uses: owner/repository/.github/workflows/reuse.yml@main\n"
+        "    secrets: inherit\n",
+        "  call:\n    uses: owner/repository/.github/workflows/reuse.yml@main\n"
+        "    secrets: {token: synthetic-placeholder}\n",
+    ],
+)
+def test_workflow_secret_capabilities_are_rejected(jobs: str) -> None:
+    workflow = "permissions: read-all\njobs:\n" + jobs
+    assert "secret_reference" in preflight.workflow_failures(workflow)
+
+
+def test_workflow_secret_expression_in_comment_is_safe() -> None:
+    workflow = (
+        "permissions: read-all\n"
+        "# Documentation only: ${{ secrets.PAT }}\n"
+        "jobs:\n  test:\n    steps:\n      - run: echo safe\n"
+    )
+    assert preflight.workflow_failures(workflow) == []
+
+
+def test_workflow_secret_scan_is_bounded_and_cycle_safe(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    recursive: list[object] = []
+    recursive.append(recursive)
+    assert preflight._workflow_secret_reference(recursive) is False
+    monkeypatch.setattr(preflight, "MAX_WORKFLOW_SCAN_NODES", 0)
+    assert "ambiguous_secret_reference" in preflight.workflow_failures("permissions: read-all\n")
+
+
+@pytest.mark.parametrize(
     "workflow",
     [
         "permissions: *dangerous\n",
@@ -253,7 +292,122 @@ def test_obfuscated_git_push_is_rejected(tmp_path: Path, command: str) -> None:
         "      - run: |\n" + "\n".join(f"          {line}" for line in command.splitlines()) + "\n"
     )
     root = _repo(tmp_path, {".github/workflows/test.yml": workflow})
-    assert "workflow:git_push" in _reasons(preflight.run_preflight(root))
+    assert {"workflow:git_push", "workflow:ambiguous_run_step"} & set(
+        _reasons(preflight.run_preflight(root))
+    )
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "g=git; $g push origin main",
+        "x=pu; git ${x}sh origin main",
+        "$(printf git) push origin main",
+        "{git,push} origin main",
+        '$g="git"; & $g push origin main',
+        '& ("{0}{1}" -f "g","it") push origin main',
+        "cmd /v:on /c set g=git^& !g! push origin main",
+        "Start-Process $g -ArgumentList push",
+    ],
+)
+def test_dynamic_git_command_positions_fail_closed(tmp_path: Path, command: str) -> None:
+    assert preflight._contains_git_push(command) is None
+    workflow = (
+        "permissions: read-all\njobs:\n  test:\n    steps:\n      - run: |\n"
+        + "\n".join(f"          {line}" for line in command.splitlines())
+        + "\n"
+    )
+    root = _repo(tmp_path, {".github/workflows/test.yml": workflow})
+    assert "workflow:ambiguous_run_step" in _reasons(preflight.run_preflight(root))
+
+
+@pytest.mark.parametrize(
+    ("command", "expected"),
+    [
+        ("git -c alias.x=push x origin main", None),
+        (
+            "GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=alias.x GIT_CONFIG_VALUE_0=push git x origin main",
+            None,
+        ),
+        ("git config alias.x push; git x origin main", None),
+        ("git --paginate -c core.pager='git push origin main' log -1", None),
+        ("git -c diff.external='git push origin main' diff", None),
+        ("git -c core.fsmonitor='git push origin main' status", None),
+        (r"g$'\x69't push origin main", None),
+        (r"git p$'\x75'sh origin main", None),
+        ('f(){ git "$@"; }; f push', None),
+        ("& (Get-Command git) push origin main", None),
+        ("Invoke-Expression 'git push origin main'", True),
+        ("iex $payload", None),
+        ("Invoke-Command -ScriptBlock { git push origin main }", None),
+        ("1 | ForEach-Object { git push origin main }", None),
+        ('function Invoke-Git { git "$args" }; Invoke-Git push', None),
+        ("cmd /c for %%G in (git) do %%G push origin main", None),
+        ("cmd /c for %%G in (item) do git push origin main", None),
+        ("pwsh -NoP -Com 'git push origin main'", True),
+        ("powershell /Com 'git push origin main'", True),
+        ("pwsh -Enco synthetic-payload", None),
+        ("cmd /d/q/c git push origin main", True),
+        ("cmd /v:on/c git push origin main", True),
+        ("cmd /x/c git push origin main", None),
+        ("Start-Process git -ArgumentList $subcommand,origin,main", None),
+        ("source $script", None),
+        (". ./script.sh", None),
+        ("while true; do git push origin main; done", None),
+        ("until false; do $g push origin main; done", None),
+        ("select item in value; do git push origin main; done", None),
+        ("if false; then :; else git push origin main; fi", None),
+        ("if (1 -eq 1) { git push origin main }", None),
+        ("switch (1) { 1 { git push origin main } }", None),
+        ("{ git push origin main; }", None),
+        ("GIT_EXTERNAL_DIFF='git push origin main' git diff", None),
+        (
+            "GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=diff.external "
+            "GIT_CONFIG_VALUE_0='git push origin main' git diff",
+            None,
+        ),
+        ("export GIT_EXTERNAL_DIFF='git push origin main'; git diff", None),
+        ("$env:GIT_EXTERNAL_DIFF='git push origin main'; git diff", None),
+        ("cmd /c set GIT_EXTERNAL_DIFF=git-push-helper ^& git diff", None),
+        ("cmd /d/q/c set GIT_EXTERNAL_DIFF=git-push-helper ^& git diff", None),
+        ("declare -x GIT_EXTERNAL_DIFF=git-push-helper; git diff", None),
+        ("declare --export GIT_EXTERNAL_DIFF=git-push-helper; git diff", None),
+        ("typeset -x GIT_EXTERNAL_DIFF=git-push-helper; git diff", None),
+        ("readonly GIT_EXTERNAL_DIFF=git-push-helper; git diff", None),
+        ("Set-Item Env:GIT_EXTERNAL_DIFF git-push-helper; git diff", None),
+        ("Set-Item -Path Env:GIT_EXTERNAL_DIFF -Value git-push-helper; git diff", None),
+        ("Set-Content Env:GIT_EXTERNAL_DIFF git-push-helper; git diff", None),
+        ("New-Item Env:GIT_EXTERNAL_DIFF -Value git-push-helper; git diff", None),
+        ("si Env:GIT_EXTERNAL_DIFF git-push-helper; git diff", None),
+        ("PAGER='git push origin main' git --paginate log -1", None),
+        ("export PAGER='git push origin main'; git --paginate log -1", None),
+        ("$env:PAGER='git push origin main'; git --paginate log -1", None),
+        ("&{git push origin main}", None),
+        (".{git push origin main}", None),
+        ("try{git push origin main}catch{}", None),
+        ("do{git push origin main;break}while(1)", None),
+        ("trap{git push origin main}", None),
+        ("1|ForEach-Object{git push origin main}", None),
+        ("Invoke-Command{git push origin main}", None),
+        ("icm{git push origin main}", None),
+        ("cmd /c @git push origin main", True),
+        ("cmd /d/q/c @@git push origin main", True),
+        ("&(Get-Command git) push origin main", None),
+        ("&('git') push origin main", None),
+        ("`printf g`it push origin main", None),
+        ("g`printf i`t push origin main", None),
+        ("echo safe |& git push origin main", True),
+        ("echo safe|&$g push origin main", None),
+        ('cmd /c start "" /b /wait git push origin main', None),
+        ("cmd /c start git push origin main", None),
+        ("xargs git push origin main", None),
+        ("parallel git push origin main", None),
+        ("alias python=bash; python - <<'PY'\ngit push origin main\nPY\n", None),
+        ("python(){ bash; }; python - <<'PY'\ngit push origin main\nPY\n", None),
+    ],
+)
+def test_bounded_dynamic_dispatchers_fail_closed(command: str, expected: bool | None) -> None:
+    assert preflight._contains_git_push(command) is expected
 
 
 @pytest.mark.parametrize(
@@ -264,7 +418,6 @@ def test_obfuscated_git_push_is_rejected(tmp_path: Path, command: str) -> None:
         "printf '%s' 'git push'",
         "echo \"bash -c 'git push origin main'\"",
         "printf '%s' 'cmd /c git push origin main'",
-        'Write-Output "g`it p`ush origin main"',
         "bash -c 'git status'",
         "sh -x",
         "cmd /q",
@@ -274,12 +427,55 @@ def test_obfuscated_git_push_is_rejected(tmp_path: Path, command: str) -> None:
         "echo '`git push origin main`'",
         "Start-Process git -ArgumentList --version",
         "Start-Process echo -ArgumentList 'git push origin main'",
+        'echo "$g push origin main"',
+        "printf '%s\\n' \"$output\"",
+        'output="$(docker run --rm image)"',
+        'docker run "$image"',
+        'git status "$ref"',
+        'git -c color.ui=never status "$ref"',
+        "echo {git,push}",
+        "Write-Output $g",
+        "cmd /v:on /c echo !g! push origin main",
+        'Start-Process echo -ArgumentList "$g push origin main"',
+        "printf '%s' \"$(printf git)\"",
+        "git version",
+        "git diff --stat",
+        "git log -1",
+        "git show HEAD",
+        "git rev-parse HEAD",
+        "git ls-files",
+        "git cat-file -t HEAD",
+        r"printf $'\x69'",
+        r"value=$'\x69'",
+        "pwsh -NoProfile -Com 'Write-Output safe'",
+        "cmd /d/s/c echo safe",
+        "cmd /e:on/c echo safe",
+        "echo 'while true; do git push origin main; done'",
+        "Write-Output 'if (1) { git push origin main }'",
+        "SAFE=value git status",
+        "Set-Item Env:GIT_EXTERNAL_DIFF git-push-helper; Write-Output safe",
+        "cmd /c set GIT_EXTERNAL_DIFF=git-push-helper",
+        "PAGER=git-push-helper",
+        "cmd /c @echo git push origin main",
+        "echo safe |& cat",
+        "echo 'start git push origin main'",
     ],
 )
 def test_safe_shell_commands_are_not_rejected(tmp_path: Path, command: str) -> None:
-    workflow = f"permissions: read-all\njobs:\n  test:\n    steps:\n      - run: {command}\n"
+    workflow = (
+        "permissions: read-all\njobs:\n  test:\n    steps:\n      - run: |\n"
+        + "\n".join(f"          {line}" for line in command.splitlines())
+        + "\n"
+    )
     root = _repo(tmp_path, {".github/workflows/test.yml": workflow})
-    assert "workflow:git_push" not in _reasons(preflight.run_preflight(root))
+    assert preflight.run_preflight(root)["ok"] is True
+
+
+def test_repository_workflows_remain_accepted() -> None:
+    workflow_root = PREFLIGHT_PATH.parents[1] / ".github" / "workflows"
+    for name in ("ci.yml", "codeql.yml"):
+        text = (workflow_root / name).read_text(encoding="utf-8")
+        assert preflight.workflow_failures(text) == []
 
 
 @pytest.mark.parametrize(
@@ -289,6 +485,10 @@ def test_safe_shell_commands_are_not_rejected(tmp_path: Path, command: str) -> N
         "powershell -EncodedCommand synthetic-payload",
         "sudo -u user git push origin main",
         "time -p git push origin main",
+        'bash -c "$payload"',
+        'eval "$payload"',
+        "cmd /c %command%",
+        'Write-Output "g`it p`ush origin main"',
     ],
 )
 def test_ambiguous_shell_wrappers_fail_closed(tmp_path: Path, command: str) -> None:
@@ -853,6 +1053,12 @@ def test_ambiguous_permission_values_fail_closed(
         ("command git status", False),
         ("Start-Process -NoNewWindow", None),
         ("Start-Process -FilePath", None),
+        ("git --config-env=color.ui=COLOR_VALUE status", None),
+        ("git -c", None),
+        ("git -c $config status", None),
+        ("git -c color.ui status", None),
+        ("git -C repository status", False),
+        ("git -C", None),
     ],
 )
 def test_shell_token_scanner_distinguishes_commands(
@@ -860,6 +1066,89 @@ def test_shell_token_scanner_distinguishes_commands(
     expected: bool | None,
 ) -> None:
     assert preflight._contains_git_push(script) is expected
+
+
+@pytest.mark.parametrize(
+    ("token", "expected"),
+    [
+        ("git", False),
+        ("$", True),
+        ("$tool", True),
+        ("${tool}", True),
+        ("!tool!", True),
+        ("%tool%", True),
+        ("%1", True),
+        ("{git,push}", True),
+        ("{1..2}", True),
+        ("{0}{1}", True),
+        ("g?t", True),
+        ("g*t", True),
+        ("[g]it", True),
+    ],
+)
+def test_dynamic_command_token_classifier(token: str, expected: bool) -> None:
+    assert preflight._is_dynamic_command_token(token) is expected
+
+
+@pytest.mark.parametrize(
+    "script",
+    [
+        "python - <<'PY'\npaths = glob('codeql-results/*.sarif')\nPY\n",
+        "python - <<PY\nprint('plain body')\nPY\n",
+        "python - <<'PY'\r\nprint('crlf')\r\nPY\r\n",
+        "python - <<'ONE' <<'TWO'\nfirst body\nONE\nsecond body\nTWO\n",
+        "python - <<'PY' # data for Python\nprint('safe')\nPY\n",
+        "echo \"python - <<'PY'\"",
+        "# python - <<'PY'",
+        'python - <<<"$output"',
+    ],
+)
+def test_python_heredoc_data_and_false_openers_are_safe(script: str) -> None:
+    assert preflight._contains_git_push(script) is False
+
+
+@pytest.mark.parametrize(
+    "script",
+    [
+        'python - <<"PY"\nprint("safe")\nPY\n',
+        "python - <<-'PY'\nprint('safe')\nPY\n",
+        "python - <<'PY'\nprint('missing terminator')\n",
+        "python - <<$DELIMITER\nprint('safe')\nDELIMITER\n",
+        "bash <<'EOF'\ngit push origin main\nEOF\n",
+        "cat <<'EOF' | sh\ngit push origin main\nEOF\n",
+        "python - <<'PY'x\nprint('safe')\nPYx\n",
+        f"python - <<'{'A' * 65}'\nprint('safe')\n{'A' * 65}\n",
+        "python - <<'PY'\nprint('safe')\n PY\n",
+        "python - <<PY\nprint($(command))\nPY\n",
+        "python - <<PY\nprint(`command`)\nPY\n",
+        "python 'unterminated <<'PY'\nPY\n",
+    ],
+)
+def test_ambiguous_or_executable_heredocs_fail_closed(script: str) -> None:
+    assert preflight._contains_git_push(script) is None
+
+
+def test_heredoc_parser_error_branches_fail_closed() -> None:
+    for script in (
+        "python - <<   'PY'\nprint('safe')\nPY\n",
+        "python - <<",
+        "python - <<'PY",
+        "python - <<'PY' '\nPY\n",
+    ):
+        result = preflight._contains_git_push(script)
+        if "print" in script:
+            assert result is False
+        else:
+            assert result is None
+
+
+def test_heredoc_queue_bound_fails_closed() -> None:
+    openers = " ".join(f"<<'D{index}'" for index in range(preflight.MAX_HEREDOC_QUEUE + 1))
+    assert preflight._contains_git_push(f"python - {openers}\n") is None
+
+
+def test_function_declaration_with_scope_fails_closed() -> None:
+    assert preflight._contains_git_push("function global:Run() { git status }") is None
 
 
 def test_shell_scanner_bounds_fail_closed() -> None:
