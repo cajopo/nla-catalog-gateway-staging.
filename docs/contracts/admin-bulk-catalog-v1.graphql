@@ -1,0 +1,86 @@
+query NlaCatalogBaselineV1 {
+  products(sortKey: ID) {
+    edges {
+      node {
+        __typename
+        id
+        handle
+        title
+        status
+        productType
+        vendor
+        tags
+        updatedAt
+        featuredMedia {
+          preview {
+            image {
+              url
+            }
+          }
+        }
+        variants {
+          edges {
+            node {
+              __typename
+              id
+              title
+              sku
+              barcode
+              price
+              inventoryQuantity
+              selectedOptions {
+                name
+                value
+              }
+              metafields(namespace: "nla") {
+                edges {
+                  node {
+                    __typename
+                    namespace
+                    key
+                    type
+                    value
+                  }
+                }
+              }
+            }
+          }
+        }
+        nlaMetafields: metafields(namespace: "nla") {
+          edges {
+            node {
+              __typename
+              namespace
+              key
+              type
+              value
+            }
+          }
+        }
+        syncMetafields: metafields(namespace: "sync") {
+          edges {
+            node {
+              __typename
+              namespace
+              key
+              type
+              value
+            }
+          }
+        }
+        resourcePublicationsV2 {
+          edges {
+            node {
+              __typename
+              isPublished
+              publication {
+                id
+                name
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
