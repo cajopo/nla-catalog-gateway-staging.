@@ -1,10 +1,13 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "generatedDate": "2026-08-31",
   "artifact": {
     "bytes": 958955520,
     "quickCheck": "ok",
-    "sha256": "7c20fe5c2662c5fbdf09a5170b9bff5a9d89f5ffb2f2bdf0ab50d612a945b181"
+    "actualSha256": "c6a167188fb2e4a7f4587bcd35e8dc6daad1a9224f515b0c7e807cc712eba214",
+    "sidecarClaimedSha256": "7c20fe5c2662c5fbdf09a5170b9bff5a9d89f5ffb2f2bdf0ab50d612a945b181",
+    "sidecarMatchesActual": false,
+    "sidecarPrecedesFinalDatabaseMtime": true
   },
   "classification": {
     "products": 291795,

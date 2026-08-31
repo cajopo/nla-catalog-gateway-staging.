@@ -10,7 +10,8 @@
 |---|---|
 | Database | `catalog_gateway-taxonomy-v2.sqlite3` |
 | Bytes | 958,955,520 |
-| SHA-256 | `7c20fe5c2662c5fbdf09a5170b9bff5a9d89f5ffb2f2bdf0ab50d612a945b181` |
+| Actual SHA-256 | `c6a167188fb2e4a7f4587bcd35e8dc6daad1a9224f515b0c7e807cc712eba214` |
+| Sidecar-claimed SHA-256 | `7c20fe5c2662c5fbdf09a5170b9bff5a9d89f5ffb2f2bdf0ab50d612a945b181` |
 | `PRAGMA quick_check` | `ok` |
 | Products | 291,795 |
 | Classified `single` | 291,791 |
@@ -18,7 +19,9 @@
 | `unclassified` | 0 |
 | Searchable | 291,795 |
 
-File integrity is not the problem. Classification provenance is.
+The sidecar checksum is stale: it was written before the final database replacement recorded by the database and migration-report timestamps. Repeated hashing of the current file is stable at `c6a167…`, not the claimed `7c20fe…`. This breaks the artifact's chain of custody independently of the classification defects below.
+
+File-level SQLite integrity is otherwise not the main problem. Classification provenance is.
 
 ## Blocking findings
 
@@ -60,6 +63,7 @@ The following must not be reused as authoritative evidence:
 - unverified product-type mappings for products not observed live;
 - broad title subtype patterns as family detection;
 - the claim `unclassified = 0`;
+- the stale sidecar checksum;
 - the migrated SQLite database itself.
 
 ## Required replacement
