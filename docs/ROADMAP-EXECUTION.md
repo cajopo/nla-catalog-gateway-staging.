@@ -1,6 +1,6 @@
 # NLA catalog gateway — execution roadmap
 
-Last reconciled: 2026-09-01T02:07:51+02:00
+Last reconciled: 2026-09-01T02:59:58+02:00
 
 ## Dependency order
 
@@ -14,7 +14,7 @@ verified staging service. Live cutover remains a separate owner decision.
 
 | WS | Issue | Current state | Verified source | Next executable action |
 |---|---:|---|---|---|
-| Platform/CI | #6 | REVIEW | Draft PR #20 carries remediated code baseline `9d351e5`; exact CI and CodeQL are green | Rerun gates on docs-inclusive head, independent final review |
+| Platform/CI | #6 | REVIEW | Draft PR #20 carries remote candidate `73f3f78`; exact CI and CodeQL are green | Docs-inclusive gates and reviewer v4 |
 | Sharding spike | #8 | BACKLOG | PR #21 closed/unmerged | Reproduce later only if limited fallback has value |
 | Taxonomy | #19 | BACKLOG | PR #22 closed/unmerged | Reimplement contract after Platform |
 | Data/Bulk | #5 | BLOCKED | PR #23–#25 closed/unmerged; real data root missing | Freeze code contract after Platform; real-baseline proof remains blocked |
@@ -34,24 +34,25 @@ verified staging service. Live cutover remains a separate owner decision.
 
 ### Wave 0 — Platform
 
-Documentation-inclusive SHAs `f211b26` and `00f0703` each passed CI and CodeQL but received
-`CHANGES REQUIRED` in successive independent reviews. The second review found four High
-capability classes: `env` split dispatch, `Start-Process` into shells, PowerShell provider or
-function overrides, and Git-helper environment/`GITHUB_ENV` dispatch.
+Documentation-inclusive SHAs `f211b26` and `00f0703` received `CHANGES REQUIRED` in successive
+independent reviews despite green CI and CodeQL. Documentation head `82ec0e4` then received a
+third `CHANGES REQUIRED`: one High remained because shell and PowerShell `$()` subexpressions
+could conceal forbidden dispatch.
 
-Remediated code baseline `9d351e5` passes local and independent stable-freeze Ruff, format,
-build, 537 tests at 100% line/branch, preflight over 24 indexed files, `pip check`, and audit
-with no known vulnerabilities; exact remote CI adds Python 3.12/3.13 isolated builds, audit,
-and container smoke. Exact CodeQL/SARIF is green with zero security findings.
+Remote code candidate `73f3f78` and local equivalent `db86bd3` share exact tree `a72a1c6`.
+Local Ruff, format, build, audit, Docker build/smoke, static replay, 564 tests at 100%
+line/branch, preflight
+over 25 indexed files, and a static red team with zero High pass. Exact remote CI
+`33456765768` and CodeQL `33456765740` also pass; CI covers both supported interpreters,
+isolated builds, audit, and container smoke, while CodeQL reports zero security findings.
 
-The gate uses a bounded static contract and conservative whole-class bans for the reviewed
-dispatch and mutation capabilities, path-qualified direct executables, risky Git-helper,
-PAGER, PATH, and PATHEXT environment controls, command files, and Bash indirect expansion.
-Workflow permissions stay read-only, workflow secrets are forbidden, and checkout credentials
-must not persist. Python, Docker, and arbitrary transitively invoked scripts remain outside
-semantic analysis; this is not absolute proof over indirect execution. Exit still requires
-all checks on the final
-documentation-inclusive SHA, a clean-checkout review of that exact SHA, and no unresolved
+The bounded static gate retains the D-007 capability controls and adds conservative whole-class
+bans for `$()`, `<()`, `>()`, and `@()`. Container smoke replaces command substitution with a
+directly auditable `docker run | python` pipeline. Workflow permissions stay read-only,
+workflow secrets are forbidden, and checkout credentials must not persist.
+Python, Docker, and arbitrary transitively invoked scripts remain outside semantic analysis;
+this is not absolute proof over indirect execution. Exit still requires completed green gates
+and reviewer v4 on the same final documentation-inclusive SHA, with no unresolved
 Blocker/Critical/High finding.
 
 ### Wave 1 — Canonical data contracts

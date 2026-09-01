@@ -76,7 +76,8 @@
 
 ## D-007 — Ban reviewed workflow capability classes fail-closed
 
-- Status: accepted technical execution decision on 2026-09-01; final exact-SHA review pending.
+- Status: accepted technical execution decision on 2026-09-01; broadened by D-008 after
+  reviewer v3.
 - Evidence: documentation-inclusive head `00f07033baaa465ac920e620265bff570a104d03`
   (tree `3e4d99dc188122f9dae4ca937d5363a3ac2fc2a7`) passed CI `33446860246` and
   CodeQL `33446860231`, but independent review v2 returned `CHANGES REQUIRED` with four High
@@ -94,6 +95,27 @@
 - Consequence: a workflow using a banned class must be rewritten into a statically auditable
   form or proposed as a separately reviewed policy change. Final merge eligibility still
   requires green gates and independent approval on one documentation-inclusive exact SHA.
+
+## D-008 — Reject inline subexpressions and stream Docker output directly
+
+- Status: accepted technical execution decision on 2026-09-01; final exact-SHA gates pending.
+- Evidence: reviewer v3 returned `CHANGES REQUIRED` on documentation head
+  `82ec0e472d4cfb4df131e95d87a445a7b56850b4` with one High for shell and PowerShell `$()`
+  subexpressions. Remote candidate `73f3f78819002ca21cea46be38b94d0eb874bb76` and local
+  equivalent `db86bd356d4c356f6cc9674008dc9c5e5698ab79` share exact tree
+  `a72a1c6016db2fcd8611ff5ae1ee770e5e394947`. Local gates and static red team pass; CI
+  `33456765768` and CodeQL `33456765740` pass, with zero CodeQL security findings.
+- Decision: fail closed on the entire inline-command classes `$()`, `<()`, `>()`, and `@()`.
+  Replace the container smoke's banned command-substitution assignment with a directly
+  auditable `docker run | python` pipeline. The conservative subexpression ban replaces
+  attempts to infer whether an individual nested expression is safe; it does not ban that
+  direct pipeline.
+- Capability boundary: D-007 remains in force, including read-only permissions, no workflow
+  secret references, and `persist-credentials: false`. Arbitrary transitively invoked Python,
+  Docker, and other scripts remain outside semantic analysis.
+- Consequence: workflows needing a banned construct must be rewritten into a statically
+  auditable form or proposed as a separate reviewed policy change. Code-baseline PASS does not
+  authorize merge; final documentation-inclusive gates and reviewer v4 remain mandatory.
 
 ## Reserved decisions
 

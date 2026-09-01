@@ -74,34 +74,30 @@ Required on the pull request:
 6. container build and smoke succeeds;
 7. independent review before merge.
 
-## Remediated candidate evidence — 2026-09-01
+## Subexpression-remediated candidate evidence — 2026-09-01
 
-Code baseline: `9d351e5e78537afe3133bf20bb2b18d4b96abc9e` (tree
-`c59a59540c4301d05587fb83730e9c7ce1e30c38`).
+Remote code candidate: `73f3f78819002ca21cea46be38b94d0eb874bb76`.
+Local equivalent commit: `db86bd356d4c356f6cc9674008dc9c5e5698ab79`.
+Shared exact tree: `a72a1c6016db2fcd8611ff5ae1ee770e5e394947`.
 
-- CI run `33453261603`: success on Python 3.12 and 3.13; 537 tests, zero
-  skipped/xfailed, 876 statements and 472 branches at 100%, preflight over 24 indexed files,
-  isolated sdist/wheel build, development dependency audit, and container smoke.
-- CodeQL run `33453261610`: success; job `99687655049` completed. One SARIF has zero security
-  findings and two diagnostics; artifact `9780557282` has digest
-  `b4b6ff4a50dd8427a1b9a15427871b0a365d2f7454703cb9a705b70fd1899da5`.
-- Green documentation-inclusive predecessors `f211b26` and `00f0703` both received independent
-  `CHANGES REQUIRED` verdicts. Review v2 found four High classes covering `env` split dispatch,
-  `Start-Process`, PowerShell provider/function overrides, and Git-helper environment or
-  `GITHUB_ENV` dispatch.
-- Local and independent stable-freeze QA pass Ruff, format, build, 537 tests, zero
-  skipped/xfailed, 876 statements/472 branches at 100%, preflight over 24 files, `pip check`,
-  and `pip-audit` with no known vulnerabilities; the local package itself was skipped by audit.
-- Inline commands retain a static positive allowlist plus conservative whole-class bans for
-  the reviewed dispatch/mutator capabilities, risky Git-helper, PAGER, PATH, and PATHEXT
-  environment, `GITHUB_ENV`/`GITHUB_PATH`, path-qualified direct executables, and Bash indirect
-  expansion.
-- The capability boundary enforces read-only permissions, rejects workflow secret references,
-  and requires `persist-credentials: false`.
+- CI run `33456765768`: success. Python 3.12/3.13 pass 564 tests, 877 statements/472
+  branches at 100%, preflight over 25 files, isolated builds, audit, and container smoke.
+- CodeQL run `33456765740`: success. Job `99698283209` produced one SARIF with zero security
+  findings and two diagnostics. Artifact `9781748648` has digest
+  `sha256:2957b71a838174e1586a001647eecbb29658a0b06a0db671ed3c360a0cea13bc`.
+- Reviewer v3 on documentation head `82ec0e4` returned `CHANGES REQUIRED` for one High:
+  shell/PowerShell `$()` subexpressions.
+- Local Ruff, format, build, audit, Docker build/smoke, 564 tests with zero skipped/xfailed,
+  877 statements/472 branches at 100%, and preflight over 25 files pass. Static red team also
+  passes with zero High.
+- D-007 controls remain. D-008 adds conservative whole-class bans for `$()`, `<()`, `>()`,
+  and `@()`, while container smoke uses a directly auditable `docker run | python` pipeline.
+- The capability boundary still enforces read-only permissions, rejects workflow secret
+  references, and requires `persist-credentials: false`.
 - Python, Docker, and arbitrary scripts invoked transitively are not semantically interpreted;
   preflight PASS is therefore defense in depth, not absolute proof over indirect execution.
-- Final independent clean-checkout review remains required on the documentation-inclusive SHA
-  before merge.
+- Fresh documentation-inclusive CI/CodeQL and independent reviewer v4 remain required before
+  merge; code-candidate gates alone do not authorize it.
 - Known fail-closed limitations: heredoc text containing an executable-looking `git push`
   line and deliberately literal token-like Unicode escapes in JSON may be rejected.
 

@@ -1,6 +1,6 @@
 # NLA catalog gateway — current status
 
-Last verified: 2026-09-01T02:07:51+02:00
+Last verified: 2026-09-01T02:59:58+02:00
 Repository: `cajopo/nla-catalog-gateway-staging.`
 
 This document records observed state. Git, GitHub, reproducible tests, and fresh read-only
@@ -9,9 +9,11 @@ data checks take precedence over older reports.
 ## Repository truth
 
 - Current branch: `agent/platform-ci`.
-- Platform code baseline carried by this documentation revision:
-  `9d351e5e78537afe3133bf20bb2b18d4b96abc9e` (tree
-  `c59a59540c4301d05587fb83730e9c7ce1e30c38`).
+- Remote Platform code candidate carried by this documentation revision:
+  `73f3f78819002ca21cea46be38b94d0eb874bb76`, tree
+  `a72a1c6016db2fcd8611ff5ae1ee770e5e394947`.
+- Local commit `db86bd356d4c356f6cc9674008dc9c5e5698ab79` has the same exact tree and is
+  the verified local equivalent, not a second code state.
 - `main`: `4e1c2a3e8e75c1d6f264e63a9b9c29e4f4bb8310`.
 - Pull request [#20](https://github.com/cajopo/nla-catalog-gateway-staging./pull/20) is
   open, draft, unmerged, and based on `main`.
@@ -26,30 +28,39 @@ closed without merge, and remain review material rather than completed work. Pul
 
 ## Platform gate
 
-The code baseline `9d351e5` is green. It is not yet eligible for merge because CI and CodeQL
-must rerun on the documentation-inclusive head containing this file, and an independent
-clean-checkout review must approve that same final revision. PR #20 remains draft.
+The remote code candidate `73f3f78` passes exact CI and CodeQL. It is still not eligible for
+merge: CI and CodeQL must run again on the documentation-inclusive head containing this file,
+and independent reviewer v4 must approve that same final revision. PR #20 remains draft.
 
 | Check | Result | Evidence |
 |---|---|---|
-| Ruff check and format | PASS | Local frozen diff and CI Python 3.12/3.13 |
-| Pytest | PASS | 537/537, zero skipped/xfailed, 876 statements and 472 branches at 100% |
-| Repository preflight | PASS | Exact indexed candidate; 24 tracked files, zero findings |
-| Package build | PASS | Isolated sdist and wheel on Python 3.12/3.13 CI |
-| Dependency audit | PASS | No known vulnerabilities; local package itself skipped by audit |
-| Container build and smoke | PASS | Non-root foundation image and expected read-only JSON |
-| CodeQL/SARIF | PASS | Zero security findings under the configured gate |
-| Independent final review | PENDING | Required after the final documentation commit |
+| Ruff check and format | PASS | Local equivalent tree |
+| Pytest | PASS | 564/564, zero skipped/xfailed, 877 statements and 472 branches at 100% |
+| Repository preflight | PASS | Local exact indexed candidate; 25 tracked files, zero findings |
+| Package build | PASS | Local build and remote isolated sdist/wheel builds |
+| Dependency audit | PASS | Local equivalent tree |
+| Container build and smoke | PASS | Local equivalent tree |
+| Exact remote CI | PASS | Run `33456765768` |
+| Exact remote CodeQL/SARIF | PASS | Run `33456765740`; zero security findings |
+| Static red team | PASS | Zero High on the remediated tree |
+| Independent final review | PENDING | Reviewer v4 on final documentation-inclusive SHA |
 
 Exact remote evidence:
 
-- [CI run 33453261603](https://github.com/cajopo/nla-catalog-gateway-staging./actions/runs/33453261603), success;
-- [CodeQL run 33453261610](https://github.com/cajopo/nla-catalog-gateway-staging./actions/runs/33453261610), success;
-- Python 3.12 and 3.13 each completed lint, format, tests, preflight, and isolated build;
-- dependency audit and container smoke completed without skipped steps;
-- CodeQL job `99687655049` completed every step; one SARIF contains zero security findings
-  and two diagnostics. Artifact `9780557282` has digest
-  `b4b6ff4a50dd8427a1b9a15427871b0a365d2f7454703cb9a705b70fd1899da5`.
+- [CI run 33456765768](https://github.com/cajopo/nla-catalog-gateway-staging./actions/runs/33456765768):
+  `SUCCESS`. Python 3.12/3.13 jobs `99698284002`/`99698283943` pass 564 tests,
+  877 statements and 472 branches at 100%, preflight over 25 files, and isolated sdist/wheel
+  builds. Audit job `99698283934` reports zero known vulnerabilities. Container job
+  `99698283800` returns the expected JSON;
+- [CodeQL run 33456765740](https://github.com/cajopo/nla-catalog-gateway-staging./actions/runs/33456765740):
+  `SUCCESS`. Job `99698283209` produced one SARIF with zero security findings and two
+  diagnostics. Artifact `9781748648` is 36,987 bytes with digest
+  `sha256:2957b71a838174e1586a001647eecbb29658a0b06a0db671ed3c360a0cea13bc`.
+
+Local evidence on the tree shared by `db86bd3` and `73f3f78`: Ruff, format, build, audit,
+Docker build/smoke, 564 tests, 100% line and branch coverage, and preflight all pass. A static
+red-team rerun reports zero High. These code-baseline results do not replace final gates on
+the documentation-inclusive SHA.
 
 Immutable review chronology:
 
@@ -62,20 +73,20 @@ Immutable review chronology:
 - review v2 of `00f0703` still returned `CHANGES REQUIRED` with four High classes: `env`
   split-string dispatch, `Start-Process` into a shell, PowerShell function/provider overrides,
   and Git-helper environment or `GITHUB_ENV` dispatch;
-- code baseline `9d351e5` applies the second remediation. Local and independent stable-freeze
-  QA pass Ruff, format, build, 537 tests, 100% coverage, preflight, `pip check`, and
-  `pip-audit` with no known vulnerabilities; the local package itself was skipped by audit.
-  This QA is not the still-required final exact-SHA clean-checkout approval.
+- code baseline `9d351e5` applied the second remediation and became documentation-inclusive
+  head `82ec0e472d4cfb4df131e95d87a445a7b56850b4`;
+- reviewer v3 returned `CHANGES REQUIRED` on `82ec0e4` with one High: shell and PowerShell
+  `$()` subexpressions could conceal forbidden dispatch;
+- remote candidate `73f3f78` and local equivalent `db86bd3` apply the third remediation on
+  exact tree `a72a1c6016db2fcd8611ff5ae1ee770e5e394947`.
 
-The remediated contract is deliberately bounded and conservative. Inline workflow commands
-still require a static positive allowlist; whole classes now fail closed for `env` split
-dispatch, `Start-Process`, PowerShell provider/function/variable mutators, risky Git-helper,
-PAGER, PATH, and PATHEXT environment controls, `GITHUB_ENV`/`GITHUB_PATH` command files,
-path-qualified direct executables, and Bash indirect expansion. The capability boundary also
-requires read-only permissions, rejects workflow secret references, and requires checkout
-credentials to be disabled with `persist-credentials: false`. Python, Docker, and arbitrary
-scripts invoked transitively remain outside semantic analysis, so PASS is defense in depth
-rather than absolute proof about every indirect execution path. See D-007.
+The remediated contract remains bounded and conservative. D-007 controls still apply; D-008
+additionally bans the whole inline-command classes `$()`, `<()`, `>()`, and `@()`. Container
+smoke replaces command substitution with a direct `docker run | python` pipeline. The
+capability boundary still requires read-only permissions,
+rejects workflow secret references, and requires `persist-credentials: false`. Python,
+Docker, and arbitrary scripts invoked transitively remain outside semantic analysis, so local
+PASS is defense in depth rather than absolute proof about every indirect execution path.
 
 Two fail-closed limitations remain documented as Medium, not bypasses:
 
@@ -113,9 +124,8 @@ provisioned and independently verified.
 
 ## Immediate execution order
 
-1. Commit the remediated evidence and require CI and CodeQL to pass on that
-   documentation-inclusive final SHA.
-2. Run an independent clean-checkout adversarial review on the same final SHA.
+1. Commit this evidence and require fresh CI and CodeQL on the documentation-inclusive SHA.
+2. Run independent clean-checkout reviewer v4 on that same final SHA.
 3. Resolve all applicable PR #20 threads, update its body, and mark it ready for review.
 4. Merge Platform only if no Blocker, Critical, or High finding remains.
 5. Start Taxonomy, Data/Bulk, and Runtime-contract workstreams from merged `main`; do not

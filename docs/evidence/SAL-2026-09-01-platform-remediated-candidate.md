@@ -1,5 +1,10 @@
 # SAL NLA — 2026-09-01T02:07:51+02:00
 
+> **SUPERSEDED / CORRECTION — 2026-09-01:** this historical candidate became
+> documentation-inclusive head `82ec0e4`. Reviewer v3 returned `CHANGES REQUIRED` with one
+> High for shell/PowerShell `$()` subexpressions. Use
+> `SAL-2026-09-01-platform-subexpression-remediated-candidate.md` for current evidence.
+
 | WS | Issue | Branch | PR | Code baseline | CI | Review | Stato | Blocco | Prossima azione |
 |---|---:|---|---:|---|---|---|---|---|---|
 | Platform/CI | #6 | `agent/platform-ci` | #20 | `9d351e5` | CI `33453261603` and CodeQL `33453261610` PASS | Stable-freeze QA PASS; final clean exact-SHA review pending | REVIEW | Documentation-inclusive SHA not yet green and independently approved | Commit evidence, rerun gates, independent review |
