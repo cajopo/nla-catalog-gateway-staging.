@@ -1,0 +1,47 @@
+{
+  "schemaVersion": 1,
+  "provenance": {
+    "observedAt": "2026-08-31",
+    "source": "Shopify Admin read-only query recorded in GitHub issue #19",
+    "query": "product_type:\"Magic Display\"",
+    "freshness": "historical-fixture-not-current-baseline"
+  },
+  "records": [
+    {
+      "productGid": "gid://shopify/Product/11676412608780",
+      "productType": "Magic Display",
+      "tags": ["Edge of Eternities", "English", "Magic", "Magic Display", "Near Mint", "Normal"],
+      "commercialTitle": "Edge of Eternities Collector Booster Box - Edge of Eternities",
+      "language": "English",
+      "price": "399.99",
+      "inventoryQuantity": 2
+    },
+    {
+      "productGid": "gid://shopify/Product/11676436332812",
+      "productType": "Magic Display",
+      "tags": ["Ikoria: Lair of Behemoths", "Magic", "Magic Display", "Near Mint", "Normal", "Russian"],
+      "commercialTitle": "Ikoria: Lair of Behemoths Booster Box - Ikoria: Lair of Behemoths",
+      "language": "Russian",
+      "price": "249.99",
+      "inventoryQuantity": 2
+    },
+    {
+      "productGid": "gid://shopify/Product/11676358738188",
+      "productType": "Magic Display",
+      "tags": ["English", "Magic", "Magic Display", "Magic: The Gathering Foundations", "Near Mint", "Normal"],
+      "commercialTitle": "Magic: The Gathering Foundations Collector Booster Box - Magic: The Gathering Foundations",
+      "language": "English",
+      "price": "600.00",
+      "inventoryQuantity": 2
+    },
+    {
+      "productGid": "gid://shopify/Product/11676239429900",
+      "productType": "Magic Display",
+      "tags": ["English", "Magic", "Magic Display", "Near Mint", "Normal", "Outlaws of Thunder Junction"],
+      "commercialTitle": "Outlaws of Thunder Junction Collector Booster Box - Outlaws of Thunder Junction",
+      "language": "English",
+      "price": "300.00",
+      "inventoryQuantity": 1
+    }
+  ]
+}
