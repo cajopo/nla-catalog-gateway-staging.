@@ -177,28 +177,28 @@ POWERSHELL_EXECUTABLES = {"powershell", "powershell.exe", "pwsh", "pwsh.exe"}
 SAFE_DIRECT_EXECUTABLES = {
     ":",
     "cat",
-    "declare",
     "docker",
     "echo",
-    "export",
     "false",
     "get-command",
     "git",
     "new-item",
+    "ni",
     "pip-audit",
     "printf",
     "pytest",
-    "readonly",
     "ruff",
-    "set",
     "set-content",
     "set-item",
+    "sc",
     "si",
+    "saps",
     "start-process",
     "true",
-    "typeset",
     "write-output",
 }
+POWERSHELL_PROVIDER_MUTATORS = {"new-item", "ni", "sc", "set-content", "set-item", "si"}
+POWERSHELL_START_PROCESS_NAMES = {"saps", "start-process"}
 SAFE_GIT_SUBCOMMANDS = {
     "cat-file",
     "diff",
@@ -276,6 +276,16 @@ SECRETS_IDENTIFIER_PATTERN = re.compile(
     r"(?<![A-Za-z0-9_])secrets(?![A-Za-z0-9_])",
     re.IGNORECASE,
 )
+GITHUB_COMMAND_FILE_IDENTIFIER_PATTERN = re.compile(
+    r"(?<![A-Za-z0-9_])GITHUB_(?:ENV|PATH)(?![A-Za-z0-9_])",
+    re.IGNORECASE,
+)
+COMMAND_RESOLUTION_ENV_ASSIGNMENT_PATTERN = re.compile(
+    r"(?<![A-Za-z0-9_])(?:\$(?:env:(?:path|pathext)|\{env:(?:path|pathext)\})"
+    r"|(?:path|pathext))\s*\+?=",
+    re.IGNORECASE,
+)
+BASH_INDIRECT_EXPANSION_PATTERN = re.compile(r"\$\{![^}\r\n]+\}")
 
 
 class PreflightError(RuntimeError):
@@ -578,6 +588,43 @@ def _command_end(tokens: list[str], start: int) -> int:
     return end
 
 
+def _uses_env_split_string(tokens: list[str], start: int, end: int) -> bool:
+    index = start
+    while index < end and "=" in tokens[index] and not tokens[index].startswith("="):
+        index += 1
+    while index < end and _executable_name(tokens[index]) in {"command", "exec"}:
+        index += 1
+        if index < end and tokens[index] in {"--", "-p"}:
+            index += 1
+    if index == end or _executable_name(tokens[index]) != "env":
+        return False
+    index += 1
+    while index < end:
+        argument = tokens[index]
+        normalized = argument.casefold()
+        long_option = normalized.partition("=")[0]
+        if normalized.startswith("-s") or (
+            long_option.startswith("--s") and "--split-string".startswith(long_option)
+        ):
+            return True
+        if argument == "--":
+            return False
+        if "=" in argument and not argument.startswith("="):
+            index += 1
+            continue
+        option_name = argument.partition("=")[0]
+        if option_name in ENV_OPTIONS_WITHOUT_VALUES:
+            index += 1
+            continue
+        if option_name in ENV_OPTIONS_WITH_VALUES:
+            index += 1 if "=" in argument else 2
+            if index > end:
+                return False
+            continue
+        break
+    return False
+
+
 def _command_executable(tokens: list[str], start: int, end: int) -> int | None:
     index = start
     while index < end:
@@ -685,6 +732,21 @@ def _contains_git_helper_environment_identifier(token: str) -> bool:
     )
 
 
+def _is_allowed_executable_name(name: str) -> bool:
+    direct_name = name.removesuffix(".exe")
+    return (
+        direct_name in SAFE_DIRECT_EXECUTABLES
+        or name in POSIX_SHELL_EXECUTABLES
+        or name in CMD_EXECUTABLES
+        or name in POWERSHELL_EXECUTABLES
+        or PYTHON_EXECUTABLE_PATTERN.fullmatch(name) is not None
+    )
+
+
+def _is_powershell_provider_mutator(tokens: list[str], executable: int) -> bool:
+    return _executable_name(tokens[executable]).removesuffix(".exe") in POWERSHELL_PROVIDER_MUTATORS
+
+
 def _wrapped_shell_payload(
     tokens: list[str],
     executable: int,
@@ -728,26 +790,8 @@ def _wrapped_shell_payload(
         return True, None
     if name in {"start", "start.exe"}:
         return True, None
-    if name == "start-process":
-        file_path: str | None = None
-        for index, argument in enumerate(arguments):
-            if argument.casefold() in {"-filepath", "-file"}:
-                file_path = arguments[index + 1] if index + 1 < len(arguments) else None
-                break
-            if not argument.startswith("-"):
-                file_path = argument
-                break
-        if file_path is None:
-            return True, None
-        if _is_dynamic_command_token(file_path):
-            return True, None
-        if _executable_name(file_path) not in {"git", "git.exe"}:
-            return False, None
-        if any(_is_dynamic_command_token(argument) for argument in arguments):
-            return True, None
-        if any(argument.strip("',").casefold() == "push" for argument in arguments):
-            return True, "git push"
-        return False, None
+    if name.removesuffix(".exe") in POWERSHELL_START_PROCESS_NAMES:
+        return True, None
     return False, None
 
 
@@ -758,6 +802,17 @@ def _contains_git_push(script: str, *, _depth: int = 0) -> bool | None:
     if masked_script is None:
         return None
     script = masked_script
+    if BASH_INDIRECT_EXPANSION_PATTERN.search(script):
+        return None
+    resolution_script = re.sub(r"(?:\\|`)[ \t]*\r?\n[ \t]*", "", script)
+    resolution_tokens = _shell_tokens(resolution_script)
+    if COMMAND_RESOLUTION_ENV_ASSIGNMENT_PATTERN.search(resolution_script) or (
+        resolution_tokens is not None
+        and any(
+            COMMAND_RESOLUTION_ENV_ASSIGNMENT_PATTERN.search(token) for token in resolution_tokens
+        )
+    ):
+        return None
     backtick_scan = _scan_backtick_substitutions(script)
     if backtick_scan is None:
         continued_script = re.sub(r"(?:\\|`)[ \t]*\r?\n[ \t]*", "", script)
@@ -789,6 +844,8 @@ def _contains_git_push(script: str, *, _depth: int = 0) -> bool | None:
         end = _command_end(tokens, index)
         if index + 2 < end and tokens[index + 1 : index + 3] == ["()", "{"]:
             return None
+        if _uses_env_split_string(tokens, index, end):
+            return None
         executable = _command_executable(tokens, index, end)
         if executable is None:
             return None
@@ -799,6 +856,9 @@ def _contains_git_push(script: str, *, _depth: int = 0) -> bool | None:
                 git_environment_configured = True
             index = end
             continue
+        executable_token = tokens[executable].lstrip("@")
+        if "/" in executable_token or "\\" in executable_token:
+            return None
         name = _executable_name(tokens[executable])
         if name in CMD_EXECUTABLES:
             end = len(tokens)
@@ -810,6 +870,12 @@ def _contains_git_push(script: str, *, _depth: int = 0) -> bool | None:
             pushes = _git_command_pushes(tokens, executable, end)
             if pushes is not False:
                 return pushes
+        if name.removesuffix(".exe") == "printf" and any(
+            argument.startswith(("-v", "--variable")) for argument in tokens[executable + 1 : end]
+        ):
+            return None
+        if _is_powershell_provider_mutator(tokens, executable):
+            return None
         wrapped, payload = _wrapped_shell_payload(tokens, executable, end)
         if wrapped:
             if payload is None or _depth >= MAX_SHELL_SCAN_DEPTH:
@@ -819,14 +885,7 @@ def _contains_git_push(script: str, *, _depth: int = 0) -> bool | None:
                 return nested
             index = end
             continue
-        direct_name = name.removesuffix(".exe")
-        if (
-            direct_name not in SAFE_DIRECT_EXECUTABLES
-            and name not in POSIX_SHELL_EXECUTABLES
-            and name not in CMD_EXECUTABLES
-            and name not in POWERSHELL_EXECUTABLES
-            and PYTHON_EXECUTABLE_PATTERN.fullmatch(name) is None
-        ):
+        if not _is_allowed_executable_name(name):
             return None
         index = end
     return False
@@ -925,6 +984,30 @@ def _workflow_secret_reference(document: Any) -> bool | None:
     return False
 
 
+def _workflow_risky_environment(value: Any) -> bool | None:
+    if value is None:
+        return False
+    if not isinstance(value, dict):
+        return None
+    for name in value:
+        if not isinstance(name, str):
+            return None
+        if re.fullmatch(r"(?:git_[A-Za-z0-9_]+|pager|path|pathext)", name, re.IGNORECASE):
+            return True
+    return False
+
+
+def _workflow_github_command_file_reference(script: str) -> bool | None:
+    if GITHUB_COMMAND_FILE_IDENTIFIER_PATTERN.search(script):
+        return True
+    if "github_" not in script.casefold():
+        return False
+    tokens = _shell_tokens(script)
+    if tokens is None:
+        return None
+    return any(GITHUB_COMMAND_FILE_IDENTIFIER_PATTERN.search(token) for token in tokens)
+
+
 def workflow_failures(text: str) -> list[str]:
     """Inspect parsed workflow permissions and shell steps."""
     try:
@@ -940,6 +1023,11 @@ def workflow_failures(text: str) -> list[str]:
         failures.append("ambiguous_secret_reference")
     elif capability_reference:
         failures.append("secret_reference")
+    workflow_helper_environment = _workflow_risky_environment(document.get("env"))
+    if workflow_helper_environment is None:
+        failures.append("ambiguous_env")
+    elif workflow_helper_environment:
+        failures.append("risky_environment")
     if "permissions" not in document:
         failures.append("missing_top_level_permissions")
     else:
@@ -957,6 +1045,18 @@ def workflow_failures(text: str) -> list[str]:
             continue
         if "permissions" in job:
             failures.extend(_permission_failures(job["permissions"]))
+        job_helper_environment = _workflow_risky_environment(job.get("env"))
+        if job_helper_environment is None:
+            failures.append("ambiguous_env")
+        elif job_helper_environment:
+            failures.append("risky_environment")
+        container = job.get("container")
+        if isinstance(container, dict):
+            container_helper_environment = _workflow_risky_environment(container.get("env"))
+            if container_helper_environment is None:
+                failures.append("ambiguous_env")
+            elif container_helper_environment:
+                failures.append("risky_environment")
         if "steps" not in job:
             continue
         steps = job["steps"]
@@ -968,6 +1068,11 @@ def workflow_failures(text: str) -> list[str]:
                 failures.append("invalid_step")
                 continue
             failures.extend(_checkout_failures(step))
+            step_helper_environment = _workflow_risky_environment(step.get("env"))
+            if step_helper_environment is None:
+                failures.append("ambiguous_env")
+            elif step_helper_environment:
+                failures.append("risky_environment")
             if "run" not in step:
                 continue
             script = step["run"]
@@ -979,6 +1084,11 @@ def workflow_failures(text: str) -> list[str]:
                 failures.append("ambiguous_run_step")
             elif contains_push:
                 failures.append("git_push")
+            github_command_file = _workflow_github_command_file_reference(script)
+            if github_command_file is None:
+                failures.append("ambiguous_github_command_file")
+            elif github_command_file:
+                failures.append("github_command_file_reference")
     return failures
 
 

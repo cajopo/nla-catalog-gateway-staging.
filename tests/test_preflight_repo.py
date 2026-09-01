@@ -228,6 +228,215 @@ def test_workflow_secret_scan_is_bounded_and_cycle_safe(
 @pytest.mark.parametrize(
     "workflow",
     [
+        (
+            "permissions: read-all\n"
+            "env: {GIT_EXTERNAL_DIFF: git-push-helper}\n"
+            "jobs:\n  test:\n    steps:\n      - run: git diff --ext-diff\n"
+        ),
+        (
+            "permissions: read-all\n"
+            "jobs:\n  test:\n    env: {GIT_EXTERNAL_DIFF: git-push-helper}\n"
+            "    steps:\n      - run: git diff --ext-diff\n"
+        ),
+        (
+            "permissions: read-all\n"
+            "jobs:\n  test:\n    steps:\n      - run: git diff --ext-diff\n"
+            "        env: {GIT_EXTERNAL_DIFF: git-push-helper}\n"
+        ),
+        (
+            "permissions: read-all\n"
+            "env: {PAGER: git-push-helper}\n"
+            "jobs:\n  test:\n    steps:\n      - run: git --paginate log -1\n"
+        ),
+        (
+            "permissions: read-all\n"
+            "jobs:\n  test:\n    steps:\n      - run: git diff --ext-diff\n"
+            "        env: {GIT_CONFIG_COUNT: 1}\n"
+        ),
+        (
+            "permissions: read-all\n"
+            "jobs:\n  test:\n"
+            "    container:\n"
+            "      image: python:3.13\n"
+            "      env: {GIT_EXTERNAL_DIFF: git-push-helper}\n"
+            "    steps:\n      - run: git diff --ext-diff\n"
+        ),
+        (
+            "permissions: read-all\n"
+            "env: {PATH: synthetic-path}\n"
+            "jobs:\n  test:\n    steps:\n      - run: ruff check .\n"
+        ),
+        (
+            "permissions: read-all\n"
+            "jobs:\n  test:\n    env: {PATHEXT: synthetic-extension}\n"
+            "    steps:\n      - run: pytest\n"
+        ),
+        (
+            "permissions: read-all\n"
+            "jobs:\n  test:\n    steps:\n      - run: ruff check .\n"
+            "        env: {PATH: synthetic-path}\n"
+        ),
+        (
+            "permissions: read-all\n"
+            "jobs:\n  test:\n"
+            "    container:\n"
+            "      image: python:3.13\n"
+            "      env: {PATH: synthetic-path}\n"
+            "    steps:\n      - run: pytest\n"
+        ),
+    ],
+)
+def test_workflow_scoped_risky_environment_is_rejected(workflow: str) -> None:
+    assert "risky_environment" in preflight.workflow_failures(workflow)
+
+
+def test_github_env_git_helper_persists_across_steps() -> None:
+    workflow = (
+        "permissions: read-all\n"
+        "jobs:\n  test:\n    steps:\n"
+        "      - run: echo 'GIT_EXTERNAL_DIFF=git-push-helper' >> \"$GITHUB_ENV\"\n"
+        "      - run: git diff --ext-diff\n"
+    )
+    assert "github_command_file_reference" in preflight.workflow_failures(workflow)
+
+
+@pytest.mark.parametrize(
+    "writer",
+    [
+        "echo 'GIT_EXTERNAL_DIFF=git-push-helper' > \"$GITHUB_ENV\"",
+        "echo 'GIT_EXTERNAL_DIFF=git-push-helper' 1> \"$GITHUB_ENV\"",
+        "echo 'GIT_EXTERNAL_DIFF=git-push-helper' >| \"$GITHUB_ENV\"",
+        "printf '%s\\n' 'GIT_EXTERNAL_DIFF=git-push-helper' | cat > \"$GITHUB_ENV\"",
+        "New-Item -Path $env:GITHUB_ENV -Value 'GIT_EXTERNAL_DIFF=git-push-helper' -Force",
+        "ni $env:GITHUB_ENV -Value 'GIT_EXTERNAL_DIFF=git-push-helper' -Force",
+        ('target="$GITHUB_ENV"; echo \'GIT_EXTERNAL_DIFF=git-push-helper\' > "$target"'),
+        ('target="$GITHUB_ENV"\necho \'GIT_EXTERNAL_DIFF=git-push-helper\' >> "$target"'),
+    ],
+)
+def test_github_env_helper_write_forms_persist(writer: str) -> None:
+    workflow = (
+        "permissions: read-all\n"
+        "jobs:\n  test:\n    steps:\n"
+        "      - run: |\n"
+        + "\n".join(f"          {line}" for line in writer.splitlines())
+        + "\n      - run: git diff --ext-diff\n"
+    )
+    assert "github_command_file_reference" in preflight.workflow_failures(workflow)
+
+
+def test_dynamic_github_env_write_fails_closed() -> None:
+    workflow = (
+        "permissions: read-all\n"
+        "jobs:\n  test:\n    steps:\n"
+        '      - run: echo "$name=value" >> "$GITHUB_ENV"\n'
+    )
+    assert "github_command_file_reference" in preflight.workflow_failures(workflow)
+
+
+@pytest.mark.parametrize(
+    "workflow",
+    [
+        (
+            "permissions: read-all\n"
+            "env: {SAFE_MODE: enabled}\n"
+            "jobs:\n  test:\n    steps:\n      - run: git status\n"
+        ),
+        (
+            "permissions: read-all\n"
+            "jobs:\n  test:\n    steps:\n"
+            "      - run: echo 'GIT_EXTERNAL_DIFF=value' > ordinary.txt\n"
+            "      - run: git diff\n"
+        ),
+        (
+            "permissions: read-all\n"
+            "jobs:\n  test:\n    steps:\n"
+            "      - run: echo 'GIT_EXTERNAL_DIFF=value' >> \"$GITHUB_OUTPUT\"\n"
+            "      - run: git diff\n"
+        ),
+        (
+            "permissions: read-all\n"
+            "jobs:\n  test:\n"
+            "    container:\n"
+            "      image: python:3.13\n"
+            "      env: {SAFE_MODE: enabled}\n"
+            "    steps:\n      - run: git status\n"
+        ),
+    ],
+)
+def test_workflow_git_helper_safe_controls(workflow: str) -> None:
+    assert preflight.workflow_failures(workflow) == []
+
+
+@pytest.mark.parametrize(
+    "script",
+    [
+        "echo 'SAFE_MODE=enabled' >> \"$GITHUB_ENV\"",
+        "echo 'echo safe >> \"$GITHUB_ENV\"'",
+        '# echo safe >> "$GITHUB_ENV"\necho safe',
+        'echo safe >> "$GITHUB_""ENV"',
+        "echo safe >> $GITHUB_\\ENV",
+        'echo synthetic-path >> "$GITHUB_PATH"',
+        'echo synthetic-path >> "$GITHUB_""PATH"',
+    ],
+)
+def test_every_github_command_file_reference_is_rejected(script: str) -> None:
+    workflow = (
+        "permissions: read-all\n"
+        "jobs:\n  test:\n    steps:\n      - run: |\n"
+        + "\n".join(f"          {line}" for line in script.splitlines())
+        + "\n"
+    )
+    assert "github_command_file_reference" in preflight.workflow_failures(workflow)
+
+
+@pytest.mark.parametrize(
+    "script",
+    [
+        'name=GITHUB_; name+=PATH; echo /synthetic >> "${!name}"',
+        "name=$'GITHUB_\\x45NV'; echo synthetic >> \"${!name}\"",
+    ],
+)
+def test_bash_indirect_expansion_fails_closed(script: str) -> None:
+    assert preflight._contains_git_push(script) is None
+    workflow = (
+        "permissions: read-all\n"
+        "jobs:\n  test:\n    steps:\n      - run: |\n"
+        + "\n".join(f"          {line}" for line in script.splitlines())
+        + "\n"
+    )
+    assert "ambiguous_run_step" in preflight.workflow_failures(workflow)
+
+
+@pytest.mark.parametrize(
+    "workflow",
+    [
+        "permissions: read-all\nenv: not-a-mapping\n",
+        "permissions: read-all\nenv: {1: safe}\n",
+        ("permissions: read-all\njobs:\n  test:\n    env: not-a-mapping\n    steps: []\n"),
+        (
+            "permissions: read-all\n"
+            "jobs:\n  test:\n    container:\n"
+            "      image: python:3.13\n      env: not-a-mapping\n    steps: []\n"
+        ),
+        (
+            "permissions: read-all\n"
+            "jobs:\n  test:\n    steps:\n"
+            "      - run: echo safe\n        env: not-a-mapping\n"
+        ),
+    ],
+)
+def test_ambiguous_workflow_env_shapes_fail_closed(workflow: str) -> None:
+    assert "ambiguous_env" in preflight.workflow_failures(workflow)
+
+
+def test_ambiguous_normalized_github_command_file_reference_fails_closed() -> None:
+    workflow = "permissions: read-all\njobs:\n  test:\n    steps:\n      - run: 'echo github_ \"'\n"
+    assert "ambiguous_github_command_file" in preflight.workflow_failures(workflow)
+
+
+@pytest.mark.parametrize(
+    "workflow",
+    [
         "permissions: *dangerous\n",
         "permissions: read-all\npermissions: write-all\n",
         "permissions: read-all\njobs: []\n",
@@ -413,6 +622,154 @@ def test_bounded_dynamic_dispatchers_fail_closed(command: str, expected: bool | 
 @pytest.mark.parametrize(
     "command",
     [
+        "env -S 'git push origin main'",
+        "env --split-string 'git push origin main'",
+        "env --split-string='git push origin main'",
+        "env --s 'git push origin main'",
+        "env --split='git push origin main'",
+        "env --split-s=git\\ push\\ origin\\ main",
+        "env -Sgit push origin main",
+        "env -S 'sh -c \"git push origin main\"'",
+        'env -S "$payload"',
+        'env --split-string="$payload"',
+        'env --s="$payload"',
+        "env -S",
+        "env -S 'git status'",
+        "env --split-string='echo git push origin main'",
+        "env -S 'printf \"%s\\n\" safe'",
+        "command env -S 'git status'",
+    ],
+)
+def test_env_split_string_is_always_ambiguous(command: str) -> None:
+    assert preflight._contains_git_push(command) is None
+
+
+@pytest.mark.parametrize(
+    ("command", "expected"),
+    [
+        ("PATH=/synthetic ruff check .", None),
+        ("export PATH=/synthetic; ruff check .", None),
+        ("PATH+=:/synthetic; pytest", None),
+        ("PATHEXT=.SYNTHETIC; ruff check .", None),
+        ("$env:PATH='synthetic'; ruff check .", None),
+        ("${env:PATH}='synthetic'; ruff check .", None),
+        ("$env:PATHEXT='synthetic'; pytest", None),
+        ("cmd /c set PATH=synthetic ^& ruff check .", None),
+        ('cmd /c set "PATHEXT=.SYNTHETIC" ^& pytest', None),
+        ("PA\\\nTH=/synthetic; ruff check .", None),
+        ('PA""TH=/synthetic; pytest', None),
+        ("printf -v PATH %s /synthetic; ruff check .", None),
+        ('name=PATH; printf -v "$name" %s /synthetic; pytest', None),
+        ("printf -vPATH %s /synthetic; ruff check .", None),
+        (
+            'cmd /v:on /d /c "set n=PATH & set !n!=synthetic & ruff check ."',
+            None,
+        ),
+        ('name=PATH; export "$name=/synthetic"; ruff check .', None),
+        ('name=PATH; declare "$name=/synthetic"; pytest', None),
+        ("SAFE_PATH=synthetic ruff check .", False),
+        ("SAFE_PA\\\nTH=synthetic ruff check .", False),
+        ("PATHNAME=synthetic pytest", False),
+        ('echo "$PATH"', False),
+    ],
+)
+def test_command_resolution_environment_policy(command: str, expected: bool | None) -> None:
+    assert preflight._contains_git_push(command) is expected
+
+
+@pytest.mark.parametrize(
+    ("command", "expected"),
+    [
+        ("Start-Process pwsh -ArgumentList '-Command','git push origin main'", None),
+        ("Start-Process powershell.exe -Args '-Command','git push origin main'", None),
+        ("Start-Process cmd.exe -ArgumentList '/c','git push origin main'", None),
+        ("Start-Process bash -ArgumentList '-c','git push origin main'", None),
+        ("Start-Process sh -Args '-c','git push origin main'", None),
+        (
+            "Start-Process -ArgumentList '-Command','git push origin main' -FilePath pwsh",
+            None,
+        ),
+        ("Start-Process -F pwsh -A '-Command','git push origin main'", None),
+        ("Start-Process pwsh -Args '-Command git push origin main'", None),
+        (
+            "Start-Process powershell.exe -ArgumentList "
+            "'-NoProfile -Command \"git push origin main\"'",
+            None,
+        ),
+        ("Start-Process cmd -Args '/d /c git push origin main'", None),
+        ("Start-Process bash -Args '-lc \"git push origin main\"'", None),
+        ("Start-Process pwsh -Args '-EncodedCommand synthetic'", None),
+        ("Start-Process pwsh -ArgumentList $args", None),
+        ("saps powershell -Args '-Command','git push origin main'", None),
+        ("Start-Process unknown-runner -Args 'git push origin main'", None),
+        ("Start-Process pwsh -Args '-Command','Write-Output safe'", None),
+        ("Start-Process cmd -Args '/c','echo git push origin main'", None),
+        ("Start-Process bash -Args '-c','git status'", None),
+        ("saps echo -Args '--version'", None),
+    ],
+)
+def test_start_process_shell_payload_is_scanned(
+    command: str,
+    expected: bool | None,
+) -> None:
+    assert preflight._contains_git_push(command) is expected
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "Set-Item Function:git { Write-Output safe }; git diff",
+        "si Function:git { Write-Output safe }; git status",
+        "New-Item -Path Function:docker -Value { Write-Output safe }; docker run image",
+        "ni Function:printf -Value { Write-Output safe }; printf safe",
+        "Set-Content Function:printf { Write-Output safe }; printf safe",
+        "sc Function:ruff { Write-Output safe }; ruff check .",
+        "Set-Item Function:git $script; git status",
+        "Set-Item Function:$name { Write-Output safe }; git status",
+        "Set-Item 'Function:\\git' { Write-Output safe }; git status",
+        "Set-Item Function:/git { Write-Output safe }; git status",
+        "Set-Item Function::git { Write-Output safe }; git status",
+        "Set-Item Function:global:git { Write-Output safe }; git status",
+        "Set-Item Function:script:git { Write-Output safe }; git status",
+        "$p='Function:git'; Set-Item $p { Write-Output safe }; git status",
+        "$p='Function:git'; si -Path $p -Value { Write-Output safe }; git status",
+        "Set-Item Alias:echo Invoke-Expression; echo 'git push origin main'",
+        "si Alias:global:git Invoke-Expression; git status",
+        "New-Item Alias:/docker -Value Invoke-Expression; docker run image",
+        "Set-Item -Path:Alias:echo -Value Invoke-Expression; echo 'git push origin main'",
+        "Set-Content -LiteralPath:Alias:git -Value Invoke-Expression; git status",
+        "New-Item -Path:Function:docker -Value Invoke-Expression; docker run image",
+        "si -Path:Alias:ruff -Value Invoke-Expression; ruff check .",
+        "Set-Item Env:PATH synthetic-path; git status",
+        "Set-Item -Path:Env:PATH -Value synthetic-path; ruff check .",
+        "Set-Content Env:PATHEXT synthetic-extension; git status",
+        "Set-Item -ErrorAction Stop Alias:echo Invoke-Expression; echo 'git push'",
+        "Set-Item -EA Stop Env:SAFE value; Write-Output safe",
+        "Set-Content -OutVariable sink config.txt safe; Write-Output safe",
+    ],
+)
+def test_powershell_function_provider_override_fails_closed(command: str) -> None:
+    assert preflight._contains_git_push(command) is None
+
+
+@pytest.mark.parametrize(
+    ("command", "expected"),
+    [
+        ("Set-Item Env:SAFE value; git status", None),
+        ("New-Item Env:SAFE -Value value; git status", None),
+        ("Set-Item -Path:Env:SAFE -Value value; git status", None),
+        ("Set-Content config.txt safe; Write-Output safe", None),
+        ("Set-Item Variable:git safe; git status", None),
+        ("Write-Output 'Set-Item Function:git { git push origin main }'", False),
+    ],
+)
+def test_powershell_provider_whole_class_policy(command: str, expected: bool | None) -> None:
+    assert preflight._contains_git_push(command) is expected
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
         "git status",
         'echo "git push origin main"',
         "printf '%s' 'git push'",
@@ -425,8 +782,6 @@ def test_bounded_dynamic_dispatchers_fail_closed(command: str, expected: bool | 
         'cmd /c "echo git push origin main"',
         "pwsh -Command 'Write-Output \"git push origin main\"'",
         "echo '`git push origin main`'",
-        "Start-Process git -ArgumentList --version",
-        "Start-Process echo -ArgumentList 'git push origin main'",
         'echo "$g push origin main"',
         "printf '%s\\n' \"$output\"",
         'output="$(docker run --rm image)"',
@@ -436,7 +791,6 @@ def test_bounded_dynamic_dispatchers_fail_closed(command: str, expected: bool | 
         "echo {git,push}",
         "Write-Output $g",
         "cmd /v:on /c echo !g! push origin main",
-        'Start-Process echo -ArgumentList "$g push origin main"',
         "printf '%s' \"$(printf git)\"",
         "git version",
         "git diff --stat",
@@ -453,8 +807,6 @@ def test_bounded_dynamic_dispatchers_fail_closed(command: str, expected: bool | 
         "echo 'while true; do git push origin main; done'",
         "Write-Output 'if (1) { git push origin main }'",
         "SAFE=value git status",
-        "Set-Item Env:GIT_EXTERNAL_DIFF git-push-helper; Write-Output safe",
-        "cmd /c set GIT_EXTERNAL_DIFF=git-push-helper",
         "PAGER=git-push-helper",
         "cmd /c @echo git push origin main",
         "echo safe |& cat",
@@ -1041,7 +1393,11 @@ def test_ambiguous_permission_values_fail_closed(
         ("git", False),
         ("git --version", False),
         ("git -- push", True),
-        ("/usr/bin/git -c=color.ui=never push", True),
+        ("git -c=color.ui=never push", True),
+        ("/usr/bin/git -c=color.ui=never push", None),
+        ("./ruff check .", None),
+        ("/" + "tmp/echo safe", None),
+        (r".\git.exe status", None),
         ("env", False),
         ("env -u NAME git status", False),
         ("env --unset=NAME git status", False),
