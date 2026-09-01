@@ -63,6 +63,5 @@ jobs:
       - run: docker build --tag nla-catalog-gateway:foundation .
       - name: Run foundation image
         run: |
-          output="$(docker run --rm nla-catalog-gateway:foundation)"
-          printf '%s\n' "$output"
-          python -c 'import json,sys; p=json.load(sys.stdin); assert p == {"readOnlyProjection": True, "service": "nla-catalog-gateway", "status": "foundation", "version": "0.0.1"}' <<<"$output"
+          docker run --rm nla-catalog-gateway:foundation |
+            python -c 'import json,sys; p=json.load(sys.stdin); assert p == {"readOnlyProjection": True, "service": "nla-catalog-gateway", "status": "foundation", "version": "0.0.1"}; print(json.dumps(p, sort_keys=True))'

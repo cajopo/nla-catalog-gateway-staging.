@@ -531,6 +531,45 @@ def test_dynamic_git_command_positions_fail_closed(tmp_path: Path, command: str)
 
 
 @pytest.mark.parametrize(
+    "command",
+    [
+        'echo "$(git push origin main)"',
+        'x="$(git push origin main)"',
+        "bash -c 'echo \"$(git push origin main)\"'",
+        'echo "$(printf "$(git push origin main)")"',
+        "Write-Output $(& git push origin main)",
+        "$result = $(& git push origin main)",
+        "Write-Output $(\n& git push origin main\n)",
+        "echo $\\\n(git push origin main)",
+        "echo $\\\r\n(git push origin main)",
+        'echo "$(git pu\\\nsh origin main)"',
+        "cat <(git push origin main)",
+        "cat >(git push origin main)",
+        "Write-Output @(& git push origin main)",
+        "Write-Output @(\n& git push origin main\n)",
+        'echo "$(printf safe)"',
+        'output="$(docker run --rm image)"',
+        "cat <(printf safe)",
+        "Write-Output @('safe')",
+        "echo $((1 + 1))",
+        "echo '$(git push origin main)'",
+        "# $(git push origin main)\necho safe",
+        "Write-Output @`\n(& git push origin main)",
+        "Write-Output @`\r\n(& git push origin main)",
+    ],
+)
+def test_shell_subexpressions_fail_closed(tmp_path: Path, command: str) -> None:
+    assert preflight._contains_git_push(command) is None
+    workflow = (
+        "permissions: read-all\njobs:\n  test:\n    steps:\n      - run: |\n"
+        + "\n".join(f"          {line}" for line in command.splitlines())
+        + "\n"
+    )
+    root = _repo(tmp_path, {".github/workflows/test.yml": workflow})
+    assert "workflow:ambiguous_run_step" in _reasons(preflight.run_preflight(root))
+
+
+@pytest.mark.parametrize(
     ("command", "expected"),
     [
         ("git -c alias.x=push x origin main", None),
@@ -784,14 +823,17 @@ def test_powershell_provider_whole_class_policy(command: str, expected: bool | N
         "echo '`git push origin main`'",
         'echo "$g push origin main"',
         "printf '%s\\n' \"$output\"",
-        'output="$(docker run --rm image)"',
+        'echo "$output"',
+        'echo "${output}"',
+        "output=$value",
         'docker run "$image"',
+        "docker run image | python -c 'import json,sys; json.load(sys.stdin)'",
+        "echo '${{ github.sha }}'",
         'git status "$ref"',
         'git -c color.ui=never status "$ref"',
         "echo {git,push}",
         "Write-Output $g",
         "cmd /v:on /c echo !g! push origin main",
-        "printf '%s' \"$(printf git)\"",
         "git version",
         "git diff --stat",
         "git log -1",
@@ -1454,6 +1496,7 @@ def test_dynamic_command_token_classifier(token: str, expected: bool) -> None:
         "python - <<'PY'\r\nprint('crlf')\r\nPY\r\n",
         "python - <<'ONE' <<'TWO'\nfirst body\nONE\nsecond body\nTWO\n",
         "python - <<'PY' # data for Python\nprint('safe')\nPY\n",
+        "python - <<'PY'\nprint($(not shell here))\nPY\n",
         "echo \"python - <<'PY'\"",
         "# python - <<'PY'",
         'python - <<<"$output"',

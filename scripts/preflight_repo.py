@@ -286,6 +286,7 @@ COMMAND_RESOLUTION_ENV_ASSIGNMENT_PATTERN = re.compile(
     re.IGNORECASE,
 )
 BASH_INDIRECT_EXPANSION_PATTERN = re.compile(r"\$\{![^}\r\n]+\}")
+SHELL_SUBEXPRESSION_PATTERN = re.compile(r"(?:\$\(|<\(|>\(|@\()")
 
 
 class PreflightError(RuntimeError):
@@ -802,9 +803,11 @@ def _contains_git_push(script: str, *, _depth: int = 0) -> bool | None:
     if masked_script is None:
         return None
     script = masked_script
-    if BASH_INDIRECT_EXPANSION_PATTERN.search(script):
-        return None
     resolution_script = re.sub(r"(?:\\|`)[ \t]*\r?\n[ \t]*", "", script)
+    if BASH_INDIRECT_EXPANSION_PATTERN.search(
+        resolution_script
+    ) or SHELL_SUBEXPRESSION_PATTERN.search(resolution_script):
+        return None
     resolution_tokens = _shell_tokens(resolution_script)
     if COMMAND_RESOLUTION_ENV_ASSIGNMENT_PATTERN.search(resolution_script) or (
         resolution_tokens is not None
