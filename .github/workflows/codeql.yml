@@ -1,0 +1,86 @@
+name: CodeQL
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "17 3 * * 2"
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  analyze:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - uses: github/codeql-action/init@cdf488f595d80d6e07e03d4674febd5ab45fa938 # v4.37.9
+        with:
+          build-mode: none
+          languages: python
+      - uses: github/codeql-action/analyze@cdf488f595d80d6e07e03d4674febd5ab45fa938 # v4.37.9
+        with:
+          output: codeql-results
+          upload: never
+      - name: Enforce zero CodeQL security findings
+        run: |
+          python - <<'PY'
+          import glob
+          import json
+          import sys
+
+          paths = sorted(glob.glob("codeql-results/*.sarif"))
+          if not paths:
+              raise SystemExit("CodeQL produced no SARIF file")
+
+          security_findings = []
+          diagnostic_results = []
+          for path in paths:
+              with open(path, encoding="utf-8") as handle:
+                  document = json.load(handle)
+              for run in document.get("runs", []):
+                  rules = run.get("tool", {}).get("driver", {}).get("rules", [])
+                  rules_by_id = {rule.get("id"): rule for rule in rules}
+                  for result in run.get("results", []):
+                      rule = rules_by_id.get(result.get("ruleId"), {})
+                      rule_index = result.get("ruleIndex")
+                      if not rule and isinstance(rule_index, int) and rule_index < len(rules):
+                          rule = rules[rule_index]
+                      properties = rule.get("properties", {})
+                      tags = set(properties.get("tags", []))
+                      is_security = (
+                          "security-severity" in properties
+                          or "security" in tags
+                          or any(tag.startswith("security-severity") for tag in tags)
+                      )
+                      summary = {
+                          "level": result.get("level"),
+                          "message": result.get("message", {}).get("text", ""),
+                          "ruleId": result.get("ruleId"),
+                      }
+                      if is_security:
+                          security_findings.append(summary)
+                      else:
+                          diagnostic_results.append(summary)
+
+          print(
+              f"CodeQL SARIF files: {len(paths)}; "
+              f"security findings: {len(security_findings)}; "
+              f"diagnostic results: {len(diagnostic_results)}"
+          )
+          for result in security_findings:
+              print(json.dumps(result, sort_keys=True))
+          sys.exit(1 if security_findings else 0)
+          PY
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: codeql-sarif
+          path: codeql-results/*.sarif
+          if-no-files-found: error
+          retention-days: 14

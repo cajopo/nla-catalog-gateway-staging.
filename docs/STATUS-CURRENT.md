@@ -1,0 +1,135 @@
+# NLA catalog gateway — current status
+
+Last verified: 2026-09-01T02:59:58+02:00
+Repository: `cajopo/nla-catalog-gateway-staging.`
+
+This document records observed state. Git, GitHub, reproducible tests, and fresh read-only
+data checks take precedence over older reports.
+
+## Repository truth
+
+- Current branch: `agent/platform-ci`.
+- Remote Platform code candidate carried by this documentation revision:
+  `73f3f78819002ca21cea46be38b94d0eb874bb76`, tree
+  `a72a1c6016db2fcd8611ff5ae1ee770e5e394947`.
+- Local commit `db86bd356d4c356f6cc9674008dc9c5e5698ab79` has the same exact tree and is
+  the verified local equivalent, not a second code state.
+- `main`: `4e1c2a3e8e75c1d6f264e63a9b9c29e4f4bb8310`.
+- Pull request [#20](https://github.com/cajopo/nla-catalog-gateway-staging./pull/20) is
+  open, draft, unmerged, and based on `main`.
+- The only untracked path observed is the pre-existing local `.codex/` directory. It is
+  not part of the candidate revision and must not be committed.
+- No tracked Shopify snapshot, SQLite database, compressed catalog artifact, build output,
+  credential, or signed capability URL was found in the candidate tree.
+
+GitHub contains 17 issues and 8 pull requests. Pull requests #21 through #25 are real,
+closed without merge, and remain review material rather than completed work. Pull requests
+#26 through #28 do not exist.
+
+## Platform gate
+
+The remote code candidate `73f3f78` passes exact CI and CodeQL. It is still not eligible for
+merge: CI and CodeQL must run again on the documentation-inclusive head containing this file,
+and independent reviewer v4 must approve that same final revision. PR #20 remains draft.
+
+| Check | Result | Evidence |
+|---|---|---|
+| Ruff check and format | PASS | Local equivalent tree |
+| Pytest | PASS | 564/564, zero skipped/xfailed, 877 statements and 472 branches at 100% |
+| Repository preflight | PASS | Local exact indexed candidate; 25 tracked files, zero findings |
+| Package build | PASS | Local build and remote isolated sdist/wheel builds |
+| Dependency audit | PASS | Local equivalent tree |
+| Container build and smoke | PASS | Local equivalent tree |
+| Exact remote CI | PASS | Run `33456765768` |
+| Exact remote CodeQL/SARIF | PASS | Run `33456765740`; zero security findings |
+| Static red team | PASS | Zero High on the remediated tree |
+| Independent final review | PENDING | Reviewer v4 on final documentation-inclusive SHA |
+
+Exact remote evidence:
+
+- [CI run 33456765768](https://github.com/cajopo/nla-catalog-gateway-staging./actions/runs/33456765768):
+  `SUCCESS`. Python 3.12/3.13 jobs `99698284002`/`99698283943` pass 564 tests,
+  877 statements and 472 branches at 100%, preflight over 25 files, and isolated sdist/wheel
+  builds. Audit job `99698283934` reports zero known vulnerabilities. Container job
+  `99698283800` returns the expected JSON;
+- [CodeQL run 33456765740](https://github.com/cajopo/nla-catalog-gateway-staging./actions/runs/33456765740):
+  `SUCCESS`. Job `99698283209` produced one SARIF with zero security findings and two
+  diagnostics. Artifact `9781748648` is 36,987 bytes with digest
+  `sha256:2957b71a838174e1586a001647eecbb29658a0b06a0db671ed3c360a0cea13bc`.
+
+Local evidence on the tree shared by `db86bd3` and `73f3f78`: Ruff, format, build, audit,
+Docker build/smoke, 564 tests, 100% line and branch coverage, and preflight all pass. A static
+red-team rerun reports zero High. These code-baseline results do not replace final gates on
+the documentation-inclusive SHA.
+
+Immutable review chronology:
+
+- documentation-inclusive head `f211b26` passed CI `33436231899` and CodeQL `33436231910`,
+  but review v1 returned `CHANGES REQUIRED` for dynamic executable and Git-subcommand gaps;
+- code baseline `8047ba6` addressed those findings, and documentation-inclusive head
+  `00f07033baaa465ac920e620265bff570a104d03` (tree
+  `3e4d99dc188122f9dae4ca937d5363a3ac2fc2a7`) passed CI `33446860246` and CodeQL
+  `33446860231`;
+- review v2 of `00f0703` still returned `CHANGES REQUIRED` with four High classes: `env`
+  split-string dispatch, `Start-Process` into a shell, PowerShell function/provider overrides,
+  and Git-helper environment or `GITHUB_ENV` dispatch;
+- code baseline `9d351e5` applied the second remediation and became documentation-inclusive
+  head `82ec0e472d4cfb4df131e95d87a445a7b56850b4`;
+- reviewer v3 returned `CHANGES REQUIRED` on `82ec0e4` with one High: shell and PowerShell
+  `$()` subexpressions could conceal forbidden dispatch;
+- remote candidate `73f3f78` and local equivalent `db86bd3` apply the third remediation on
+  exact tree `a72a1c6016db2fcd8611ff5ae1ee770e5e394947`.
+
+The remediated contract remains bounded and conservative. D-007 controls still apply; D-008
+additionally bans the whole inline-command classes `$()`, `<()`, `>()`, and `@()`. Container
+smoke replaces command substitution with a direct `docker run | python` pipeline. The
+capability boundary still requires read-only permissions,
+rejects workflow secret references, and requires `persist-credentials: false`. Python,
+Docker, and arbitrary scripts invoked transitively remain outside semantic analysis, so local
+PASS is defense in depth rather than absolute proof about every indirect execution path.
+
+Two fail-closed limitations remain documented as Medium, not bypasses:
+
+- a heredoc containing a literal executable-looking `git push` line is rejected;
+- JSON that intentionally preserves a token-like Unicode escape literally may be rejected.
+
+The local MySQL Shell Python 3.13 runtime cannot create an isolated build environment because
+its copied runtime lacks SSL. Local `--no-isolation` build passes, and the exact candidate's
+isolated build passes on both supported CI interpreters; this is a host limitation, not a
+release bypass.
+
+## Data and artifact availability
+
+`NLA_DATA_ROOT` is absent from the Process, User, and Machine environments. The local Codex
+setup points to `C:\NLA_DATA`, but that directory and its expected `input`, `snapshots`,
+`artifacts`, `reports`, and `tmp` children do not exist.
+
+No baseline, JSONL, SQLite database, archive, or report can therefore be verified or reused
+on this host. The correct state is `MISSING`, not `CORRUPT`. This does not block Platform/CI;
+it does block future claims based on a real baseline until the external data root is
+provisioned and independently verified.
+
+## Closed-branch salvage status
+
+- PR #21 sharding: retain deterministic packing ideas only. Confirmed verdict is `NO-GO`
+  as the primary architecture; any limited SEO/fallback use remains unapproved.
+- PR #22 taxonomy: retain the enum/model/report concepts, but reimplement validation for
+  normalized-key collisions, `unclassified` reasons, subtype fragments, rule conflicts,
+  duplicate JSON keys, and schema versioning.
+- PR #23 data/Bulk: retain streaming hash and reconciliation patterns only. Empty exports,
+  invalid types, duplicate JSON keys, BOMs, truncated connections, unbounded memory,
+  non-atomic staging, and incomplete commercial-field preservation remain blockers.
+- PR #24 and #25 are additional closed, unmerged data experiments. Neither supersedes a
+  fresh implementation on a post-Platform base.
+
+## Immediate execution order
+
+1. Commit this evidence and require fresh CI and CodeQL on the documentation-inclusive SHA.
+2. Run independent clean-checkout reviewer v4 on that same final SHA.
+3. Resolve all applicable PR #20 threads, update its body, and mark it ready for review.
+4. Merge Platform only if no Blocker, Critical, or High finding remains.
+5. Start Taxonomy, Data/Bulk, and Runtime-contract workstreams from merged `main`; do not
+   resurrect closed branches wholesale.
+
+No Shopify, PowerTools, Render, theme, product, price, or inventory mutation is authorized
+by this status document.
