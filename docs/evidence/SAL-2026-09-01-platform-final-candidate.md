@@ -1,5 +1,10 @@
 # SAL NLA — 2026-09-01T00:18:16+02:00
 
+> **SUPERSEDED / CORRECTION — 2026-09-01:** this historical candidate became
+> documentation-inclusive head `00f0703`. Its CI and CodeQL passed, but independent review v2
+> returned `CHANGES REQUIRED` with four High workflow-capability classes. Use
+> `SAL-2026-09-01-platform-remediated-candidate.md` for current evidence.
+
 | WS | Issue | Branch | PR | Code baseline | CI | Review | Stato | Blocco | Prossima azione |
 |---|---:|---|---:|---|---|---|---|---|---|
 | Platform/CI | #6 | `agent/platform-ci` | #20 | `8047ba6` | CI `33445224607` and CodeQL `33445224609` PASS | Working-diff red team PASS; final clean-checkout exact-SHA review pending | REVIEW | Documentation-inclusive SHA not yet green and independently approved | Commit evidence, rerun gates, independent review |

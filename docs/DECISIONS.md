@@ -57,7 +57,8 @@
 
 ## D-006 — Bound workflow execution checks to static capability controls
 
-- Status: accepted technical execution decision on 2026-09-01; final exact-SHA review pending.
+- Status: accepted technical execution decision on 2026-09-01; broadened by D-007 after the
+  second independent review.
 - Evidence: final review of green documentation head `f211b261cbf4237149b0f45a2d3a79d3476cf4ba`
   returned `CHANGES REQUIRED` for dynamic executable and Git-subcommand bypasses; corrected
   code baseline `8047ba6ae314d39189f3d0ac72303cb532f05d48`, CI run `33445224607`,
@@ -72,6 +73,27 @@
 - Consequence: ambiguous inline execution must be rewritten into a statically auditable form.
   Changes to transitive-script analysis require a separate, testable decision rather than an
   implicit claim of complete shell or program interpretation.
+
+## D-007 — Ban reviewed workflow capability classes fail-closed
+
+- Status: accepted technical execution decision on 2026-09-01; final exact-SHA review pending.
+- Evidence: documentation-inclusive head `00f07033baaa465ac920e620265bff570a104d03`
+  (tree `3e4d99dc188122f9dae4ca937d5363a3ac2fc2a7`) passed CI `33446860246` and
+  CodeQL `33446860231`, but independent review v2 returned `CHANGES REQUIRED` with four High
+  capability classes. Remediated code baseline `9d351e5e78537afe3133bf20bb2b18d4b96abc9e`
+  (tree `c59a59540c4301d05587fb83730e9c7ce1e30c38`) passes local and independent
+  stable-freeze QA, CI `33453261603`, and CodeQL `33453261610`.
+- Decision: keep the static positive allowlist and reject entire ambiguous capability classes:
+  `env` split-string dispatch; `Start-Process`; PowerShell provider, function, and variable
+  mutators; risky Git-helper, PAGER, PATH, and PATHEXT environment controls;
+  `GITHUB_ENV`/`GITHUB_PATH` command files; path-qualified direct executables; and Bash
+  indirect expansion.
+- Capability boundary: read-only workflow permissions, no workflow secret references, and
+  `persist-credentials: false` remain mandatory. Python, Docker, and arbitrary scripts invoked
+  transitively remain outside semantic analysis; PASS is not absolute proof over them.
+- Consequence: a workflow using a banned class must be rewritten into a statically auditable
+  form or proposed as a separately reviewed policy change. Final merge eligibility still
+  requires green gates and independent approval on one documentation-inclusive exact SHA.
 
 ## Reserved decisions
 

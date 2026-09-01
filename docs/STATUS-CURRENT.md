@@ -1,6 +1,6 @@
 # NLA catalog gateway — current status
 
-Last verified: 2026-09-01T00:18:16+02:00
+Last verified: 2026-09-01T02:07:51+02:00
 Repository: `cajopo/nla-catalog-gateway-staging.`
 
 This document records observed state. Git, GitHub, reproducible tests, and fresh read-only
@@ -10,7 +10,8 @@ data checks take precedence over older reports.
 
 - Current branch: `agent/platform-ci`.
 - Platform code baseline carried by this documentation revision:
-  `8047ba6ae314d39189f3d0ac72303cb532f05d48`.
+  `9d351e5e78537afe3133bf20bb2b18d4b96abc9e` (tree
+  `c59a59540c4301d05587fb83730e9c7ce1e30c38`).
 - `main`: `4e1c2a3e8e75c1d6f264e63a9b9c29e4f4bb8310`.
 - Pull request [#20](https://github.com/cajopo/nla-catalog-gateway-staging./pull/20) is
   open, draft, unmerged, and based on `main`.
@@ -25,44 +26,56 @@ closed without merge, and remain review material rather than completed work. Pul
 
 ## Platform gate
 
-The code baseline `8047ba6` is green. It is not yet eligible for merge because CI and CodeQL
+The code baseline `9d351e5` is green. It is not yet eligible for merge because CI and CodeQL
 must rerun on the documentation-inclusive head containing this file, and an independent
 clean-checkout review must approve that same final revision. PR #20 remains draft.
 
 | Check | Result | Evidence |
 |---|---|---|
 | Ruff check and format | PASS | Local frozen diff and CI Python 3.12/3.13 |
-| Pytest | PASS | 409/409, zero skipped/xfailed, 790 statements and 416 branches at 100% |
-| Repository preflight | PASS | Exact indexed candidate; 23 tracked files, zero findings |
+| Pytest | PASS | 537/537, zero skipped/xfailed, 876 statements and 472 branches at 100% |
+| Repository preflight | PASS | Exact indexed candidate; 24 tracked files, zero findings |
 | Package build | PASS | Isolated sdist and wheel on Python 3.12/3.13 CI |
-| Dependency audit | PASS | Development/build environment; no known vulnerabilities |
+| Dependency audit | PASS | No known vulnerabilities; local package itself skipped by audit |
 | Container build and smoke | PASS | Non-root foundation image and expected read-only JSON |
 | CodeQL/SARIF | PASS | Zero security findings under the configured gate |
 | Independent final review | PENDING | Required after the final documentation commit |
 
 Exact remote evidence:
 
-- [CI run 33445224607](https://github.com/cajopo/nla-catalog-gateway-staging./actions/runs/33445224607), success;
-- [CodeQL run 33445224609](https://github.com/cajopo/nla-catalog-gateway-staging./actions/runs/33445224609), success;
+- [CI run 33453261603](https://github.com/cajopo/nla-catalog-gateway-staging./actions/runs/33453261603), success;
+- [CodeQL run 33453261610](https://github.com/cajopo/nla-catalog-gateway-staging./actions/runs/33453261610), success;
 - Python 3.12 and 3.13 each completed lint, format, tests, preflight, and isolated build;
 - dependency audit and container smoke completed without skipped steps;
-- CodeQL job `99662692010` completed every step, including the zero-security-finding gate;
-  the SARIF contains zero security findings and two diagnostics.
+- CodeQL job `99687655049` completed every step; one SARIF contains zero security findings
+  and two diagnostics. Artifact `9780557282` has digest
+  `b4b6ff4a50dd8427a1b9a15427871b0a365d2f7454703cb9a705b70fd1899da5`.
 
-The documentation-inclusive head `f211b26` passed CI run `33436231899` and CodeQL run
-`33436231910`, but its final independent review was `CHANGES REQUIRED`: dynamic executable
-and Git-subcommand expansions could evade the static workflow check. Code baseline `8047ba6`
-implements the bounded correction. Its working-diff red team passes 77/77 dangerous probes
-and 33/33 safe controls. Local lint, format, test, coverage, and preflight gates also pass;
-isolated builds are evidenced by the exact remote CI run.
+Immutable review chronology:
 
-The corrected contract is deliberately bounded. Inline workflow commands are accepted only
-through a static positive allowlist; a dynamic or unknown executable, wrapper target, or Git
-subcommand fails closed. The capability boundary also requires read-only permissions, rejects
-workflow secret references, and requires checkout credentials to be disabled with
-`persist-credentials: false`. Python, Docker and other scripts invoked transitively are not
-semantically interpreted by this preflight, so a passing result is defense in depth rather
-than absolute proof about every possible indirect execution path. See D-006.
+- documentation-inclusive head `f211b26` passed CI `33436231899` and CodeQL `33436231910`,
+  but review v1 returned `CHANGES REQUIRED` for dynamic executable and Git-subcommand gaps;
+- code baseline `8047ba6` addressed those findings, and documentation-inclusive head
+  `00f07033baaa465ac920e620265bff570a104d03` (tree
+  `3e4d99dc188122f9dae4ca937d5363a3ac2fc2a7`) passed CI `33446860246` and CodeQL
+  `33446860231`;
+- review v2 of `00f0703` still returned `CHANGES REQUIRED` with four High classes: `env`
+  split-string dispatch, `Start-Process` into a shell, PowerShell function/provider overrides,
+  and Git-helper environment or `GITHUB_ENV` dispatch;
+- code baseline `9d351e5` applies the second remediation. Local and independent stable-freeze
+  QA pass Ruff, format, build, 537 tests, 100% coverage, preflight, `pip check`, and
+  `pip-audit` with no known vulnerabilities; the local package itself was skipped by audit.
+  This QA is not the still-required final exact-SHA clean-checkout approval.
+
+The remediated contract is deliberately bounded and conservative. Inline workflow commands
+still require a static positive allowlist; whole classes now fail closed for `env` split
+dispatch, `Start-Process`, PowerShell provider/function/variable mutators, risky Git-helper,
+PAGER, PATH, and PATHEXT environment controls, `GITHUB_ENV`/`GITHUB_PATH` command files,
+path-qualified direct executables, and Bash indirect expansion. The capability boundary also
+requires read-only permissions, rejects workflow secret references, and requires checkout
+credentials to be disabled with `persist-credentials: false`. Python, Docker, and arbitrary
+scripts invoked transitively remain outside semantic analysis, so PASS is defense in depth
+rather than absolute proof about every indirect execution path. See D-007.
 
 Two fail-closed limitations remain documented as Medium, not bypasses:
 
@@ -100,7 +113,7 @@ provisioned and independently verified.
 
 ## Immediate execution order
 
-1. Commit the corrected evidence and require CI and CodeQL to pass on that
+1. Commit the remediated evidence and require CI and CodeQL to pass on that
    documentation-inclusive final SHA.
 2. Run an independent clean-checkout adversarial review on the same final SHA.
 3. Resolve all applicable PR #20 threads, update its body, and mark it ready for review.

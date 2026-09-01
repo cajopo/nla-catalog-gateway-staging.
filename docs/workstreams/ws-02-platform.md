@@ -74,25 +74,30 @@ Required on the pull request:
 6. container build and smoke succeeds;
 7. independent review before merge.
 
-## Corrected candidate evidence — 2026-09-01
+## Remediated candidate evidence — 2026-09-01
 
-Code baseline: `8047ba6ae314d39189f3d0ac72303cb532f05d48`.
+Code baseline: `9d351e5e78537afe3133bf20bb2b18d4b96abc9e` (tree
+`c59a59540c4301d05587fb83730e9c7ce1e30c38`).
 
-- CI run `33445224607`: success on Python 3.12 and 3.13; 409 tests, zero
-  skipped/xfailed, 790 statements and 416 branches at 100%, preflight over 23 indexed files,
+- CI run `33453261603`: success on Python 3.12 and 3.13; 537 tests, zero
+  skipped/xfailed, 876 statements and 472 branches at 100%, preflight over 24 indexed files,
   isolated sdist/wheel build, development dependency audit, and container smoke.
-- CodeQL run `33445224609`: success; job `99662692010`, the zero-security-finding gate, and
-  SARIF artifact step all completed. The SARIF contains zero security findings and two
-  diagnostic results.
-- Documentation-inclusive predecessor `f211b26` had green CI/CodeQL but final independent
-  review returned `CHANGES REQUIRED` for dynamic executable and Git-subcommand expansions.
-  The corrected working diff passes 77/77 dangerous probes and 33/33 safe controls.
-- Local lint, format, full test, coverage, and preflight gates pass. Isolated builds are
-  evidenced by the exact remote CI run.
-- Inline commands now follow a bounded static positive allowlist; dynamic or unknown
-  executable, dispatcher, and Git-subcommand positions fail closed. The capability boundary
-  also enforces read-only permissions, rejects workflow secret references, and requires
-  `persist-credentials: false`.
+- CodeQL run `33453261610`: success; job `99687655049` completed. One SARIF has zero security
+  findings and two diagnostics; artifact `9780557282` has digest
+  `b4b6ff4a50dd8427a1b9a15427871b0a365d2f7454703cb9a705b70fd1899da5`.
+- Green documentation-inclusive predecessors `f211b26` and `00f0703` both received independent
+  `CHANGES REQUIRED` verdicts. Review v2 found four High classes covering `env` split dispatch,
+  `Start-Process`, PowerShell provider/function overrides, and Git-helper environment or
+  `GITHUB_ENV` dispatch.
+- Local and independent stable-freeze QA pass Ruff, format, build, 537 tests, zero
+  skipped/xfailed, 876 statements/472 branches at 100%, preflight over 24 files, `pip check`,
+  and `pip-audit` with no known vulnerabilities; the local package itself was skipped by audit.
+- Inline commands retain a static positive allowlist plus conservative whole-class bans for
+  the reviewed dispatch/mutator capabilities, risky Git-helper, PAGER, PATH, and PATHEXT
+  environment, `GITHUB_ENV`/`GITHUB_PATH`, path-qualified direct executables, and Bash indirect
+  expansion.
+- The capability boundary enforces read-only permissions, rejects workflow secret references,
+  and requires `persist-credentials: false`.
 - Python, Docker, and arbitrary scripts invoked transitively are not semantically interpreted;
   preflight PASS is therefore defense in depth, not absolute proof over indirect execution.
 - Final independent clean-checkout review remains required on the documentation-inclusive SHA

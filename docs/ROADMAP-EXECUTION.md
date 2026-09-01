@@ -1,6 +1,6 @@
 # NLA catalog gateway — execution roadmap
 
-Last reconciled: 2026-09-01T00:18:16+02:00
+Last reconciled: 2026-09-01T02:07:51+02:00
 
 ## Dependency order
 
@@ -14,7 +14,7 @@ verified staging service. Live cutover remains a separate owner decision.
 
 | WS | Issue | Current state | Verified source | Next executable action |
 |---|---:|---|---|---|
-| Platform/CI | #6 | REVIEW | Draft PR #20 carries corrected code baseline `8047ba6`; exact CI and CodeQL are green | Rerun gates on docs-inclusive head, independent final review |
+| Platform/CI | #6 | REVIEW | Draft PR #20 carries remediated code baseline `9d351e5`; exact CI and CodeQL are green | Rerun gates on docs-inclusive head, independent final review |
 | Sharding spike | #8 | BACKLOG | PR #21 closed/unmerged | Reproduce later only if limited fallback has value |
 | Taxonomy | #19 | BACKLOG | PR #22 closed/unmerged | Reimplement contract after Platform |
 | Data/Bulk | #5 | BLOCKED | PR #23–#25 closed/unmerged; real data root missing | Freeze code contract after Platform; real-baseline proof remains blocked |
@@ -34,18 +34,23 @@ verified staging service. Live cutover remains a separate owner decision.
 
 ### Wave 0 — Platform
 
-Documentation-inclusive SHA `f211b26` passed CI and CodeQL but received `CHANGES REQUIRED`
-in final review because dynamic executable and Git-subcommand expansions were not rejected.
-Corrected code baseline `8047ba6` passes Python 3.12/3.13 lint, format, 409 tests at 100%
-line/branch, preflight over 23 indexed files, isolated build, development dependency audit,
-container smoke, CodeQL/SARIF, and a 77-danger/33-safe working-diff red-team matrix. Local
-lint, format, test, coverage, and preflight gates pass; isolated builds are proven remotely.
+Documentation-inclusive SHAs `f211b26` and `00f0703` each passed CI and CodeQL but received
+`CHANGES REQUIRED` in successive independent reviews. The second review found four High
+capability classes: `env` split dispatch, `Start-Process` into shells, PowerShell provider or
+function overrides, and Git-helper environment/`GITHUB_ENV` dispatch.
 
-The gate uses a bounded static contract: inline commands must match a positive allowlist,
-dynamic or unknown execution positions fail closed, workflow permissions stay read-only,
-workflow secrets are forbidden, and checkout credentials must not persist. It does not
-semantically interpret Python, Docker, or other transitively invoked scripts and is not
-absolute proof over indirect execution. Exit still requires all checks on the final
+Remediated code baseline `9d351e5` passes local and independent stable-freeze Ruff, format,
+build, 537 tests at 100% line/branch, preflight over 24 indexed files, `pip check`, and audit
+with no known vulnerabilities; exact remote CI adds Python 3.12/3.13 isolated builds, audit,
+and container smoke. Exact CodeQL/SARIF is green with zero security findings.
+
+The gate uses a bounded static contract and conservative whole-class bans for the reviewed
+dispatch and mutation capabilities, path-qualified direct executables, risky Git-helper,
+PAGER, PATH, and PATHEXT environment controls, command files, and Bash indirect expansion.
+Workflow permissions stay read-only, workflow secrets are forbidden, and checkout credentials
+must not persist. Python, Docker, and arbitrary transitively invoked scripts remain outside
+semantic analysis; this is not absolute proof over indirect execution. Exit still requires
+all checks on the final
 documentation-inclusive SHA, a clean-checkout review of that exact SHA, and no unresolved
 Blocker/Critical/High finding.
 
