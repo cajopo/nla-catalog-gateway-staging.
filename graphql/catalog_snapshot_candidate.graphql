@@ -1,0 +1,148 @@
+# CANDIDATE ONLY - NOT VALIDATED AGAINST A SPECIFIC SHOPIFY ADMIN API VERSION.
+# KNOWN NON-SUBMITTABLE AS ONE BULK OPERATION: this document has six connection
+# fields including the root, while Shopify documents a maximum of five. It must
+# be split without dropping fields and joined by immutable GIDs in local staging.
+# The amended selection and status filter also require validation against the
+# selected stable Admin API before any read-only operation is considered.
+query NlaCatalogSnapshotCandidate {
+  products(sortKey: ID, query: "status:active,archived,draft,unlisted") {
+    edges {
+      node {
+        __typename
+        id
+        handle
+        title
+        status
+        vendor
+        productType
+        tags
+        createdAt
+        updatedAt
+        publishedAt
+        onlineStoreUrl
+        totalInventory
+        tracksInventory
+        variantsCount {
+          count
+        }
+        featuredMedia {
+          __typename
+          id
+          alt
+          mediaContentType
+          status
+          preview {
+            status
+            image {
+              url
+              altText
+              width
+              height
+            }
+          }
+          ... on MediaImage {
+            image {
+              url
+              altText
+              width
+              height
+            }
+          }
+        }
+        syncProductId: metafield(namespace: "sync", key: "productid") {
+          type
+          value
+        }
+        powertoolsId: metafield(namespace: "powertools", key: "id") {
+          type
+          value
+        }
+        resourcePublicationsV2 {
+          edges {
+            node {
+              __typename
+              isPublished
+              publishDate
+              publication {
+                id
+                autoPublish
+                catalog {
+                  __typename
+                  id
+                  title
+                }
+              }
+            }
+          }
+        }
+        nlaMetafields: metafields(namespace: "nla") {
+          edges {
+            node {
+              __typename
+              id
+              namespace
+              key
+              type
+              value
+            }
+          }
+        }
+        variants {
+          edges {
+            node {
+              __typename
+              id
+              title
+              sku
+              barcode
+              selectedOptions {
+                name
+                value
+              }
+              price
+              compareAtPrice
+              inventoryQuantity
+              inventoryPolicy
+              updatedAt
+              nlaMetafields: metafields(namespace: "nla") {
+                edges {
+                  node {
+                    __typename
+                    id
+                    namespace
+                    key
+                    type
+                    value
+                  }
+                }
+              }
+              inventoryItem {
+                __typename
+                id
+                tracked
+                inventoryLevels {
+                  edges {
+                    node {
+                      __typename
+                      id
+                      location {
+                        id
+                        name
+                      }
+                      quantities(
+                        names: ["available", "on_hand", "committed", "reserved", "incoming"]
+                      ) {
+                        name
+                        quantity
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
