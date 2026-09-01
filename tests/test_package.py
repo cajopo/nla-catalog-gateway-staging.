@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from importlib.resources import files
 
 from nla_catalog_gateway import READ_ONLY_PROJECTION, __version__
 from nla_catalog_gateway.__main__ import main
@@ -20,3 +21,10 @@ def test_module_smoke_output_is_machine_readable(capsys) -> None:
         "status": "foundation",
         "version": "0.0.1",
     }
+
+
+def test_taxonomy_mapping_is_packaged() -> None:
+    mapping = files("nla_catalog_gateway").joinpath("catalog_taxonomy.v1.json")
+    payload = json.loads(mapping.read_text(encoding="utf-8"))
+    assert payload["schemaVersion"] == 1
+    assert payload["classificationRuleVersion"] == "2026-09-01.1"

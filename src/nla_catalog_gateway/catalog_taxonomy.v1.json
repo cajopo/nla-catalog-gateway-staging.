@@ -1,0 +1,48 @@
+{
+  "schemaVersion": 1,
+  "classificationRuleVersion": "2026-09-01.1",
+  "gameAliases": {
+    "magic": "magic",
+    "magic: the gathering": "magic",
+    "pokemon": "pokemon",
+    "pokémon": "pokemon",
+    "yu-gi-oh!": "yugioh",
+    "yugioh": "yugioh",
+    "one piece": "one-piece",
+    "one-piece": "one-piece",
+    "onepiece": "one-piece"
+  },
+  "productTypes": {
+    "Magic Display": {
+      "id": "product-type:magic-display",
+      "game": "magic",
+      "productFamily": "sealed"
+    }
+  },
+  "sourceRecordTypes": {
+    "single": {
+      "id": "source-record-type:single",
+      "productFamily": "single"
+    },
+    "sealed": {
+      "id": "source-record-type:sealed",
+      "productFamily": "sealed"
+    },
+    "accessory": {
+      "id": "source-record-type:accessory",
+      "productFamily": "accessory"
+    }
+  },
+  "sealedSubtypeRules": [
+    {
+      "id": "sealed-subtype:collector-booster-box",
+      "productSubtype": "collector-booster-box",
+      "containsAll": ["collector booster box -"]
+    },
+    {
+      "id": "sealed-subtype:booster-box",
+      "productSubtype": "booster-box",
+      "containsAll": ["booster box -"]
+    }
+  ]
+}
