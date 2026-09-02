@@ -70,6 +70,86 @@ def test_safe_repository_passes(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize(
+    ("suffix", "payload_template"),
+    [
+        (
+            ".graphql",
+            "# {identifier} {title}\nquery Synthetic {{ __typename }}\n",
+        ),
+        (
+            ".jsonl",
+            '{{"identifier":"{identifier}","title":"{title}"}}\n',
+        ),
+        (".csv", "identifier,title\n{identifier},{title}\n"),
+    ],
+)
+def test_removed_observation_guard_scans_every_tracked_utf8_extension(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    suffix: str,
+    payload_template: str,
+) -> None:
+    identifier = "700000000000000123"
+    title = "synthetic retired observation"
+    monkeypatch.setattr(
+        preflight,
+        "REMOVED_PRODUCT_ID_SHA256",
+        frozenset({preflight._sha256_text(identifier)}),
+    )
+    monkeypatch.setattr(
+        preflight,
+        "REMOVED_TITLE_WORD_SHA256",
+        {3: frozenset({preflight._sha256_text(title)})},
+    )
+    relative = f"adversarial{suffix}"
+    payload = payload_template.format(identifier=identifier, title=title)
+    root = _repo(tmp_path, {relative: payload})
+    (root / relative).write_text("safe worktree replacement\n", encoding="utf-8")
+
+    reasons = _reasons(preflight.run_preflight(root))
+
+    assert "removed_shopify_observation_identifier" in reasons
+    assert "removed_shopify_observation_title" in reasons
+    assert ("forbidden_artifact_type" in reasons) is (suffix == ".jsonl")
+
+
+def test_removed_observation_guard_ignores_unstaged_worktree_content(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    identifier = "700000000000000123"
+    monkeypatch.setattr(
+        preflight,
+        "REMOVED_PRODUCT_ID_SHA256",
+        frozenset({preflight._sha256_text(identifier)}),
+    )
+    root = _repo(tmp_path, {"adversarial.csv": "identifier\nsynthetic-safe-value\n"})
+    (root / "adversarial.csv").write_text(
+        f"identifier\n{identifier}\n",
+        encoding="utf-8",
+    )
+
+    reasons = _reasons(preflight.run_preflight(root))
+
+    assert "removed_shopify_observation_identifier" not in reasons
+
+
+def test_removed_observation_guard_rejects_hashed_legacy_path(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    relative = "Fixtures/Retired-Source.JSON"
+    monkeypatch.setattr(
+        preflight,
+        "REMOVED_FIXTURE_PATH_SHA256",
+        preflight._sha256_text(relative.casefold()),
+    )
+    root = _repo(tmp_path, {relative: "safe\n"})
+
+    assert "removed_shopify_observation_path" in _reasons(preflight.run_preflight(root))
+
+
+@pytest.mark.parametrize(
     "path",
     [
         "dist/catalog.json",
@@ -1380,6 +1460,34 @@ def test_git_command_failure_is_reported(monkeypatch: pytest.MonkeyPatch) -> Non
         preflight._git(Path.cwd(), "status")
 
 
+def test_bounded_git_output_is_stopped_at_the_limit(tmp_path: Path) -> None:
+    root = _repo(tmp_path, {"tracked.txt": "safe\n"})
+    with pytest.raises(preflight.PreflightError, match="output exceeds inspection limit"):
+        preflight._git(root, "ls-files", max_output_bytes=0)
+
+
+def test_bounded_git_command_failure_is_reported(tmp_path: Path) -> None:
+    with pytest.raises(preflight.PreflightError, match="git command failed"):
+        preflight._git(
+            tmp_path,
+            "cat-file",
+            "-s",
+            "not-an-object",
+            max_output_bytes=32,
+        )
+
+
+def test_bounded_git_process_failure_is_reported(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail_command(*_: object, **__: object) -> None:
+        raise OSError("synthetic command failure")
+
+    monkeypatch.setattr(preflight.subprocess, "Popen", fail_command)
+    with pytest.raises(preflight.PreflightError, match="git command failed"):
+        preflight._git(Path.cwd(), "ls-files", max_output_bytes=32)
+
+
 @pytest.mark.parametrize(
     ("entries", "message"),
     [
@@ -1393,7 +1501,7 @@ def test_malformed_git_index_entries_fail_closed(
     entries: bytes,
     message: str,
 ) -> None:
-    monkeypatch.setattr(preflight, "_git", lambda *_: entries)
+    monkeypatch.setattr(preflight, "_git", lambda *_, **__: entries)
     with pytest.raises(preflight.PreflightError, match=message):
         preflight.tracked_blobs(Path.cwd())
 
@@ -1401,11 +1509,125 @@ def test_malformed_git_index_entries_fail_closed(
 def test_duplicate_git_index_path_fails_closed(monkeypatch: pytest.MonkeyPatch) -> None:
     entry = b"100644 abc 0\tfile.txt\0"
 
-    def fake_git(_: Path, *arguments: str) -> bytes:
+    def fake_git(_: Path, *arguments: str, **__: object) -> bytes:
         return entry + entry if arguments[0] == "ls-files" else b"safe\n"
 
     monkeypatch.setattr(preflight, "_git", fake_git)
     with pytest.raises(preflight.PreflightError, match="duplicate Git index path"):
+        preflight.tracked_blobs(Path.cwd())
+
+
+def test_git_index_listing_size_is_bounded(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(preflight, "MAX_GIT_INDEX_BYTES", 3)
+    monkeypatch.setattr(preflight, "_git", lambda *_, **__: b"1234")
+    with pytest.raises(preflight.PreflightError, match="index listing exceeds"):
+        preflight.tracked_blobs(Path.cwd())
+
+
+def test_tracked_file_count_is_bounded(monkeypatch: pytest.MonkeyPatch) -> None:
+    entries = b"100644 abc 0\ta.txt\x00" + b"100644 def 0\tb.txt\x00"
+    monkeypatch.setattr(preflight, "MAX_TRACKED_FILE_COUNT", 1)
+    monkeypatch.setattr(preflight, "_git", lambda *_, **__: entries)
+    with pytest.raises(preflight.PreflightError, match="file count exceeds"):
+        preflight.tracked_blobs(Path.cwd())
+
+
+@pytest.mark.parametrize(
+    "raw_size",
+    [b"invalid\n", b"01\n", b"-1\n", b"+1\n", b"1 \n", b"1" * 33],
+)
+def test_git_blob_size_must_be_bounded_canonical_decimal(
+    monkeypatch: pytest.MonkeyPatch,
+    raw_size: bytes,
+) -> None:
+    entry = b"100644 abc 0\tfile.txt\0"
+
+    def fake_git(_: Path, *arguments: str, **__: object) -> bytes:
+        if arguments[0] == "ls-files":
+            return entry
+        if arguments[:2] == ("cat-file", "-s"):
+            return raw_size
+        raise AssertionError("blob bytes must not be materialized")
+
+    monkeypatch.setattr(preflight, "_git", fake_git)
+    with pytest.raises(preflight.PreflightError, match="cannot parse Git blob size"):
+        preflight.tracked_blobs(Path.cwd())
+
+
+def test_oversized_blob_is_not_materialized(monkeypatch: pytest.MonkeyPatch) -> None:
+    entry = b"100644 abc 0\tlarge.txt\0"
+    monkeypatch.setattr(preflight, "MAX_TRACKABLE_BYTES", 2)
+
+    def fake_git(_: Path, *arguments: str, **__: object) -> bytes:
+        if arguments[0] == "ls-files":
+            return entry
+        if arguments[:2] == ("cat-file", "-s"):
+            return b"3\n"
+        raise AssertionError("oversized blob bytes must not be materialized")
+
+    monkeypatch.setattr(preflight, "_git", fake_git)
+    blobs = preflight.tracked_blobs(Path.cwd())
+    assert blobs == [
+        preflight.TrackedBlob(
+            relative=Path("large.txt"),
+            mode="100644",
+            content=None,
+            declared_size=3,
+        )
+    ]
+
+
+def test_tracked_blob_limits_are_inclusive(monkeypatch: pytest.MonkeyPatch) -> None:
+    entries = b"100644 abc 0\ta.txt\x00" + b"100755 def 0\tb.txt\x00"
+    monkeypatch.setattr(preflight, "MAX_GIT_INDEX_BYTES", len(entries))
+    monkeypatch.setattr(preflight, "MAX_TRACKED_FILE_COUNT", 2)
+    monkeypatch.setattr(preflight, "MAX_TRACKABLE_BYTES", 2)
+    monkeypatch.setattr(preflight, "MAX_TRACKED_AGGREGATE_BYTES", 4)
+
+    def fake_git(_: Path, *arguments: str, **__: object) -> bytes:
+        if arguments[0] == "ls-files":
+            return entries
+        if arguments[:2] == ("cat-file", "-s"):
+            return b"2\n"
+        return b"aa" if arguments[-1] == "abc" else b"bb"
+
+    monkeypatch.setattr(preflight, "_git", fake_git)
+    assert preflight.tracked_blobs(Path.cwd()) == [
+        preflight.TrackedBlob(Path("a.txt"), "100644", b"aa", declared_size=2),
+        preflight.TrackedBlob(Path("b.txt"), "100755", b"bb", declared_size=2),
+    ]
+
+
+def test_tracked_aggregate_bytes_are_bounded_before_materialization(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    entries = b"100644 abc 0\ta.txt\x00" + b"100644 def 0\tb.txt\x00"
+    monkeypatch.setattr(preflight, "MAX_TRACKED_AGGREGATE_BYTES", 1)
+
+    def fake_git(_: Path, *arguments: str, **__: object) -> bytes:
+        if arguments[0] == "ls-files":
+            return entries
+        if arguments[:2] == ("cat-file", "-s"):
+            return b"1\n"
+        raise AssertionError("blob bytes must not be materialized")
+
+    monkeypatch.setattr(preflight, "_git", fake_git)
+    with pytest.raises(preflight.PreflightError, match="aggregate inspection limit"):
+        preflight.tracked_blobs(Path.cwd())
+
+
+def test_git_blob_size_change_fails_closed(monkeypatch: pytest.MonkeyPatch) -> None:
+    entry = b"100644 abc 0\tfile.txt\0"
+
+    def fake_git(_: Path, *arguments: str, **__: object) -> bytes:
+        if arguments[0] == "ls-files":
+            return entry
+        if arguments[:2] == ("cat-file", "-s"):
+            return b"1\n"
+        return b"changed"
+
+    monkeypatch.setattr(preflight, "_git", fake_git)
+    with pytest.raises(preflight.PreflightError, match="size changed during inspection"):
         preflight.tracked_blobs(Path.cwd())
 
 
@@ -1659,6 +1881,19 @@ def test_unsupported_mode_and_large_blob_are_rejected(
     reasons = _reasons(preflight.run_preflight(Path.cwd()))
     assert "unsupported_git_mode:160000" in reasons
     assert "file_larger_than_5_mib" in reasons
+
+
+def test_missing_or_mismatched_bounded_blob_content_is_rejected(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    blobs = [
+        preflight.TrackedBlob(Path("missing.txt"), "100644", None, declared_size=1),
+        preflight.TrackedBlob(Path("mismatch.txt"), "100644", b"x", declared_size=2),
+    ]
+    monkeypatch.setattr(preflight, "tracked_blobs", lambda _: blobs)
+    reasons = _reasons(preflight.run_preflight(Path.cwd()))
+    assert "tracked_blob_content_missing" in reasons
+    assert "tracked_blob_size_mismatch" in reasons
 
 
 @pytest.mark.parametrize(("ok", "expected"), [(True, 0), (False, 1)])
