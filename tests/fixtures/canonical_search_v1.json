@@ -1,0 +1,237 @@
+{
+  "evidenceKind": "synthetic-only",
+  "liveCountClaims": false,
+  "products": [
+    {
+      "canonicalCardName": "Lightning Bolt",
+      "commercialTitle": "Lightning Bolt printing two",
+      "game": "magic",
+      "inventory": 0,
+      "productFamily": "single",
+      "productId": "2",
+      "published": true,
+      "status": "ACTIVE"
+    },
+    {
+      "canonicalCardName": "LIGHTNING BOLT",
+      "commercialTitle": "Lightning Bolt printing ten",
+      "game": "magic",
+      "inventory": 4,
+      "productFamily": "single",
+      "productId": "10",
+      "published": true,
+      "status": "ACTIVE"
+    },
+    {
+      "canonicalCardName": "Lightning Bolt",
+      "commercialTitle": "Lightning Bolt very large identity",
+      "game": "magic",
+      "inventory": -1,
+      "productFamily": "single",
+      "productId": "999999999999999999999999999999999999",
+      "published": true,
+      "status": "ACTIVE"
+    },
+    {
+      "canonicalCardName": "Lightning Boltfield",
+      "commercialTitle": "Prefix candidate",
+      "game": "magic",
+      "inventory": 2,
+      "productFamily": "single",
+      "productId": "11",
+      "published": true,
+      "status": "ACTIVE"
+    },
+    {
+      "canonicalCardName": "Thunder Lightning Bolt",
+      "commercialTitle": "Contains candidate",
+      "game": "magic",
+      "inventory": 2,
+      "productFamily": "single",
+      "productId": "12",
+      "published": true,
+      "status": "ACTIVE"
+    },
+    {
+      "canonicalCardName": "Arc Spark",
+      "commercialTitle": "Lightning Bolt vendor tag description fallback trap",
+      "game": "magic",
+      "inventory": 9,
+      "productFamily": "single",
+      "productId": "13",
+      "published": true,
+      "status": "ACTIVE"
+    },
+    {
+      "canonicalCardName": null,
+      "commercialTitle": "Lightning Bolt Booster Box",
+      "game": "magic",
+      "inventory": 9,
+      "productFamily": "sealed",
+      "productId": "14",
+      "published": true,
+      "status": "ACTIVE"
+    },
+    {
+      "canonicalCardName": null,
+      "commercialTitle": "Lightning Bolt missing-name draft",
+      "game": "magic",
+      "inventory": 0,
+      "productFamily": "single",
+      "productId": "15",
+      "published": false,
+      "status": "DRAFT"
+    },
+    {
+      "canonicalCardName": "100% Energy",
+      "commercialTitle": "Literal percent",
+      "game": "magic",
+      "inventory": 1,
+      "productFamily": "single",
+      "productId": "20",
+      "published": true,
+      "status": "ACTIVE"
+    },
+    {
+      "canonicalCardName": "100X Energy",
+      "commercialTitle": "Percent control",
+      "game": "magic",
+      "inventory": 1,
+      "productFamily": "single",
+      "productId": "21",
+      "published": true,
+      "status": "ACTIVE"
+    },
+    {
+      "canonicalCardName": "Code_Name",
+      "commercialTitle": "Literal underscore",
+      "game": "magic",
+      "inventory": 1,
+      "productFamily": "single",
+      "productId": "22",
+      "published": true,
+      "status": "ACTIVE"
+    },
+    {
+      "canonicalCardName": "CodeXName",
+      "commercialTitle": "Underscore control",
+      "game": "magic",
+      "inventory": 1,
+      "productFamily": "single",
+      "productId": "23",
+      "published": true,
+      "status": "ACTIVE"
+    },
+    {
+      "canonicalCardName": "Caf\u00e9 Mage",
+      "commercialTitle": "Precomposed Unicode",
+      "game": "magic",
+      "inventory": 1,
+      "productFamily": "single",
+      "productId": "24",
+      "published": true,
+      "status": "ACTIVE"
+    },
+    {
+      "canonicalCardName": "Cafe\u0301 Mage",
+      "commercialTitle": "Decomposed Unicode",
+      "game": "magic",
+      "inventory": 0,
+      "productFamily": "single",
+      "productId": "25",
+      "published": true,
+      "status": "ACTIVE"
+    },
+    {
+      "canonicalCardName": "Colossus Hammer",
+      "commercialTitle": "Prefix tier",
+      "game": "magic",
+      "inventory": 1,
+      "productFamily": "single",
+      "productId": "26",
+      "published": true,
+      "status": "ACTIVE"
+    },
+    {
+      "canonicalCardName": "Darksteel Colossus",
+      "commercialTitle": "Contains tier",
+      "game": "magic",
+      "inventory": 1,
+      "productFamily": "single",
+      "productId": "27",
+      "published": true,
+      "status": "ACTIVE"
+    },
+    {
+      "canonicalCardName": "Pikachu",
+      "commercialTitle": "Synthetic Pokemon print",
+      "game": "pokemon",
+      "inventory": 1,
+      "productFamily": "single",
+      "productId": "30",
+      "published": true,
+      "status": "ACTIVE"
+    },
+    {
+      "canonicalCardName": "Blue-Eyes White Dragon",
+      "commercialTitle": "Synthetic Yu-Gi-Oh! print",
+      "game": "yugioh",
+      "inventory": 1,
+      "productFamily": "single",
+      "productId": "31",
+      "published": true,
+      "status": "ACTIVE"
+    },
+    {
+      "canonicalCardName": "Monkey.D.Luffy",
+      "commercialTitle": "Synthetic One Piece print",
+      "game": "one-piece",
+      "inventory": 1,
+      "productFamily": "single",
+      "productId": "32",
+      "published": true,
+      "status": "ACTIVE"
+    },
+    {
+      "canonicalCardName": "Shared Hero",
+      "commercialTitle": "Magic collision",
+      "game": "magic",
+      "inventory": 1,
+      "productFamily": "single",
+      "productId": "101",
+      "published": true,
+      "status": "ACTIVE"
+    },
+    {
+      "canonicalCardName": "Shared Hero",
+      "commercialTitle": "Pokemon collision",
+      "game": "pokemon",
+      "inventory": 1,
+      "productFamily": "single",
+      "productId": "102",
+      "published": true,
+      "status": "ACTIVE"
+    },
+    {
+      "canonicalCardName": "Shared Hero",
+      "commercialTitle": "Yu-Gi-Oh! collision",
+      "game": "yugioh",
+      "inventory": 1,
+      "productFamily": "single",
+      "productId": "103",
+      "published": true,
+      "status": "ACTIVE"
+    },
+    {
+      "canonicalCardName": "Shared Hero",
+      "commercialTitle": "One Piece collision",
+      "game": "one-piece",
+      "inventory": 1,
+      "productFamily": "single",
+      "productId": "104",
+      "published": true,
+      "status": "ACTIVE"
+    }
+  ],
+  "schemaVersion": 1
+}

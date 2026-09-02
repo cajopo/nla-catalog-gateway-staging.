@@ -1,1 +1,2 @@
 include tests/fixtures/runtime_contract_v1_golden.json
+include tests/fixtures/canonical_search_v1.json
