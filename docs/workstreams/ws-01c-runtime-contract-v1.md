@@ -160,7 +160,9 @@ Author evidence is local and synthetic only:
 ```text
 pytest tests/test_runtime_contract.py --cov=nla_catalog_gateway.runtime_contract \
   --cov-branch --cov-report=term-missing
-76 passed; 1136/1136 statements and 492/492 branches covered (100%)
+76 passed; 1139/1139 statements and 494/494 branches covered (100%)
+full suite (`nla_catalog_gateway` + `scripts`): 840 passed; 0 skipped; 0 xfailed;
+  2960/2960 statements and 1298/1298 branches covered (100%)
 ```
 
 Real-baseline capability verification remains blocked by `NLA_DATA_ROOT MISSING`. Future
