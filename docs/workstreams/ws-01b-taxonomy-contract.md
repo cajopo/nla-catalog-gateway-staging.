@@ -3,9 +3,9 @@
 ## Scope
 
 This slice implements the deterministic code contract required by issue #19. It classifies
-synthetic records and four historical read-only `Magic Display` observations. It does not
-claim to classify the current complete Shopify baseline, rebuild an index, or prove DB/API
-integration.
+only synthetic records, including four explicitly synthetic `Magic Display` examples. It
+does not claim to classify the current complete Shopify baseline, rebuild an index, or prove
+DB/API integration.
 
 Shopify remains authoritative for commercial fields. The classifier neither accepts nor
 returns transformed price or inventory values, performs no Shopify mutation, and does not
@@ -52,30 +52,36 @@ explicit, normalized, and globally unique; they are never derived from punctuati
 match key. Every serialized game value is also a required canonical self-alias, so a game
 value can round-trip through `explicit_game` without depending on a display alias.
 
-Only the exact observed product type `Magic Display` is mapped today. No product ID, SKU,
-title, collection membership, price, or inventory value selects that family.
+Only the reviewed product type `Magic Display` is mapped today. No product ID, SKU, title,
+collection membership, price, or inventory value selects that family.
 
-## Historical sealed fixture
+## Synthetic sealed fixture
 
-The fixture records the four `Magic Display` products observed read-only on 2026-08-31 with
-their then-observed product GID, structured type, tags, title, language, price, and inventory.
-Tests prove that the shared product-type rule classifies all four as `magic/sealed` and that a
-fifth synthetic GID follows the same rule.
+The fixture contains four invented `Magic Display` examples with conspicuous test-only GIDs
+and titles. It contains no captured Shopify Product GID, title, tag, language, price, or
+inventory value. Tests prove that the shared product-type rule classifies all four as
+`magic/sealed`, covering both supported sealed subtypes, and that a fifth synthetic GID
+follows the same rule.
 
-The fixture is historical contract evidence, not a current Shopify snapshot. It does not
-assert fields that were not captured, including publication identity, inventory policy, or
-separate PowerTools/sync identifiers.
+The repository preflight rejects the removed source Product IDs, commercial titles, and
+former fixture path by non-reversible digest without retaining those values in Git. It scans
+every regular UTF-8 blob in the staged Git index, independent of filename extension, and
+fails closed above explicit index-entry, per-file, and aggregate-byte limits. The synthetic
+fixture deliberately omits publication identity, inventory policy, and separate
+PowerTools/sync identifiers.
 
 ## Blocked real-data gate
 
-`NLA_DATA_ROOT` is missing on this host. Issue #19 therefore remains open. WS-01 DATA must
-later provide a fresh, independently verified Admin Bulk snapshot and prove:
+`NLA_DATA_ROOT` is missing on this host. The accepted issue #19 contract therefore remains a
+synthetic foundation. Issue #32 must later run a fresh, independently verified Admin Bulk
+snapshot outside Git and prove:
 
 ```text
 classified + unclassified with non-empty reasons = total included baseline
 ```
 
-That proof must also establish observed mappings beyond `Magic Display`, real fixtures for
-other games where available, preservation of price/inventory through the data projection,
-and equality of taxonomy version and counts across manifest, DB, and API. None of those
-production-data claims are made by this contract slice.
+That proof must also establish observed mappings beyond `Magic Display`, preserve external
+read-only evidence for other games where available, verify price/inventory through the data
+projection, and prove equality of taxonomy version and counts across manifest, DB, and API.
+Only synthetic fixtures may be checked into this repository. None of those production-data
+claims are made by this contract slice.

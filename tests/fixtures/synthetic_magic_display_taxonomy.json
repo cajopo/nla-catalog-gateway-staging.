@@ -1,0 +1,38 @@
+{
+  "schemaVersion": 1,
+  "provenance": {
+    "source": "synthetic",
+    "purpose": "taxonomy-contract-only",
+    "containsProductionData": false
+  },
+  "records": [
+    {
+      "productGid": "gid://shopify/Product/900000000000000001",
+      "productType": "Magic Display",
+      "tags": ["Synthetic Fixture Tag"],
+      "commercialTitle": "Synthetic Aurora Collector Booster Box - Fixture Alpha",
+      "expectedSubtype": "collector-booster-box"
+    },
+    {
+      "productGid": "gid://shopify/Product/900000000000000002",
+      "productType": "Magic Display",
+      "tags": ["Synthetic Fixture Tag"],
+      "commercialTitle": "Synthetic Beacon Booster Box - Fixture Beta",
+      "expectedSubtype": "booster-box"
+    },
+    {
+      "productGid": "gid://shopify/Product/900000000000000003",
+      "productType": "Magic Display",
+      "tags": ["Synthetic Fixture Tag"],
+      "commercialTitle": "Synthetic Comet Collector Booster Box - Fixture Gamma",
+      "expectedSubtype": "collector-booster-box"
+    },
+    {
+      "productGid": "gid://shopify/Product/900000000000000004",
+      "productType": "Magic Display",
+      "tags": ["Synthetic Fixture Tag"],
+      "commercialTitle": "Synthetic Delta Collector Booster Box - Fixture Delta",
+      "expectedSubtype": "collector-booster-box"
+    }
+  ]
+}
