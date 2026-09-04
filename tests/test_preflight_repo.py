@@ -1451,6 +1451,14 @@ def test_git_executable_missing_is_reported(monkeypatch: pytest.MonkeyPatch) -> 
         preflight._git(Path.cwd(), "status")
 
 
+def test_unbounded_git_command_returns_captured_stdout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    completed = subprocess.CompletedProcess([], 0, stdout=b"synthetic stdout", stderr=b"")
+    monkeypatch.setattr(preflight.subprocess, "run", lambda *_args, **_kwargs: completed)
+    assert preflight._git(Path.cwd(), "status") == b"synthetic stdout"
+
+
 def test_git_command_failure_is_reported(monkeypatch: pytest.MonkeyPatch) -> None:
     def fail_command(*_: object, **__: object) -> None:
         raise OSError("synthetic command failure")
