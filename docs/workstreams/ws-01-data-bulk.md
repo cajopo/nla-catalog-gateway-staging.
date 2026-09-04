@@ -6,15 +6,10 @@ This slice implements the fail-closed local boundary between completed Shopify A
 downloads and an immutable SQLite source candidate. It does not call Shopify, classify products,
 build the serving index, activate a dataset, or change Shopify or PowerTools.
 
-The checked-in GraphQL document is a schema candidate, not an executable operation. On
-2026-09-01, revision 3 passed read-only field/type validation against the current Shopify Admin
-schema; no Bulk operation or store-data query was run. That result does not bind the document to
-a selected stable API version or prove runtime scopes, connection completeness or Bulk legality.
-Shopify documents at most five connection fields in one Bulk query, while this candidate contains
-six including the root (`products`, publications, Product metafields, variants, Variant metafields
-and inventory levels). It is known non-submittable as one Bulk operation. A future issue-#5 step
-must split it into read-only snapshots and join them by canonical immutable GIDs without dropping
-fields.
+The original six-connection schema candidate has been removed. Issue #32 now carries two
+schema-validated, read-only query documents and a deterministic synthetic reconciliation model;
+see `ws-01d-data-baseline-reconciliation.md`. This older slice remains the ingestion/storage
+contract and does not claim that a real Bulk operation was run.
 
 ## Sanitized terminal evidence
 

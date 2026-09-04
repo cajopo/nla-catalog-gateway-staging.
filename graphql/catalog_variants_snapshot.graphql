@@ -1,0 +1,62 @@
+# Read-only Shopify Admin Bulk query, part 2 of 2.
+# Product ownership is selected explicitly because root ProductVariant JSONL rows
+# do not inherit a Product parent from a separate Bulk operation.
+query NlaCatalogVariantsSnapshot {
+  productVariants(sortKey: ID) {
+    edges {
+      node {
+        __typename
+        id
+        title
+        sku
+        barcode
+        selectedOptions {
+          name
+          value
+        }
+        price
+        compareAtPrice
+        inventoryQuantity
+        inventoryPolicy
+        updatedAt
+        product {
+          __typename
+          id
+        }
+        nlaMetafields: metafields(namespace: "nla") {
+          edges {
+            node {
+              __typename
+              id
+              namespace
+              key
+              type
+              value
+            }
+          }
+        }
+        inventoryItem {
+          __typename
+          id
+          tracked
+          inventoryLevels {
+            edges {
+              node {
+                __typename
+                id
+                location {
+                  id
+                  name
+                }
+                quantities(names: ["available", "on_hand", "committed", "reserved", "incoming"]) {
+                  name
+                  quantity
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
