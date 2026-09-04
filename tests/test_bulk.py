@@ -1432,19 +1432,23 @@ def test_allowed_type_order_is_frozen() -> None:
     assert ALLOWED_TYPES == tuple(sorted(ALLOWED_TYPES))
 
 
-def test_candidate_query_is_schema_valid_but_known_bulk_incompatible() -> None:
-    query_path = (
-        Path(__file__).resolve().parents[1] / "graphql" / "catalog_snapshot_candidate.graphql"
-    )
-    query = query_path.read_text(encoding="utf-8")
-    assert query.startswith("# CANDIDATE ONLY - NOT VALIDATED AGAINST A SPECIFIC")
-    assert "# KNOWN NON-SUBMITTABLE AS ONE BULK OPERATION" in query
-    assert "first:" not in query
-    assert query.count("query NlaCatalogSnapshotCandidate") == 1
-    assert 'products(sortKey: ID, query: "status:active,archived,draft,unlisted")' in query
-    assert query.count("edges {") == 6
-    assert "catalog {\n                  __typename" in query
-    assert "barcode" in query
-    assert "selectedOptions" in query
-    assert "mediaContentType" in query
-    assert "preview" in query
+def test_split_queries_are_packaged_schema_validated_bulk_shapes() -> None:
+    query_root = Path(__file__).resolve().parents[1] / "graphql"
+    products = (query_root / "catalog_products_snapshot.graphql").read_text(encoding="utf-8")
+    variants = (query_root / "catalog_variants_snapshot.graphql").read_text(encoding="utf-8")
+
+    assert products.startswith("# Read-only Shopify Admin Bulk query, part 1 of 2.")
+    assert variants.startswith("# Read-only Shopify Admin Bulk query, part 2 of 2.")
+    assert "first:" not in products + variants
+    assert products.count("query NlaCatalogProductsSnapshot") == 1
+    assert variants.count("query NlaCatalogVariantsSnapshot") == 1
+    assert products.count("edges {") == 3
+    assert variants.count("edges {") == 3
+    assert "products(sortKey: ID)" in products
+    assert "productVariants(sortKey: ID)" in variants
+    assert "resourcePublicationsV2" in products
+    assert "catalog {\n                  __typename" in products
+    assert "featuredMedia" in products
+    assert "selectedOptions" in variants
+    assert "inventoryLevels" in variants
+    assert "product {\n          __typename\n          id" in variants

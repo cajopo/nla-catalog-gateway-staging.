@@ -1,0 +1,90 @@
+# Read-only Shopify Admin Bulk query, part 1 of 2.
+# Validated locally against the bundled 2026-04 Admin schema. Revalidate against
+# the selected stable schema immediately before any authorized read-only export.
+query NlaCatalogProductsSnapshot {
+  products(sortKey: ID) {
+    edges {
+      node {
+        __typename
+        id
+        handle
+        title
+        status
+        vendor
+        productType
+        tags
+        createdAt
+        updatedAt
+        publishedAt
+        onlineStoreUrl
+        totalInventory
+        tracksInventory
+        variantsCount {
+          count
+        }
+        featuredMedia {
+          __typename
+          id
+          alt
+          mediaContentType
+          status
+          preview {
+            status
+            image {
+              url
+              altText
+              width
+              height
+            }
+          }
+          ... on MediaImage {
+            image {
+              url
+              altText
+              width
+              height
+            }
+          }
+        }
+        syncProductId: metafield(namespace: "sync", key: "productid") {
+          type
+          value
+        }
+        powertoolsId: metafield(namespace: "powertools", key: "id") {
+          type
+          value
+        }
+        resourcePublicationsV2 {
+          edges {
+            node {
+              __typename
+              isPublished
+              publishDate
+              publication {
+                id
+                autoPublish
+                catalog {
+                  __typename
+                  id
+                  title
+                }
+              }
+            }
+          }
+        }
+        nlaMetafields: metafields(namespace: "nla") {
+          edges {
+            node {
+              __typename
+              id
+              namespace
+              key
+              type
+              value
+            }
+          }
+        }
+      }
+    }
+  }
+}
