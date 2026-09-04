@@ -1,3 +1,4 @@
 include graphql/catalog_products_snapshot.graphql
 include graphql/catalog_variants_snapshot.graphql
+include tests/fixtures/synthetic_magic_display_taxonomy.json
 include tests/fixtures/runtime_contract_v1_golden.json

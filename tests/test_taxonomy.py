@@ -20,7 +20,7 @@ from nla_catalog_gateway.taxonomy import (
     load_taxonomy,
 )
 
-FIXTURE_PATH = Path(__file__).with_name("fixtures") / "live_magic_displays_2026-08-31.json"
+FIXTURE_PATH = Path(__file__).with_name("fixtures") / "synthetic_magic_display_taxonomy.json"
 
 
 def _document() -> dict[str, Any]:
@@ -97,18 +97,34 @@ def test_classification_serialization_includes_rule_or_reason() -> None:
     assert payload["unclassifiedReason"] == "missing_game_signal"
 
 
-def test_historical_magic_display_fixture_uses_structured_type_not_gid() -> None:
+def test_synthetic_magic_display_fixture_uses_structured_type_not_gid() -> None:
     fixture = json.loads(FIXTURE_PATH.read_text(encoding="utf-8"))
     config_text = default_config_path().read_text(encoding="utf-8")
+    assert set(fixture) == {"schemaVersion", "provenance", "records"}
+    assert fixture["schemaVersion"] == 1
     assert fixture["provenance"] == {
-        "observedAt": "2026-08-31",
-        "source": "Shopify Admin read-only query recorded in GitHub issue #19",
-        "query": 'product_type:"Magic Display"',
-        "freshness": "historical-fixture-not-current-baseline",
+        "source": "synthetic",
+        "purpose": "taxonomy-contract-only",
+        "containsProductionData": False,
     }
     assert len(fixture["records"]) == 4
+    assert {record["expectedSubtype"] for record in fixture["records"]} == {
+        "booster-box",
+        "collector-booster-box",
+    }
+    assert len({record["productGid"] for record in fixture["records"]}) == 4
     before = deepcopy(fixture["records"])
     for record in fixture["records"]:
+        assert set(record) == {
+            "productGid",
+            "productType",
+            "tags",
+            "commercialTitle",
+            "expectedSubtype",
+        }
+        assert record["productGid"].startswith("gid://shopify/Product/90000000000000000")
+        assert record["tags"] == ["Synthetic Fixture Tag"]
+        assert record["commercialTitle"].startswith("Synthetic ")
         assert record["productGid"] not in config_text
         result = classify_product(
             ProductFacts(
@@ -119,18 +135,13 @@ def test_historical_magic_display_fixture_uses_structured_type_not_gid() -> None
             ),
             load_taxonomy(),
         )
-        expected_subtype = (
-            "collector-booster-box"
-            if "Collector Booster Box" in record["commercialTitle"]
-            else "booster-box"
-        )
         assert (result.game, result.family, result.subtype) == (
             Game.MAGIC,
             ProductFamily.SEALED,
-            expected_subtype,
+            record["expectedSubtype"],
         )
         assert result.rule_id == "product-type:magic-display"
-        assert result.subtype_rule_id == f"sealed-subtype:{expected_subtype}"
+        assert result.subtype_rule_id == f"sealed-subtype:{record['expectedSubtype']}"
         assert result.reason is None
         assert result.subtype_reason is None
     assert fixture["records"] == before
@@ -520,7 +531,7 @@ def test_mapping_cannot_contain_a_shopify_product_gid(tmp_path: Path) -> None:
 @pytest.mark.parametrize("location", ["key", "value", "fragment"])
 def test_mapping_cannot_contain_a_bare_shopify_product_id(tmp_path: Path, location: str) -> None:
     document = _document()
-    product_id = "11676412608780"
+    product_id = "900000000000009999"
     if location == "key":
         document["productTypes"][product_id] = {
             "id": "product-type:forbidden",
