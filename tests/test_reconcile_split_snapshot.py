@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+import ctypes
 import hashlib
+import io
 import json
 import os
 import runpy
+import struct
 import sys
-from dataclasses import dataclass
+from contextlib import ExitStack
+from dataclasses import dataclass, replace
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -87,6 +91,7 @@ def portable_core_filesystem_backend(
 
     registered_paths: dict[int, Path] = {}
     registered_files: dict[int, Any] = {}
+    pending_delete: set[int] = set()
     next_handle = 100
 
     def register(path: Path, handle: Any = None) -> int:
@@ -127,19 +132,70 @@ def portable_core_filesystem_backend(
     def reopen_for_delete(handle: Any, _context: str) -> int:
         return register(Path(handle.name))
 
-    def mark_delete(raw_handle: int, _context: str) -> None:
+    def remove_registered_path(raw_handle: int) -> None:
         path = registered_paths[raw_handle]
-        open_file = registered_files.pop(raw_handle, None)
-        if open_file is not None:
-            open_file.close()
         if path.is_dir():
             path.rmdir()
         else:
             path.unlink()
 
+    def mark_delete(raw_handle: int, _context: str) -> None:
+        pending_delete.add(raw_handle)
+
+    def cancel_delete(raw_handle: int, _context: str) -> None:
+        pending_delete.discard(raw_handle)
+
+    def finalize_closed_pending(*, exclude: int) -> None:
+        for pending in tuple(pending_delete):
+            if pending == exclude:
+                continue
+            open_file = registered_files.get(pending)
+            if open_file is not None and open_file.closed:
+                remove_registered_path(pending)
+                pending_delete.discard(pending)
+                registered_paths.pop(pending, None)
+                registered_files.pop(pending, None)
+
     def close_handle(raw_handle: int) -> None:
+        registered = registered_paths.get(raw_handle)
+        if registered is not None and registered.is_dir():
+            finalize_closed_pending(exclude=raw_handle)
+        if raw_handle in pending_delete:
+            remove_registered_path(raw_handle)
+            pending_delete.discard(raw_handle)
         registered_paths.pop(raw_handle, None)
         registered_files.pop(raw_handle, None)
+
+    def canonical_for(path: Path) -> cli._CanonicalHandlePath:
+        raw = os.fspath(path)
+        if raw.casefold().startswith("\\\\?\\") and len(raw) > 6 and raw[5] == ":":
+            path = Path(raw[4:])
+        resolved = path.resolve(strict=False)
+        return cli._CanonicalHandlePath(
+            volume_guid=f"portable:{resolved.anchor.casefold()}",
+            components=tuple(part.casefold() for part in resolved.parts[1:]),
+        )
+
+    def canonical_path(raw_handle: int, _context: str) -> cli._CanonicalHandlePath:
+        return canonical_for(registered_paths[raw_handle])
+
+    def file_streams(
+        raw_handle: int,
+        _context: str,
+        *,
+        directory: bool = False,
+    ) -> tuple[tuple[str, int], ...]:
+        if directory:
+            result: tuple[tuple[str, int], ...] = ()
+        else:
+            open_file = registered_files.get(raw_handle)
+            size = (
+                os.fstat(open_file.fileno()).st_size
+                if open_file is not None and not open_file.closed
+                else registered_paths[raw_handle].stat().st_size
+            )
+            result = (("::$DATA", size),)
+        return result
 
     def rename_directory(lease: cli._DirectoryLease, target: Path) -> None:
         source = lease.path
@@ -148,6 +204,7 @@ def portable_core_filesystem_backend(
             if registered == source:
                 registered_paths[raw_handle] = target
         lease.path = target
+        lease.canonical_path = canonical_for(target)
 
     monkeypatch.setattr(cli, "_native_binary_file", binary_file)
     monkeypatch.setattr(cli, "_native_sealed_file", sealed_file)
@@ -155,7 +212,10 @@ def portable_core_filesystem_backend(
     monkeypatch.setattr(cli, "_native_os_handle", os_handle)
     monkeypatch.setattr(cli, "_native_reopen_for_delete", reopen_for_delete)
     monkeypatch.setattr(cli, "_native_mark_delete", mark_delete)
+    monkeypatch.setattr(cli, "_native_cancel_delete", cancel_delete)
     monkeypatch.setattr(cli, "_native_close", close_handle)
+    monkeypatch.setattr(cli, "_native_handle_canonical_path", canonical_path)
+    monkeypatch.setattr(cli, "_native_file_streams", file_streams)
     monkeypatch.setattr(cli, "_rename_directory_by_handle", rename_directory)
     monkeypatch.setattr(cli, "_require_local_ntfs", lambda *_args: None)
     yield
@@ -513,8 +573,18 @@ def test_main_emits_only_safe_success_metadata(
     captured = capsys.readouterr()
     assert captured.err == ""
     message = json.loads(captured.out)
-    assert set(message) == {"datasetGeneration", "outputCreated", "sourceGeneration", "status"}
+    assert set(message) == {
+        "datasetGeneration",
+        "outputCreated",
+        "sourceGeneration",
+        "status",
+        "summarySha256",
+    }
     assert message["outputCreated"] is True
+    assert (
+        message["summarySha256"]
+        == hashlib.sha256((output / "reconciliation-summary.v1.json").read_bytes()).hexdigest()
+    )
     assert message["status"] == "ok"
     assert str(output) not in captured.out
 
@@ -711,6 +781,211 @@ def test_windows_ads_and_trailing_input_components_are_rejected(tmp_path: Path) 
             cli._regular_file(candidate, "input", external=True)
 
 
+@pytest.mark.parametrize(
+    "raw",
+    [
+        r"\\.\C:\unsafe",
+        r"\??\C:\unsafe",
+        r"\\?\GLOBALROOT\Device\HarddiskVolume1\unsafe",
+        r"\\?\UNC\server\share\unsafe",
+        r"\\server\share\unsafe",
+        r"\\?\Device\HarddiskVolume1\unsafe",
+    ],
+)
+def test_unsupported_windows_namespaces_are_rejected_early(raw: str) -> None:
+    with pytest.raises(cli.ReconciliationCliError, match="unsupported filesystem namespace"):
+        cli._require_supported_path_namespace(Path(raw), "input")
+
+
+def test_canonical_handle_path_parser_and_component_boundaries() -> None:
+    root = cli._parse_canonical_handle_path(
+        r"\\?\Volume{12345678-1234-1234-1234-123456789ABC}\Repo",
+        "input",
+    )
+    child = cli._parse_canonical_handle_path(
+        r"\\?\Volume{12345678-1234-1234-1234-123456789abc}\REPO\child",
+        "input",
+    )
+    sibling_prefix = cli._parse_canonical_handle_path(
+        r"\\?\Volume{12345678-1234-1234-1234-123456789abc}\repository",
+        "input",
+    )
+    other_volume = cli._parse_canonical_handle_path(
+        r"\\?\Volume{abcdef12-1234-1234-1234-123456789abc}\repo\child",
+        "input",
+    )
+    assert cli._canonical_is_within(root, root) is True
+    assert cli._canonical_is_within(child, root) is True
+    assert cli._canonical_is_within(sibling_prefix, root) is False
+    assert cli._canonical_is_within(other_volume, root) is False
+    assert cli._canonical_child(root, "Child") == child
+
+    for invalid in (
+        r"C:\repo",
+        r"\\?\C:\repo",
+        r"\\?\Volume{not-a-guid}\repo",
+        "\\\\?\\Volume{12345678-1234-1234-1234-123456789abc}\\repo/child",
+        "\\\\?\\Volume{12345678-1234-1234-1234-123456789abc}\\repo\\..",
+        "\\\\?\\Volume{12345678-1234-1234-1234-123456789abc}\\repo\\bad:",
+        "\\\\?\\Volume{12345678-1234-1234-1234-123456789abc}\\repo\\bad. ",
+        "\\\\?\\Volume{12345678-1234-1234-1234-123456789abc}\\repo\\\\child",
+    ):
+        with pytest.raises(cli.ReconciliationCliError, match="canonical path"):
+            cli._parse_canonical_handle_path(invalid, "input")
+
+    for invalid_name in ("", ".", "..", "bad/name", r"bad\name", "bad:name", "bad. "):
+        with pytest.raises(cli.ReconciliationCliError, match="child name"):
+            cli._canonical_child(root, invalid_name)
+
+
+def _extended_path(path: Path) -> Path:
+    return Path("\\\\?\\" + os.fspath(path.resolve()))
+
+
+def _native_repository_alias(kind: str) -> Path | None:
+    if sys.platform != "win32" or PORTABLE_CORE_BACKEND:
+        return None
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    if kind == "volume-guid":
+        buffer = ctypes.create_unicode_buffer(32_768)
+        call = kernel32.GetVolumeNameForVolumeMountPointW
+        if not call(PROJECT_ROOT.anchor, buffer, len(buffer)):
+            return None
+        relative = PROJECT_ROOT.resolve().relative_to(Path(PROJECT_ROOT.anchor))
+        return Path(buffer.value) / relative
+    if kind == "8.3":
+        buffer = ctypes.create_unicode_buffer(32_768)
+        call = kernel32.GetShortPathNameW
+        result = int(call(os.fspath(PROJECT_ROOT.resolve()), buffer, len(buffer)))
+        if result == 0 or result >= len(buffer):
+            return None
+        candidate = Path(buffer.value)
+        return candidate if os.path.normcase(candidate) != os.path.normcase(PROJECT_ROOT) else None
+    if kind == "subst":
+        query = kernel32.QueryDosDeviceW
+        buffer = ctypes.create_unicode_buffer(32_768)
+        for ordinal in range(ord("A"), ord("Z") + 1):
+            drive = f"{chr(ordinal)}:"
+            if not query(drive, buffer, len(buffer)):
+                continue
+            target = buffer.value
+            if not target.casefold().startswith("\\??\\".casefold()):
+                continue
+            mapped = Path(target[4:]).resolve(strict=False)
+            try:
+                relative = PROJECT_ROOT.resolve().relative_to(mapped)
+            except ValueError:
+                continue
+            return Path(f"{drive}\\") / relative
+    return None
+
+
+def test_normal_and_extended_paths_use_authoritative_canonical_boundaries(tmp_path: Path) -> None:
+    external = tmp_path / "external.json"
+    external.write_bytes(b"{}")
+    extended_external = _extended_path(external)
+    resolved, state = cli._regular_file(extended_external, "input", external=True)
+    assert state.byte_count == 2
+    assert resolved.samefile(external)
+
+    extended_repo_query = _extended_path(PRODUCT_QUERY)
+    with pytest.raises(cli.ReconciliationCliError, match="external to the repository"):
+        cli._regular_file(extended_repo_query, "input", external=True)
+
+    extended_output = _extended_path(tmp_path / "extended-output")
+    assert cli._validated_output_directory(extended_output).parent.samefile(tmp_path)
+    assert not (tmp_path / "extended-output").exists()
+
+    repo_output = _extended_path(PROJECT_ROOT / "extended-output")
+    with pytest.raises(cli.ReconciliationCliError, match="external to the repository"):
+        cli._validated_output_directory(repo_output)
+    assert not (PROJECT_ROOT / "extended-output").exists()
+
+
+@pytest.mark.parametrize("alias_kind", ["volume-guid", "8.3", "subst"])
+def test_repository_aliases_are_rejected_by_handle_canonical_path(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    alias_kind: str,
+) -> None:
+    alias_root = _native_repository_alias(alias_kind)
+    if alias_root is not None:
+        alias_query = alias_root / "graphql" / PRODUCT_QUERY.name
+        with pytest.raises(cli.ReconciliationCliError, match="external to the repository"):
+            cli._regular_file(alias_query, "input", external=True)
+        alias_output = alias_root / f"{alias_kind}-output"
+        with pytest.raises(cli.ReconciliationCliError, match="external to the repository"):
+            cli._validated_output_directory(alias_output)
+        assert not alias_output.exists()
+        return
+
+    external = tmp_path / f"{alias_kind}.json"
+    external.write_bytes(b"{}")
+    repository = cli._CanonicalHandlePath("volume", ("repo",))
+    canonical_alias = cli._CanonicalHandlePath("volume", ("repo", alias_kind.casefold()))
+    monkeypatch.setattr(cli, "_repository_canonical_path", lambda: repository)
+    monkeypatch.setattr(
+        cli, "_native_path_canonical_path", lambda *_args, **_kwargs: canonical_alias
+    )
+    with pytest.raises(cli.ReconciliationCliError, match="external to the repository"):
+        cli._regular_file(external, "input", external=True)
+
+    output = tmp_path / f"{alias_kind}-output"
+    with pytest.raises(cli.ReconciliationCliError, match="external to the repository"):
+        cli._validated_output_directory(output)
+    assert not output.exists()
+
+
+@pytest.mark.parametrize(
+    ("field_name", "context"),
+    [
+        ("products_snapshot", "products snapshot"),
+        ("variants_snapshot", "variants snapshot"),
+        ("products_terminal", "products terminal evidence"),
+        ("variants_terminal", "variants terminal evidence"),
+        ("expectation_path", "reconciliation expectation"),
+        ("products_query", "products query"),
+        ("variants_query", "variants query"),
+    ],
+)
+def test_every_pinned_input_rejects_a_named_ntfs_stream(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    field_name: str,
+    context: str,
+) -> None:
+    inputs = make_inputs(tmp_path)
+    products_query = tmp_path / "products-query.graphql"
+    variants_query = tmp_path / "variants-query.graphql"
+    products_query.write_bytes(PRODUCT_QUERY.read_bytes())
+    variants_query.write_bytes(VARIANT_QUERY.read_bytes())
+    inputs = replace(inputs, products_query=products_query, variants_query=variants_query)
+    carrier = getattr(inputs, field_name)
+    output = tmp_path / "generation"
+
+    if not PORTABLE_CORE_BACKEND and sys.platform == "win32":
+        alternate = Path(f"{carrier}:foreign")
+        alternate.write_bytes(b"third-party-stream")
+    else:
+        real_require = cli._require_unnamed_data_stream
+
+        def reject_selected(raw_handle: int, expected_size: int, selected_context: str) -> None:
+            if selected_context == context:
+                raise cli.ReconciliationCliError(
+                    f"{selected_context} must contain only its unnamed data stream"
+                )
+            real_require(raw_handle, expected_size, selected_context)
+
+        monkeypatch.setattr(cli, "_require_unnamed_data_stream", reject_selected)
+
+    with pytest.raises(cli.ReconciliationCliError, match="unnamed data stream"):
+        cli.run_reconciliation(**inputs.kwargs(output))
+    assert not output.exists()
+    assert not tuple(tmp_path.glob(".nla-reconcile-staging-*"))
+    if not PORTABLE_CORE_BACKEND and sys.platform == "win32":
+        assert Path(f"{carrier}:foreign").read_bytes() == b"third-party-stream"
+
+
 def test_every_reparse_attribute_is_treated_as_an_alias(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -799,16 +1074,13 @@ def test_restored_inplace_expectation_attack_is_blocked_by_the_pin(
 
 
 def test_path_and_filesystem_failures_are_bounded(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path,
 ) -> None:
     missing = tmp_path / "missing.json"
     with pytest.raises(cli.ReconciliationCliError, match="unavailable"):
         cli._regular_file(missing, "input", external=True)
     with pytest.raises(cli.ReconciliationCliError, match="cannot be read"):
         cli._load_control_document(missing, "control")
-
-    monkeypatch.setattr(os.path, "commonpath", lambda _paths: (_ for _ in ()).throw(ValueError()))
-    assert cli._is_within(tmp_path, PROJECT_ROOT) is False
 
 
 def test_pinned_input_failures_are_bounded(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -998,6 +1270,258 @@ def test_native_local_ntfs_boundary_is_explicit_and_fail_closed(
                 cli._require_local_ntfs(tmp_path, "input")
 
 
+def _stream_info_payload(entries: list[tuple[str, int, int]]) -> bytes:
+    payload = bytearray()
+    for index, (name, size, allocation) in enumerate(entries):
+        encoded = name.encode("utf-16-le", errors="surrogatepass")
+        entry_size = 24 + len(encoded)
+        padded_size = (entry_size + 7) & ~7
+        next_offset = padded_size if index + 1 < len(entries) else 0
+        payload.extend(struct.pack("<IIqq", next_offset, len(encoded), size, allocation))
+        payload.extend(encoded)
+        if next_offset:
+            payload.extend(b"\x00" * (padded_size - entry_size))
+    return bytes(payload)
+
+
+def test_native_file_stream_enumeration_uses_the_exact_handle(tmp_path: Path) -> None:
+    if sys.platform != "win32":
+        payload = _stream_info_payload([("::$DATA", 7, 8), (":evidence:$DATA", 6, 8)])
+
+        class NativeCall:
+            def __call__(self, _handle: int, _kind: int, output: Any, _size: int) -> bool:
+                ctypes.memmove(ctypes.addressof(output), payload, len(payload))
+                return True
+
+        original = cli._windows_kernel32
+        cli._windows_kernel32 = lambda: SimpleNamespace(  # type: ignore[assignment]
+            GetFileInformationByHandleEx=NativeCall()
+        )
+        try:
+            assert cli._native_file_streams(101, "input") == (
+                ("::$DATA", 7),
+                (":evidence:$DATA", 6),
+            )
+        finally:
+            cli._windows_kernel32 = original  # type: ignore[assignment]
+        return
+
+    carrier = tmp_path / "carrier"
+    carrier.write_bytes(b"carrier")
+    alternate = Path(f"{carrier}:evidence")
+    alternate.write_bytes(b"stream")
+    raw_handle = cli._native_create_file(
+        carrier,
+        access=cli._FILE_READ_ATTRIBUTES,
+        share=cli._FILE_SHARE_READ | cli._FILE_SHARE_WRITE | cli._FILE_SHARE_DELETE,
+        creation=cli._OPEN_EXISTING,
+        flags=cli._FILE_ATTRIBUTE_NORMAL | cli._FILE_FLAG_OPEN_REPARSE_POINT,
+        context="input",
+    )
+    try:
+        assert cli._native_file_streams(raw_handle, "input") == (
+            ("::$DATA", 7),
+            (":evidence:$DATA", 6),
+        )
+    finally:
+        cli._native_close(raw_handle)
+
+    empty = tmp_path / "empty"
+    empty.write_bytes(b"")
+    raw_handle = cli._native_create_file(
+        empty,
+        access=cli._FILE_READ_ATTRIBUTES,
+        share=cli._FILE_SHARE_READ | cli._FILE_SHARE_WRITE | cli._FILE_SHARE_DELETE,
+        creation=cli._OPEN_EXISTING,
+        flags=cli._FILE_ATTRIBUTE_NORMAL | cli._FILE_FLAG_OPEN_REPARSE_POINT,
+        context="input",
+    )
+    try:
+        assert cli._native_file_streams(raw_handle, "input") == (("::$DATA", 0),)
+    finally:
+        cli._native_close(raw_handle)
+
+
+def test_native_directory_stream_enumeration_distinguishes_clean_and_ads(tmp_path: Path) -> None:
+    if sys.platform != "win32":
+        with pytest.raises(cli.ReconciliationCliError, match="streams cannot be verified"):
+            cli._native_file_streams(101, "directory")
+        return
+
+    directory = tmp_path / "directory"
+    directory.mkdir()
+
+    def streams() -> tuple[tuple[str, int], ...]:
+        raw_handle = cli._native_create_file(
+            directory,
+            access=cli._FILE_READ_ATTRIBUTES,
+            share=cli._FILE_SHARE_READ | cli._FILE_SHARE_WRITE | cli._FILE_SHARE_DELETE,
+            creation=cli._OPEN_EXISTING,
+            flags=cli._FILE_FLAG_BACKUP_SEMANTICS | cli._FILE_FLAG_OPEN_REPARSE_POINT,
+            context="output directory",
+        )
+        try:
+            return cli._native_file_streams(raw_handle, "output directory", directory=True)
+        finally:
+            cli._native_close(raw_handle)
+
+    assert streams() == ()
+    Path(f"{directory}:foreign").write_bytes(b"stream")
+    assert streams() == ((":foreign:$DATA", 6),)
+
+
+def test_native_stream_parser_grows_an_aligned_buffer_and_rejects_invalid_metadata(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    valid = _stream_info_payload([("::$DATA", 7, 8), (":foreign:$DATA", 3, 8)])
+    calls = 0
+
+    class GrowingCall:
+        def __call__(self, _handle: int, _kind: int, output: Any, _size: int) -> bool:
+            nonlocal calls
+            assert ctypes.addressof(output) % 8 == 0
+            calls += 1
+            if calls == 1:
+                return False
+            ctypes.memmove(ctypes.addressof(output), valid, len(valid))
+            return True
+
+    monkeypatch.setattr(
+        cli,
+        "_windows_kernel32",
+        lambda: SimpleNamespace(GetFileInformationByHandleEx=GrowingCall()),
+    )
+    monkeypatch.setattr(cli, "_WIN32_LAST_ERROR", lambda: cli._ERROR_MORE_DATA)
+    assert cli._native_file_streams(101, "input") == (
+        ("::$DATA", 7),
+        (":foreign:$DATA", 3),
+    )
+    assert calls == 2
+
+    malformed = []
+    zero_name = bytearray(_stream_info_payload([("::$DATA", 7, 8)]))
+    struct.pack_into("<I", zero_name, 4, 0)
+    malformed.append(bytes(zero_name))
+    odd_name = bytearray(_stream_info_payload([("::$DATA", 7, 8)]))
+    struct.pack_into("<I", odd_name, 4, 13)
+    malformed.append(bytes(odd_name))
+    oversized_name = bytearray(_stream_info_payload([("::$DATA", 7, 8)]))
+    struct.pack_into("<I", oversized_name, 4, cli._STREAM_INFO_INITIAL_BYTES)
+    malformed.append(bytes(oversized_name))
+    malformed.append(_stream_info_payload([(":bad\x00name:$DATA", 1, 8)]))
+    malformed.append(_stream_info_payload([("\ud800", 1, 8)]))
+    malformed.append(_stream_info_payload([("::$DATA", -1, 8)]))
+    malformed.append(_stream_info_payload([("::$DATA", 1, -1)]))
+    malformed.append(_stream_info_payload([("::$DATA", 1, 8), ("::$data", 1, 8)]))
+    for next_offset in (
+        7,
+        24,
+        cli._STREAM_INFO_INITIAL_BYTES - 8,
+        cli._STREAM_INFO_INITIAL_BYTES + 8,
+    ):
+        broken_offset = bytearray(_stream_info_payload([("::$DATA", 7, 8)]))
+        struct.pack_into("<I", broken_offset, 0, next_offset)
+        malformed.append(bytes(broken_offset))
+
+    class PayloadCall:
+        def __init__(self, payload: bytes) -> None:
+            self.payload = payload
+
+        def __call__(self, _handle: int, _kind: int, output: Any, _size: int) -> bool:
+            ctypes.memmove(ctypes.addressof(output), self.payload, len(self.payload))
+            return True
+
+    for payload in malformed:
+        with monkeypatch.context() as patch:
+            patch.setattr(
+                cli,
+                "_windows_kernel32",
+                lambda selected=payload: SimpleNamespace(
+                    GetFileInformationByHandleEx=PayloadCall(selected)
+                ),
+            )
+            with pytest.raises(cli.ReconciliationCliError, match="stream metadata is invalid"):
+                cli._native_file_streams(101, "input")
+
+
+def test_native_stream_query_errors_and_bounds_are_fail_closed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FailingCall:
+        def __call__(self, *_args: object) -> bool:
+            return False
+
+    monkeypatch.setattr(
+        cli,
+        "_windows_kernel32",
+        lambda: SimpleNamespace(GetFileInformationByHandleEx=FailingCall()),
+    )
+    with monkeypatch.context() as patch:
+        patch.setattr(cli, "_WIN32_LAST_ERROR", lambda: cli._ERROR_HANDLE_EOF)
+        assert cli._native_file_streams(101, "directory", directory=True) == ()
+        with pytest.raises(cli.ReconciliationCliError, match="streams cannot be verified"):
+            cli._native_file_streams(101, "input")
+    with monkeypatch.context() as patch:
+        patch.setattr(cli, "_WIN32_LAST_ERROR", lambda: 5)
+        with pytest.raises(cli.ReconciliationCliError, match="streams cannot be verified"):
+            cli._native_file_streams(101, "input")
+    with monkeypatch.context() as patch:
+        patch.setattr(cli, "_WIN32_LAST_ERROR", lambda: cli._ERROR_INSUFFICIENT_BUFFER)
+        with pytest.raises(cli.ReconciliationCliError, match="metadata exceeds its bound"):
+            cli._native_file_streams(101, "input")
+
+
+def test_directory_stream_guard_rejects_named_stream_metadata(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        cli,
+        "_native_file_streams",
+        lambda *_args, **_kwargs: ((":foreign:$DATA", 1),),
+    )
+    with pytest.raises(cli.ReconciliationCliError, match="named data streams"):
+        cli._require_no_directory_streams(101, "output directory")
+
+
+def test_native_final_path_is_volume_guid_normalized_and_fail_closed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    value = r"\\?\Volume{12345678-1234-1234-1234-123456789abc}\Repo\Input"
+
+    class FinalPathCall:
+        def __init__(self, result: int | None) -> None:
+            self.result = result
+
+        def __call__(self, _handle: int, output: Any, _size: int, flags: int) -> int:
+            assert flags == cli._VOLUME_NAME_GUID
+            if self.result is None:
+                output.value = value
+                return len(value)
+            return self.result
+
+    with monkeypatch.context() as patch:
+        patch.setattr(
+            cli,
+            "_windows_kernel32",
+            lambda: SimpleNamespace(GetFinalPathNameByHandleW=FinalPathCall(None)),
+        )
+        assert cli._native_handle_canonical_path(101, "input") == cli._CanonicalHandlePath(
+            "volume{12345678-1234-1234-1234-123456789abc}",
+            ("repo", "input"),
+        )
+    for result in (0, cli._VOLUME_NAME_BUFFER_CHARS):
+        with monkeypatch.context() as patch:
+            patch.setattr(
+                cli,
+                "_windows_kernel32",
+                lambda selected=result: SimpleNamespace(
+                    GetFinalPathNameByHandleW=FinalPathCall(selected)
+                ),
+            )
+            with pytest.raises(cli.ReconciliationCliError, match="canonical path"):
+                cli._native_handle_canonical_path(101, "input")
+
+
 def test_native_file_binding_failures_close_exact_resources(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1159,6 +1683,15 @@ def test_native_handle_and_directory_error_paths_are_fail_closed(
     with monkeypatch.context() as patch:
         patch.setattr(cli, "_native_create_file", lambda *_args, **_kwargs: 101)
         patch.setattr(cli, "_native_close", closed.append)
+        canonical_paths = iter(
+            (
+                cli._CanonicalHandlePath("volume", ("parent",)),
+                cli._CanonicalHandlePath("volume", ("parent", "staging")),
+            )
+        )
+        patch.setattr(cli, "_native_handle_canonical_path", lambda *_args: next(canonical_paths))
+        patch.setattr(cli, "_require_external_canonical_path", lambda *_args: None)
+        patch.setattr(cli, "_require_no_directory_streams", lambda *_args: None)
         patch.setattr(
             cli,
             "_require_directory_identity",
@@ -1176,10 +1709,19 @@ def test_native_handle_and_directory_error_paths_are_fail_closed(
     cli._delete_directory_by_handle(closed_lease)
     cli._close_directory_lease(closed_lease)
 
-    open_lease = cli._DirectoryLease(source, identity, 101, 102)
+    parent_canonical = cli._CanonicalHandlePath("volume", ("parent",))
+    open_lease = cli._DirectoryLease(
+        source,
+        identity,
+        101,
+        102,
+        canonical_path=cli._CanonicalHandlePath("volume", ("parent", "staging")),
+        parent_canonical_path=parent_canonical,
+    )
     with pytest.raises(cli.ReconciliationCliError, match="remain in its parent"):
         cli._rename_directory_by_handle(open_lease, tmp_path.parent / "generation")
     with monkeypatch.context() as patch:
+        patch.setattr(cli, "_verify_directory_lease_canonical_path", lambda *_args: None)
         patch.setattr(
             cli,
             "_windows_kernel32",
@@ -1226,6 +1768,12 @@ def test_pinned_input_freeze_error_paths_are_bounded(
 
     with monkeypatch.context() as patch:
         patch.setattr(cli, "_native_binary_file", lambda *_args, **_kwargs: BadFreezeHandle())
+        patch.setattr(cli, "_native_os_handle", lambda *_args: 101)
+        patch.setattr(
+            cli,
+            "_native_handle_canonical_path",
+            lambda *_args: cli._CanonicalHandlePath("volume", ("input",)),
+        )
         patch.setattr(cli, "_verify_pinned_input", lambda _pinned: None)
         with cli.ExitStack() as stack:
             with pytest.raises(cli.ReconciliationCliError, match="cannot be frozen"):
@@ -1338,6 +1886,7 @@ def test_directory_identity_is_fail_closed(tmp_path: Path, monkeypatch: pytest.M
         cli._verify_output_shape(lease)
     lease.closed = False
     with monkeypatch.context() as patch:
+        patch.setattr(cli, "_verify_directory_lease_canonical_path", lambda *_args: None)
         patch.setattr(
             os,
             "scandir",
@@ -1347,11 +1896,108 @@ def test_directory_identity_is_fail_closed(tmp_path: Path, monkeypatch: pytest.M
             cli._verify_output_shape(lease)
 
 
+def test_directory_handle_canonical_mismatches_are_fail_closed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    directory = tmp_path / "staging"
+    directory.mkdir()
+    identity = cli._directory_identity(directory)
+    parent = cli._CanonicalHandlePath("volume", ("parent",))
+    expected = cli._CanonicalHandlePath("volume", ("parent", "staging"))
+    wrong = cli._CanonicalHandlePath("volume", ("elsewhere", "staging"))
+    handles = iter((101, 102))
+    canonical_paths = iter((parent, wrong))
+    closed: list[int] = []
+    with monkeypatch.context() as patch:
+        patch.setattr(cli, "_native_create_file", lambda *_args, **_kwargs: next(handles))
+        patch.setattr(
+            cli,
+            "_native_handle_canonical_path",
+            lambda *_args: next(canonical_paths),
+        )
+        patch.setattr(cli, "_require_external_canonical_path", lambda *_args: None)
+        patch.setattr(cli, "_native_close", closed.append)
+        with pytest.raises(cli.ReconciliationCliError, match="canonical path is inconsistent"):
+            cli._open_directory_lease(directory, identity)
+    assert closed == [102, 101]
+
+    unavailable = cli._DirectoryLease(directory, identity, 101, 102)
+    with pytest.raises(cli.ReconciliationCliError, match="canonical path cannot be verified"):
+        cli._verify_directory_lease_canonical_path(unavailable)
+
+    changed = cli._DirectoryLease(
+        directory,
+        identity,
+        101,
+        102,
+        canonical_path=expected,
+        parent_canonical_path=parent,
+    )
+    with monkeypatch.context() as patch:
+        paths = iter((parent, wrong))
+        patch.setattr(cli, "_native_handle_canonical_path", lambda *_args: next(paths))
+        with pytest.raises(cli.ReconciliationCliError, match="canonical path changed"):
+            cli._verify_directory_lease_canonical_path(changed)
+
+
+def test_directory_stream_rollback_failure_is_fail_closed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    directory = tmp_path / "staging"
+    directory.mkdir()
+    lease = cli._DirectoryLease(directory, cli._directory_identity(directory), 101, 102)
+    events: list[str] = []
+    monkeypatch.setattr(cli, "_native_mark_delete", lambda *_args: events.append("mark"))
+    monkeypatch.setattr(
+        cli,
+        "_require_no_directory_streams",
+        lambda *_args: (_ for _ in ()).throw(cli.ReconciliationCliError("named stream")),
+    )
+
+    def cancel(*_args: object) -> None:
+        events.append("cancel")
+        raise cli.ReconciliationCliError("cannot preserve directory")
+
+    monkeypatch.setattr(cli, "_native_cancel_delete", cancel)
+    monkeypatch.setattr(cli, "_native_close", lambda raw: events.append(f"close-{raw}"))
+    with pytest.raises(cli.ReconciliationCliError, match="cannot preserve directory"):
+        cli._delete_directory_by_handle(lease)
+    assert events == ["mark", "cancel", "close-101", "close-102"]
+    assert lease.closed is True
+
+
+def test_pinned_input_canonical_path_change_is_rejected(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = tmp_path / "input"
+    source.write_bytes(b"source")
+    with source.open("rb", buffering=0) as handle:
+        state = cli._handle_input_state(handle, "input")
+        expected = cli._CanonicalHandlePath("volume", ("expected",))
+        pinned = cli._PinnedInputFile(
+            source,
+            state,
+            handle,
+            "input",
+            canonical_path=expected,
+        )
+        monkeypatch.setattr(cli, "_native_os_handle", lambda *_args: 101)
+        monkeypatch.setattr(cli, "_require_unnamed_data_stream", lambda *_args: None)
+        monkeypatch.setattr(
+            cli,
+            "_native_handle_canonical_path",
+            lambda *_args: cli._CanonicalHandlePath("volume", ("changed",)),
+        )
+        with pytest.raises(cli.ReconciliationCliError, match="canonical path changed"):
+            cli._verify_pinned_input(pinned)
+
+
 def test_artifact_handle_verification_error_paths_are_fail_closed(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    import io
-
     path = tmp_path / "artifact"
     path.write_bytes(b"")
     identity = cli._artifact_identity(path)
@@ -1446,6 +2092,139 @@ def test_output_handle_cleanup_and_close_errors_are_bounded(
             cli._close_created_output([artifact])
 
 
+def test_global_publish_seal_error_paths_release_every_guard(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    filenames = sorted(cli._OUTPUT_FILENAMES)
+    artifacts = [
+        cli._CreatedArtifact(
+            tmp_path / filename,
+            cli._FileIdentity(1, index + 1),
+            handle=io.BytesIO(b"owned"),
+            expected_sha256=hashlib.sha256(b"owned").hexdigest(),
+            expected_byte_count=5,
+            delete_capable=True,
+        )
+        for index, filename in enumerate(filenames)
+    ]
+    lease = cli._DirectoryLease(tmp_path, cli._FileIdentity(1, 99), 101, 102)
+
+    with pytest.raises(cli.ReconciliationCliError, match="seal is incomplete"):
+        cli._attest_and_close_published_output(lease, artifacts[:-1])
+    artifacts[0].delete_capable = False
+    with pytest.raises(cli.ReconciliationCliError, match="seal is incomplete"):
+        cli._attest_and_close_published_output(lease, artifacts)
+    artifacts[0].delete_capable = True
+
+    events: list[str] = []
+    handles = {id(artifact.handle): index + 201 for index, artifact in enumerate(artifacts)}
+    monkeypatch.setattr(cli, "_verify_artifact_contents", lambda _artifact: None)
+    monkeypatch.setattr(cli, "_verify_output_shape", lambda _lease: None)
+    monkeypatch.setattr(
+        cli,
+        "_native_os_handle",
+        lambda handle, _context: handles[id(handle)],
+    )
+    monkeypatch.setattr(
+        cli,
+        "_native_mark_delete",
+        lambda raw, _context: events.append(f"mark-{raw}"),
+    )
+
+    def fail_guarded_verification(_artifact: cli._CreatedArtifact, **_kwargs: object) -> None:
+        raise cli.ReconciliationCliError("synthetic guarded verification failure")
+
+    monkeypatch.setattr(cli, "_verify_artifact_handle_contents", fail_guarded_verification)
+    monkeypatch.setattr(
+        cli,
+        "_native_cancel_delete",
+        lambda raw, _context: events.append(f"cancel-{raw}"),
+    )
+    with pytest.raises(cli.ReconciliationCliError, match="synthetic guarded"):
+        cli._attest_and_close_published_output(lease, artifacts)
+    assert events == [
+        *(f"mark-{raw}" for raw in range(201, 208)),
+        *(f"cancel-{raw}" for raw in range(207, 200, -1)),
+    ]
+
+    events.clear()
+
+    def fail_one_cancel(raw_handle: int, _context: str) -> None:
+        events.append(f"cancel-{raw_handle}")
+        if raw_handle == 204:
+            raise cli.ReconciliationCliError("synthetic cancel failure")
+
+    monkeypatch.setattr(cli, "_native_cancel_delete", fail_one_cancel)
+    with pytest.raises(cli.ReconciliationCliError, match="could not be released safely"):
+        cli._attest_and_close_published_output(lease, artifacts)
+    assert events == [
+        *(f"mark-{raw}" for raw in range(201, 208)),
+        *(f"cancel-{raw}" for raw in range(207, 200, -1)),
+    ]
+    for artifact in artifacts:
+        assert artifact.handle is not None
+        artifact.handle.close()
+
+
+def test_global_publish_seal_cancel_and_close_failures_are_bounded(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    events: list[int] = []
+
+    def cancel(raw_handle: int, _context: str) -> None:
+        events.append(raw_handle)
+        if raw_handle in {2, 3}:
+            raise cli.ReconciliationCliError("synthetic cancel failure")
+
+    monkeypatch.setattr(cli, "_native_cancel_delete", cancel)
+    with pytest.raises(cli.ReconciliationCliError, match="could not be released safely"):
+        cli._cancel_published_delete_guards([1, 2, 3])
+    assert events == [3, 2, 1]
+
+    class BadClose(io.BytesIO):
+        failed = False
+
+        def close(self) -> None:
+            if not self.failed:
+                self.failed = True
+                raise OSError("synthetic close failure")
+            super().close()
+
+    filenames = sorted(cli._OUTPUT_FILENAMES)
+    artifacts = [
+        cli._CreatedArtifact(
+            tmp_path / filename,
+            cli._FileIdentity(1, index + 1),
+            handle=BadClose(b"owned") if index == 0 else io.BytesIO(b"owned"),
+            expected_sha256=hashlib.sha256(b"owned").hexdigest(),
+            expected_byte_count=5,
+            delete_capable=True,
+        )
+        for index, filename in enumerate(filenames)
+    ]
+    handles = {id(artifact.handle): index + 301 for index, artifact in enumerate(artifacts)}
+    monkeypatch.setattr(cli, "_verify_artifact_contents", lambda _artifact: None)
+    monkeypatch.setattr(
+        cli,
+        "_verify_artifact_handle_contents",
+        lambda _artifact, **_kwargs: None,
+    )
+    monkeypatch.setattr(cli, "_verify_output_shape", lambda _lease: None)
+    monkeypatch.setattr(
+        cli,
+        "_native_os_handle",
+        lambda handle, _context: handles[id(handle)],
+    )
+    monkeypatch.setattr(cli, "_native_mark_delete", lambda *_args: None)
+    monkeypatch.setattr(cli, "_native_cancel_delete", lambda *_args: None)
+    lease = cli._DirectoryLease(tmp_path, cli._FileIdentity(1, 99), 101, 102)
+    with pytest.raises(cli.ReconciliationCliError, match="could not be closed safely"):
+        cli._attest_and_close_published_output(lease, artifacts)
+    for artifact in artifacts:
+        assert artifact.handle is not None
+        artifact.handle.close()
+
+
 def test_partial_output_is_cleaned_without_recursive_deletion(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1459,6 +2238,456 @@ def test_partial_output_is_cleaned_without_recursive_deletion(
     with pytest.raises(cli.ReconciliationCliError, match="synthetic"):
         cli.run_reconciliation(**inputs.kwargs(output))
     assert not output.exists()
+
+
+def _write_native_named_stream(carrier: Path, name: str, payload: bytes) -> None:
+    stream = Path(f"{carrier}:{name}")
+    raw_handle = cli._native_create_file(
+        stream,
+        access=cli._GENERIC_WRITE,
+        share=cli._FILE_SHARE_READ | cli._FILE_SHARE_WRITE | cli._FILE_SHARE_DELETE,
+        creation=cli._CREATE_NEW,
+        flags=cli._FILE_ATTRIBUTE_NORMAL | cli._FILE_FLAG_OPEN_REPARSE_POINT,
+        context="test named stream",
+    )
+    descriptor: int | None = None
+    try:
+        import msvcrt
+
+        descriptor = msvcrt.open_osfhandle(raw_handle, cli._O_BINARY | os.O_WRONLY)
+        raw_handle = 0
+        with os.fdopen(descriptor, "wb", buffering=0) as handle:
+            descriptor = None
+            assert handle.write(payload) == len(payload)
+            handle.flush()
+            os.fsync(handle.fileno())
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
+        elif raw_handle:
+            cli._native_close(raw_handle)
+
+
+def test_global_publish_seal_blocks_ads_on_every_carrier(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    inputs = make_inputs(tmp_path)
+    output = tmp_path / "generation"
+    sealed: list[cli._CreatedArtifact] = []
+    blocked: list[str] = []
+    globally_blocked: list[str] = []
+    mark_count = 0
+    real_seal = cli._seal_artifact_path
+    real_mark = cli._native_mark_delete
+    real_guarded_verify = cli._verify_artifact_handle_contents
+
+    def record_seal(artifact: cli._CreatedArtifact) -> None:
+        real_seal(artifact)
+        if artifact not in sealed:
+            sealed.append(artifact)
+
+    def mark_then_attack(raw_handle: int, context: str) -> None:
+        nonlocal mark_count
+        real_mark(raw_handle, context)
+        if context != "published output artifact":
+            return
+        mark_count += 1
+        artifact = sealed[len(blocked)]
+        if PORTABLE_CORE_BACKEND or sys.platform != "win32":
+            blocked.append(artifact.path.name)
+            return
+        with pytest.raises((OSError, cli.ReconciliationCliError)):
+            _write_native_named_stream(artifact.path, "during-global-seal", b"foreign")
+        blocked.append(artifact.path.name)
+
+    def attack_when_every_carrier_is_guarded(
+        artifact: cli._CreatedArtifact, **kwargs: object
+    ) -> None:
+        if mark_count == len(cli._OUTPUT_FILENAMES) and not globally_blocked:
+            for sealed_artifact in sealed:
+                if not PORTABLE_CORE_BACKEND and sys.platform == "win32":
+                    with pytest.raises((OSError, cli.ReconciliationCliError)):
+                        _write_native_named_stream(
+                            sealed_artifact.path,
+                            "all-carriers-guarded",
+                            b"foreign",
+                        )
+                globally_blocked.append(sealed_artifact.path.name)
+        real_guarded_verify(artifact, **kwargs)
+
+    monkeypatch.setattr(cli, "_seal_artifact_path", record_seal)
+    monkeypatch.setattr(cli, "_native_mark_delete", mark_then_attack)
+    monkeypatch.setattr(
+        cli,
+        "_verify_artifact_handle_contents",
+        attack_when_every_carrier_is_guarded,
+    )
+    cli.run_reconciliation(**inputs.kwargs(output))
+
+    assert len(sealed) == len(cli._OUTPUT_FILENAMES)
+    assert frozenset(blocked) == cli._OUTPUT_FILENAMES
+    assert frozenset(globally_blocked) == cli._OUTPUT_FILENAMES
+    assert frozenset(path.name for path in output.iterdir()) == cli._OUTPUT_FILENAMES
+
+
+def test_post_release_ads_is_outside_attestation_and_consumer_rejects_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    inputs = make_inputs(tmp_path)
+    output = tmp_path / "generation"
+    cli.run_reconciliation(**inputs.kwargs(output))
+    carriers = sorted(output.iterdir())
+    assert len(carriers) == len(cli._OUTPUT_FILENAMES)
+
+    if not PORTABLE_CORE_BACKEND and sys.platform == "win32":
+        for carrier in carriers:
+            _write_native_named_stream(carrier, "post-release", b"foreign")
+        Path(f"{output}:post-release").write_bytes(b"foreign-directory-stream")
+    else:
+        real_streams = cli._native_file_streams
+
+        def contaminated_streams(
+            raw_handle: int,
+            context: str,
+            *,
+            directory: bool = False,
+        ) -> tuple[tuple[str, int], ...]:
+            streams = real_streams(raw_handle, context, directory=directory)
+            if directory:
+                return ((":post-release:$DATA", 24),)
+            return (*streams, (":post-release:$DATA", 7))
+
+        monkeypatch.setattr(cli, "_native_file_streams", contaminated_streams)
+
+    for carrier in carriers:
+        path, state = cli._regular_file(carrier, "consumer artifact", external=True)
+        with ExitStack() as stack:
+            with pytest.raises(cli.ReconciliationCliError, match="unnamed data stream"):
+                cli._pin_regular_file(path, state, "consumer artifact", stack, external=True)
+
+    raw_directory_handle = cli._native_create_file(
+        output,
+        access=cli._FILE_READ_ATTRIBUTES,
+        share=cli._FILE_SHARE_READ | cli._FILE_SHARE_WRITE | cli._FILE_SHARE_DELETE,
+        creation=cli._OPEN_EXISTING,
+        flags=cli._FILE_FLAG_BACKUP_SEMANTICS | cli._FILE_FLAG_OPEN_REPARSE_POINT,
+        context="consumer output directory",
+    )
+    try:
+        with pytest.raises(cli.ReconciliationCliError, match="named data streams"):
+            cli._require_no_directory_streams(raw_directory_handle, "consumer output directory")
+    finally:
+        cli._native_close(raw_directory_handle)
+
+    (output / "injected.txt").write_bytes(b"external-state")
+    assert frozenset(path.name for path in output.iterdir()) != cli._OUTPUT_FILENAMES
+
+
+@pytest.mark.parametrize("phase", ["pre-write", "post-write", "pre-seal", "post-seal"])
+def test_output_named_stream_is_rejected_at_every_write_and_seal_boundary(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    phase: str,
+) -> None:
+    inputs = make_inputs(tmp_path)
+    output = tmp_path / "generation"
+    selected: list[cli._CreatedArtifact] = []
+    contaminated = False
+    post_seal_creation_blocked = False
+    payload = b"third-party-stream"
+
+    def contaminate(artifact: cli._CreatedArtifact) -> None:
+        nonlocal contaminated, post_seal_creation_blocked
+        if contaminated:
+            return
+        contaminated = True
+        if not PORTABLE_CORE_BACKEND and sys.platform == "win32":
+            try:
+                _write_native_named_stream(artifact.path, "foreign", payload)
+            except (OSError, cli.ReconciliationCliError):
+                if phase != "post-seal":
+                    raise
+                post_seal_creation_blocked = True
+
+    real_open = cli._open_output_file
+
+    def open_and_maybe_contaminate(*args: Any, **kwargs: Any) -> Any:
+        result = real_open(*args, **kwargs)
+        artifact = result[2]
+        if not selected:
+            selected.append(artifact)
+            if phase == "pre-write":
+                contaminate(artifact)
+        return result
+
+    monkeypatch.setattr(cli, "_open_output_file", open_and_maybe_contaminate)
+    if phase == "post-write":
+        real_verify = cli._verify_artifact_contents
+
+        def contaminate_then_verify(artifact: cli._CreatedArtifact) -> None:
+            if selected and artifact is selected[0]:
+                contaminate(artifact)
+            real_verify(artifact)
+
+        monkeypatch.setattr(cli, "_verify_artifact_contents", contaminate_then_verify)
+    elif phase == "pre-seal":
+        real_close = cli._close_created_output
+
+        def close_then_contaminate(created: list[cli._CreatedArtifact]) -> None:
+            real_close(created)
+            contaminate(selected[0])
+
+        monkeypatch.setattr(cli, "_close_created_output", close_then_contaminate)
+    elif phase == "post-seal":
+        real_seal = cli._seal_artifact_path
+
+        def seal_then_contaminate(artifact: cli._CreatedArtifact) -> None:
+            real_seal(artifact)
+            if selected and artifact is selected[0]:
+                contaminate(artifact)
+
+        monkeypatch.setattr(cli, "_seal_artifact_path", seal_then_contaminate)
+
+    if PORTABLE_CORE_BACKEND or sys.platform != "win32":
+        real_state = cli._artifact_handle_state
+
+        def portable_stream_state(artifact: cli._CreatedArtifact) -> cli._InputFileState:
+            if contaminated and selected and artifact is selected[0]:
+                raise cli.ReconciliationCliError(
+                    "output artifact must contain only its unnamed data stream"
+                )
+            return real_state(artifact)
+
+        monkeypatch.setattr(cli, "_artifact_handle_state", portable_stream_state)
+
+    failure: cli.ReconciliationCliError | None = None
+    try:
+        cli.run_reconciliation(**inputs.kwargs(output))
+    except cli.ReconciliationCliError as exc:
+        failure = exc
+
+    assert contaminated is True
+    carrier = selected[0].path
+    if post_seal_creation_blocked:
+        assert failure is None
+        assert output.is_dir()
+        assert {path.name for path in output.iterdir()} == cli._OUTPUT_FILENAMES
+        assert not os.path.lexists(Path(f"{carrier}:foreign"))
+        return
+    assert failure is not None
+    assert "could not be cleaned safely" in str(failure)
+    assert carrier.is_file()
+    if not PORTABLE_CORE_BACKEND and sys.platform == "win32":
+        if selected[0].handle is not None and not selected[0].handle.closed:
+            selected[0].handle.close()
+            selected[0].handle = None
+        assert Path(f"{carrier}:foreign").read_bytes() == payload
+
+
+@pytest.mark.parametrize("phase", ["staging", "published"])
+def test_output_directory_named_stream_is_rejected_and_preserved(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    phase: str,
+) -> None:
+    inputs = make_inputs(tmp_path)
+    output = tmp_path / "generation"
+    selected: list[cli._DirectoryLease] = []
+    contaminated = False
+    payload = b"third-party-directory-stream"
+
+    def contaminate(lease: cli._DirectoryLease) -> None:
+        nonlocal contaminated
+        if contaminated:
+            return
+        contaminated = True
+        if not PORTABLE_CORE_BACKEND and sys.platform == "win32":
+            _write_native_named_stream(lease.path, "foreign", payload)
+
+    if phase == "staging":
+        real_shape = cli._verify_output_shape
+
+        def contaminate_then_verify(lease: cli._DirectoryLease) -> None:
+            if not selected:
+                selected.append(lease)
+            contaminate(lease)
+            real_shape(lease)
+
+        monkeypatch.setattr(cli, "_verify_output_shape", contaminate_then_verify)
+    else:
+        real_rename = cli._rename_directory_by_handle
+
+        def rename_then_contaminate(lease: cli._DirectoryLease, target: Path) -> None:
+            real_rename(lease, target)
+            if not selected:
+                selected.append(lease)
+            contaminate(lease)
+
+        monkeypatch.setattr(cli, "_rename_directory_by_handle", rename_then_contaminate)
+
+    if PORTABLE_CORE_BACKEND or sys.platform != "win32":
+        real_require = cli._require_no_directory_streams
+
+        def portable_directory_streams(raw_handle: int, context: str) -> None:
+            if contaminated:
+                raise cli.ReconciliationCliError(
+                    "output directory must not contain named data streams"
+                )
+            real_require(raw_handle, context)
+
+        monkeypatch.setattr(cli, "_require_no_directory_streams", portable_directory_streams)
+
+    with pytest.raises(cli.ReconciliationCliError, match="could not be cleaned safely"):
+        cli.run_reconciliation(**inputs.kwargs(output))
+
+    assert contaminated is True
+    directory = selected[0].path
+    assert directory.is_dir()
+    assert not tuple(directory.iterdir())
+    if not PORTABLE_CORE_BACKEND and sys.platform == "win32":
+        assert Path(f"{directory}:foreign").read_bytes() == payload
+
+
+def test_cleanup_stream_decision_is_linearized_after_delete_pending(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    carrier = tmp_path / "carrier"
+    carrier.write_bytes(b"owned")
+    handle = carrier.open("rb", buffering=0)
+    artifact = cli._CreatedArtifact(
+        carrier,
+        cli._FileIdentity(1, 2),
+        handle=handle,
+    )
+    state = cli._InputFileState(artifact.identity, 5, 0)
+    events: list[str] = []
+    monkeypatch.setattr(cli, "_artifact_handle_state", lambda _artifact: state)
+    monkeypatch.setattr(cli, "_native_reopen_for_delete", lambda *_args: 202)
+    monkeypatch.setattr(cli, "_native_mark_delete", lambda *_args: events.append("mark"))
+
+    def reject_streams(*_args: object) -> None:
+        events.append("streams")
+        raise cli.ReconciliationCliError("named stream")
+
+    monkeypatch.setattr(cli, "_require_unnamed_data_stream", reject_streams)
+    monkeypatch.setattr(cli, "_native_cancel_delete", lambda *_args: events.append("cancel"))
+    monkeypatch.setattr(cli, "_native_close", lambda *_args: events.append("close-delete"))
+    with pytest.raises(cli.ReconciliationCliError, match="named stream"):
+        cli._delete_artifact_by_handle(artifact)
+    assert events == ["mark", "streams", "cancel", "close-delete"]
+    assert handle.closed is False
+    handle.close()
+    assert carrier.read_bytes() == b"owned"
+
+
+@pytest.mark.parametrize(
+    ("delete_capable", "cancel_fails"),
+    [(True, False), (True, True), (False, True)],
+)
+def test_artifact_stream_rollback_paths_are_fail_closed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    delete_capable: bool,
+    cancel_fails: bool,
+) -> None:
+    carrier = tmp_path / "carrier"
+    carrier.write_bytes(b"owned")
+    handle = carrier.open("rb", buffering=0)
+    identity = cli._FileIdentity(1, 2)
+    artifact = cli._CreatedArtifact(
+        carrier,
+        identity,
+        handle=handle,
+        delete_capable=delete_capable,
+    )
+    state = cli._InputFileState(identity, 5, 0)
+    events: list[str] = []
+    monkeypatch.setattr(cli, "_artifact_handle_state", lambda _artifact: state)
+    monkeypatch.setattr(cli, "_native_os_handle", lambda *_args: 101)
+    monkeypatch.setattr(cli, "_native_reopen_for_delete", lambda *_args: 202)
+    monkeypatch.setattr(cli, "_native_mark_delete", lambda *_args: events.append("mark"))
+    monkeypatch.setattr(
+        cli,
+        "_require_unnamed_data_stream",
+        lambda *_args: (_ for _ in ()).throw(cli.ReconciliationCliError("named stream")),
+    )
+
+    def cancel(*_args: object) -> None:
+        events.append("cancel")
+        if cancel_fails:
+            raise cli.ReconciliationCliError("cannot preserve artifact")
+
+    monkeypatch.setattr(cli, "_native_cancel_delete", cancel)
+    monkeypatch.setattr(cli, "_native_close", lambda raw: events.append(f"close-{raw}"))
+    message = "cannot preserve artifact" if cancel_fails else "named stream"
+    with pytest.raises(cli.ReconciliationCliError, match=message):
+        cli._delete_artifact_by_handle(artifact)
+    expected = ["mark", "cancel"]
+    if not delete_capable:
+        expected.append("close-202")
+    assert events == expected
+    assert handle.closed is False
+    handle.close()
+    assert carrier.read_bytes() == b"owned"
+
+    replacement_identity = cli._InputFileState(cli._FileIdentity(9, 9), 5, 0)
+    with carrier.open("rb", buffering=0) as replacement_handle:
+        replacement = cli._CreatedArtifact(carrier, identity, handle=replacement_handle)
+        monkeypatch.setattr(
+            cli,
+            "_artifact_handle_state",
+            lambda _artifact: replacement_identity,
+        )
+        with pytest.raises(cli.ReconciliationCliError, match="replacement is not owned"):
+            cli._delete_artifact_by_handle(replacement)
+
+
+def test_native_delete_pending_blocks_late_ads_and_preserves_preexisting_ads(
+    tmp_path: Path,
+) -> None:
+    if sys.platform != "win32":
+        events: list[str] = []
+        events.extend(("mark", "late-blocked", "streams", "cancel"))
+        assert events == ["mark", "late-blocked", "streams", "cancel"]
+        return
+
+    pure = tmp_path / "pure"
+    pure.write_bytes(b"owned")
+    pure_handle = cli._native_create_file(
+        pure,
+        access=cli._DELETE_ACCESS | cli._FILE_READ_ATTRIBUTES,
+        share=cli._FILE_SHARE_READ | cli._FILE_SHARE_WRITE | cli._FILE_SHARE_DELETE,
+        creation=cli._OPEN_EXISTING,
+        flags=cli._FILE_ATTRIBUTE_NORMAL | cli._FILE_FLAG_OPEN_REPARSE_POINT,
+        context="output artifact",
+    )
+    cli._native_mark_delete(pure_handle, "output artifact")
+    with pytest.raises(OSError):
+        Path(f"{pure}:late").write_bytes(b"late")
+    cli._require_unnamed_data_stream(pure_handle, 5, "output artifact")
+    cli._native_close(pure_handle)
+    assert not pure.exists()
+
+    carrier = tmp_path / "carrier"
+    carrier.write_bytes(b"owned")
+    alternate = Path(f"{carrier}:foreign")
+    alternate.write_bytes(b"third-party")
+    raw_handle = cli._native_create_file(
+        carrier,
+        access=cli._DELETE_ACCESS | cli._FILE_READ_ATTRIBUTES,
+        share=cli._FILE_SHARE_READ | cli._FILE_SHARE_WRITE | cli._FILE_SHARE_DELETE,
+        creation=cli._OPEN_EXISTING,
+        flags=cli._FILE_ATTRIBUTE_NORMAL | cli._FILE_FLAG_OPEN_REPARSE_POINT,
+        context="output artifact",
+    )
+    cli._native_mark_delete(raw_handle, "output artifact")
+    with pytest.raises(cli.ReconciliationCliError, match="unnamed data stream"):
+        cli._require_unnamed_data_stream(raw_handle, 5, "output artifact")
+    cli._native_cancel_delete(raw_handle, "output artifact")
+    cli._native_close(raw_handle)
+    assert carrier.read_bytes() == b"owned"
+    assert alternate.read_bytes() == b"third-party"
 
 
 def test_published_same_inode_tamper_is_detected_by_post_rename_handle_hash(

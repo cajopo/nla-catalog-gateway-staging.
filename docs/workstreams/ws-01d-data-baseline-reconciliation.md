@@ -148,16 +148,25 @@ primitives, their sharing guarantees or native rename are unavailable. It has no
 cross-platform or path-based fallback. `GetVolumePathNameW`, `GetDriveTypeW` and
 `GetVolumeInformationW` must identify every input and the output parent as the local fixed NTFS
 volume boundary; UNC/network paths and FAT, exFAT, ReFS or unknown filesystems are rejected.
+Unsupported device namespaces are rejected before any open. For supported normal, extended-length
+drive, volume-GUID, 8.3 and SUBST spellings, repository containment is decided from
+`GetFinalPathNameByHandleW(..., VOLUME_NAME_GUID)` on the exact opened object, using
+case-insensitive canonical component boundaries. It is never decided from a lexical prefix.
 
-The runner opens each validated input once and holds all seven handles through reconciliation and
-output publication. The two large JSONL streams are consumed only through their pinned,
+After preliminary path and filesystem validation, the runner pins each input to one persistent
+handle and holds all seven pinned handles through reconciliation and output publication. The two
+large JSONL streams are consumed only through those pinned,
 write/delete-denying handles, with handle state checked around every scan. The two reviewed query
 documents and three bounded control documents are copied to immutable byte values while the same
 locks are held, and all later parsing and query checks consume only those frozen bytes. No input is
-reopened by path. Atomic replacement and same-inode, same-size changes with restored timestamps
+reopens consumed bytes by path after the pin. Atomic replacement and same-inode, same-size changes with restored timestamps
 are therefore denied or cannot alter the consumed evidence. The output parent must already exist
-without any filesystem alias. The requested output directory must be new and outside this
-repository: existing targets, traversal and every unsafe path component fail closed.
+without any reparse-point alias. The requested output directory must be new and outside this
+repository: its parent and later staging/published target remain bound to canonical directory
+handles; existing targets, traversal, aliases and every unsafe path component fail closed. Every
+one of the seven input file handles is also enumerated with `FileStreamInfo`: exactly one unnamed
+`::$DATA` stream with the handle-reported byte size is required, so a named NTFS stream on the
+carrier fails closed without relying on path spelling.
 
 The expectation document is strict JSON, at most 64 KiB, with exactly these fields:
 
@@ -223,27 +232,45 @@ after this pre-publish seal; the directory itself remains bound to its native ha
 with `SetFileInformationByHandle`. A sharing violation or unsupported native rename fails closed
 with no path-based fallback. Immediately after the rename, all seven files are reopened with exact
 read/delete handles that deny write and replacement, and every identity, byte count and SHA-256 is
-checked again while all seven handles remain held. Publication succeeds only after that complete
-post-rename seal. The reconciliation summary is created last and its handle is closed last. Exact
-directory shape is checked both immediately before and immediately after the native rename; a
-persistent eighth file makes publication fail, and cleanup removes only the seven owned artifacts
-while preserving the foreign file.
+checked again while all seven handles remain held. Each check also requires the exact
+unnamed-stream-only shape. For the single publish-attestation linearization point, all seven exact
+carrier handles are marked delete-pending together. While every guard remains active, the runner
+rechecks every handle-bound identity, size, SHA-256 and stream list, then the exact seven-name
+directory shape, canonical handle path and absence of directory ADS. ADS creation on any guarded
+carrier is blocked by NTFS. Only after this simultaneous observation does the runner roll back all
+seven delete flags and close their handles. The reconciliation summary is created last. Directory
+shape, canonical path and directory ADS are checked before and after native rename and once more
+immediately before the directory lease closes. A persistent eighth file makes publication fail,
+and cleanup removes only the seven owned artifacts while preserving the foreign file.
 
 Cleanup uses `ReOpenFile` and `FileDispositionInfo` (or an already delete-capable sealed handle) to
 delete only the exact file object owned by the run, then applies the same handle-bound disposition
 to the staging/published directory. It never unlinks or removes a directory by path, never recurses
-and preserves an identity-mismatched replacement. Deterministic adversarial tests cover restored
-same-inode input mutation, post-write/pre-seal artifact tampering, replacement after exact cleanup
-handle acquisition and native rename failure.
+and preserves an identity-mismatched replacement. Because ordinary share modes do not protect
+named NTFS streams, cleanup first marks the exact object delete-pending, then enumerates its streams
+on that same handle. Delete-pending blocks a late ADS creation. Any pre-existing or concurrently
+opened named stream causes an immediate `DeleteFile=FALSE` rollback before close; when that native
+rollback succeeds, both carrier and foreign stream are preserved. A rollback failure is itself a
+fail-closed filesystem error and cannot support a preservation claim. The same protocol protects
+the directory. Deterministic adversarial
+tests cover all seven input carriers, ADS before/after output writes and seals, staging and
+post-rename directory ADS, restored same-inode input mutation, post-write/pre-seal artifact
+tampering, replacement after exact cleanup handle acquisition and native rename failure.
 
-These checks attest the point-in-time publish boundary; they do not claim that an external actor
-with later filesystem access cannot mutate a completed directory after the runner returns. The
-downstream issue-#01F consumer must independently require the exact seven-file shape and revalidate
-the summary-bound sizes and SHA-256 values before use. Linux CI exercises all portable parsing,
+These checks attest only the guarded point-in-time publish boundary; they do not claim OS-level
+immutability after the delete guards are released, during handle close, or after the runner
+returns. The success metadata includes the in-memory SHA-256 of the canonical reconciliation
+summary. That expected digest must travel separately with the handoff. The downstream issue-#01F
+consumer must independently require the exact seven-file shape, reject every named stream on the
+directory and carriers, match that expected summary SHA-256 and revalidate all summary-bound sizes
+and SHA-256 values before use. A post-release mutation is external state and must make that consumer
+gate fail. Linux CI exercises all portable parsing,
 reconciliation, publication and failure logic with a deterministic test-only filesystem backend,
 while also proving that the production runner rejects an unavailable Win32 backend. The real
-Win32 handle/share/rename/delete integration tests run separately on local fixed NTFS; the test
-backend is never selected by production code.
+Win32 handle/share/rename/delete, `FileStreamInfo` and canonical volume-GUID integration tests run
+separately on local fixed NTFS. Hosts without usable 8.3 or SUBST aliases exercise the identical
+canonical-containment branch through deterministic native-path fixtures, without skips or xfails;
+the test backend is never selected by production code.
 
 The first issue-#43 invocation against the current Shopify-derived capture failed closed before
 publishing an output directory. Redacted diagnostics proved both immutable part manifests valid,
