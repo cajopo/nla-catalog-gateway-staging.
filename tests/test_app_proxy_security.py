@@ -150,7 +150,7 @@ def test_current_shopify_official_vectors_are_exact(
     # both published values; the valid adapted vector is exercised end-to-end below.
 
 
-def test_valid_request_preserves_authenticated_metadata_and_collapses_repeats() -> None:
+def test_valid_request_exposes_only_validated_protocol_gate_metadata() -> None:
     query = _signed_query()
     verified = _verifier().verify(raw_query=query, request_path="/proxy/catalog/search")
 
@@ -158,31 +158,76 @@ def test_valid_request_preserves_authenticated_metadata_and_collapses_repeats() 
     assert verified.path_prefix == _STOREFRONT_PREFIX
     assert verified.request_path == "/proxy/catalog/search"
     assert verified.timestamp == _NOW
-    assert verified.claimed_logged_in_customer_id == "7"
-    assert dict(verified.parameters)["extra"] == "1,2"
-    assert "signature" not in dict(verified.parameters)
+    assert verified._fields == ("shop", "path_prefix", "request_path", "timestamp")
+    assert not hasattr(verified, "claimed_logged_in_customer_id")
+    assert not hasattr(verified, "parameters")
     assert repr(verified) == "VerifiedAppProxyRequest()"
     with pytest.raises(AttributeError):
         object.__setattr__(verified, "shop", _OTHER_SHOP)
 
 
-@pytest.mark.parametrize("customer_id", [None, ""])
-def test_customer_claim_is_optional_and_never_becomes_authorization(
+@pytest.mark.parametrize("customer_id", [None, "", "7"])
+def test_customer_claim_is_validated_then_discarded(
     customer_id: str | None,
 ) -> None:
     verified = _verifier().verify(
         raw_query=_signed_query(_base_pairs(customer_id=customer_id)),
         request_path="/proxy",
     )
-    assert verified.claimed_logged_in_customer_id is None
+    assert not hasattr(verified, "claimed_logged_in_customer_id")
+    assert not hasattr(verified, "parameters")
 
 
 def test_percent_decoding_plus_unicode_and_full_entry_sort_follow_protocol() -> None:
     pairs = [*_base_pairs(), ("phrase", "Café snow ☃"), ("a", "last"), ("a1", "first")]
     verified = _verifier().verify(raw_query=_signed_query(pairs), request_path="/proxy/catalog")
-    parameters = dict(verified.parameters)
-    assert parameters["phrase"] == "Café snow ☃"
+    canonical = security._canonicalize_query(_signed_query(pairs), _config())
+    assert "phrase=Café snow ☃".encode() in canonical.message
+    assert not hasattr(verified, "parameters")
     assert _canonical_message(pairs).index(b"a1=first") < _canonical_message(pairs).index(b"a=last")
+
+
+def test_separator_free_application_parameter_collision_is_never_exposed() -> None:
+    protocol_pairs = [pair for pair in _base_pairs(customer_id=None) if pair[0] != "extra"]
+    first_pairs = [("a", "1b"), ("c", "2"), *protocol_pairs]
+    second_pairs = [("a", "1"), ("bc", "2"), *protocol_pairs]
+
+    assert _canonical_message(first_pairs) == _canonical_message(second_pairs)
+    first_query = _signed_query(first_pairs)
+    second_query = _signed_query(second_pairs)
+    assert first_query != second_query
+    assert first_query.rsplit(b"signature=", 1)[1] == second_query.rsplit(b"signature=", 1)[1]
+    first_canonical = security._canonicalize_query(first_query, _config())
+    second_canonical = security._canonicalize_query(second_query, _config())
+    assert first_canonical.gate_parameters == second_canonical.gate_parameters
+    assert not hasattr(first_canonical, "parameters")
+    assert all(
+        key in security._SECURITY_PARAMETER_NAMES for key, _value in first_canonical.gate_parameters
+    )
+
+    first = _verifier().verify(raw_query=first_query, request_path="/proxy/catalog")
+    second = _verifier().verify(raw_query=second_query, request_path="/proxy/catalog")
+    assert first == second
+    assert not hasattr(first, "parameters")
+    assert not hasattr(second, "parameters")
+
+
+def test_separator_free_customer_claim_collision_cannot_create_authority() -> None:
+    protocol_pairs = [pair for pair in _base_pairs(customer_id=None) if pair[0] != "extra"]
+    without_claim = [("a", "1logged_in_customer_i"), ("d", "7"), *protocol_pairs]
+    with_claim = [("a", "1"), ("logged_in_customer_id", "7"), *protocol_pairs]
+
+    assert _canonical_message(without_claim) == _canonical_message(with_claim)
+    unsigned_claim_result = _verifier().verify(
+        raw_query=_signed_query(without_claim), request_path="/proxy/catalog"
+    )
+    claimed_result = _verifier().verify(
+        raw_query=_signed_query(with_claim), request_path="/proxy/catalog"
+    )
+    assert unsigned_claim_result == claimed_result
+    assert not hasattr(unsigned_claim_result, "claimed_logged_in_customer_id")
+    assert not hasattr(claimed_result, "claimed_logged_in_customer_id")
+    assert not hasattr(claimed_result, "parameters")
 
 
 def test_lowercase_percent_hex_is_equivalent_after_one_decode() -> None:

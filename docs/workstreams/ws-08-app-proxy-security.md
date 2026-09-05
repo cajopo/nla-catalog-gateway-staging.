@@ -22,7 +22,9 @@ The documented algorithm parses and percent-decodes the raw query, groups repeat
 arrival order, renders each parameter as `key=value1,value2`, sorts those complete rendered
 parameters, concatenates them without separators, removes `signature`, and computes a
 lowercase hexadecimal HMAC-SHA256 with the app's shared secret. The verifier follows that
-algorithm exactly before applying NLA's additional fail-closed constraints.
+algorithm exactly before applying NLA's additional fail-closed constraints. Because the
+documented concatenation has no separators, it authenticates one canonical byte string but is
+not an injective encoding of the decoded parameter map.
 
 Shopify's two displayed examples are retained as protocol anchors for logged-in and anonymous
 requests. Their displayed shop is the redacted placeholder `{shop}.myshopify.com`; therefore
@@ -54,22 +56,37 @@ Verification proceeds in this order:
 2. Parse exactly one `=` per segment boundary, percent-decode once, treat `+` as space, and
    require strict UTF-8 and NFC text.
 3. Reject empty/missing segments, control characters, malformed escapes, encoded security
-   parameter names, second-stage `%HH` encodings and decoded `=` values. The last rule keeps
-   the separator-free signed representation from acquiring an alternate parameter boundary.
+   parameter names, second-stage `%HH` encodings and decoded `=` values. These restrictions
+   remove several ambiguity classes but cannot make Shopify's separator-free representation
+   injective.
 4. Reject duplicate `signature`, `shop`, `timestamp`, `path_prefix`, and
    `logged_in_customer_id`. Repeated non-security parameters are collapsed to the exact
-   comma-joined value signed by Shopify, so downstream code cannot reinterpret a signature
-   collision as a different list shape.
+   comma-joined value required by Shopify solely for signature calculation.
 5. Require one unencoded, exactly 64-character lowercase hexadecimal `signature`; remove it,
    reject non-ASCII text as the same bounded signature error, calculate HMAC-SHA256 and compare
    with `hmac.compare_digest`.
 6. Only after the signature passes, validate the exact lowercase `*.myshopify.com` shop
    allowlist, signed storefront prefix allowlist, canonical backend route prefix and timestamp.
-7. Return tuple-backed immutable normalized metadata without the supplied signature. Its
-   representation redacts the shop, customer claim, path and parameters.
+7. Syntax-check any `logged_in_customer_id` only as input hardening and discard it. Return
+   tuple-backed immutable protocol-gate metadata without the supplied signature, customer
+   claim, or arbitrary query parameters. Its representation redacts every retained field.
 
 `hmac` is not accepted as an alias for App Proxy `signature`; it remains in neither an OAuth
 nor webhook verification path by accident.
+
+### Separator-free collision boundary and body envelope
+
+Shopify's required canonicalization has intrinsic collisions. For example, `a=1b&c=2` and
+`a=1&bc=2` both contribute `a=1bc=2`; similarly, a split between an application value and
+`logged_in_customer_id` can produce the same canonical bytes with different decoded maps. NLA
+does not replace or modify Shopify's official algorithm. Consequently, a valid HMAC establishes
+the documented canonical message, not a unique application-parameter map.
+
+The public verification result therefore exposes no arbitrary query parameter and no customer
+claim. Collision-equivalent requests produce the same narrow protocol-gate result, so neither
+decoded map can become an authenticated application input. The catalog request must instead be
+decoded independently from the bounded JSON body envelope defined by issue #33 after this gate
+succeeds. Query parameters are never merged into that body or used to override it.
 
 ### Default limits
 
@@ -150,19 +167,20 @@ than assume pass-through.
 The verifier performs no logging. Public failures contain only one fixed message selected from
 a stable code; they never contain the shared secret, calculated digest, supplied signature,
 full query, shop, customer ID or attacker-controlled value. The verified result also excludes
-the signature and redacts all request fields from `repr`.
+the signature, customer claim, and arbitrary query parameters, and redacts all retained fields
+from `repr`.
 
 ## Threat and evidence matrix
 
 | Threat / failure | Local control and automated evidence | Remaining operational gate |
 |---|---|---|
-| Query tampering | HMAC-SHA256 and constant-time comparison; altered field test | Real installed App Proxy vector |
+| Query tampering | HMAC-SHA256 and constant-time comparison reject changes to the canonical message; collision regressions prove ambiguous decoded maps are not exposed | Real installed App Proxy vector |
 | Duplicate security keys | Decoded-name duplicate rejection, including encoded aliases | Framework must pass raw bytes |
-| Encoding ambiguity/injection | Strict escapes/UTF-8/NFC, one decode, bounded keys, no decoded `=` | Runtime must not decode returned values again |
+| Encoding ambiguity/injection | Strict escapes/UTF-8/NFC, one decode, bounded keys, no decoded `=`, and no application parameters in the public result | Shopify's canonical message remains intrinsically non-injective |
 | Cross-shop request | Canonical `myshopify.com` validation plus exact allowlist | Production shop value/rotation procedure |
 | Wrong proxy route | Signed storefront allowlist plus backend segment-boundary check | Edge route configuration |
 | Replay / clock skew | Injectable clock; inclusive 300-second/30-second boundary tests | Clock monitoring; one-time store if scope changes |
-| Customer-ID privilege confusion | Field named `claimed_*`, empty/malformed tests, no authorization API | Separate authorization for any customer data |
+| Customer-ID privilege confusion | Empty/malformed tests followed by unconditional claim discard; no claim field or authorization API | Separate authorization for any customer data |
 | Direct `/api` bypass | Production/staging deny and startup failure for bypass flag | Deployed route and origin-access test |
 | Query/CPU exhaustion | Raw size, parameter and component ceilings | Distributed/edge rate limiting in real hosting |
 | Forwarded-IP spoofing | Verifier never trusts or consumes forwarding headers | Trusted-proxy and rate-limit design in WS-09 |
@@ -173,8 +191,9 @@ the signature and redacts all request fields from `repr`.
 Adversarial tests cover both official examples; valid anonymous/customer-claim flows; repeated
 parameters and sort order; percent-case, spaces and Unicode; tampering; signature case, size and
 alphabet; encoded/duplicate security keys; missing fields; malformed UTF-8 and escapes;
-second decoding, normalization and delimiter ambiguity; all configured limits; path traversal
-and prefix confusion; shop-domain confusion; timestamp boundaries; clock failure and
+second decoding, normalization, delimiter ambiguity and separator-free application/customer
+claim collisions; all configured limits; path traversal and prefix confusion; shop-domain
+confusion; timestamp boundaries; clock failure and
 `BaseException`; customer claim formats; non-ASCII signatures; post-construction mutation and
 forged configuration/policy instances; exact private snapshot replacement; cross-instance
 state transplant; explicit re-initialization; subclass and `object.__new__` consumers;
@@ -191,6 +210,7 @@ environment evidence:
 - trusted-proxy selection and distributed per-endpoint rate limits;
 - secret storage, dual-key rotation and operational alerting;
 - dependency/runtime policy for the eventual HTTP service;
+- wiring the verified protocol gate to issue #33's independently validated body envelope;
 - verification that no endpoint exposes the database/file system or introduces a Shopify
   mutation; and
 - independent security review with no unresolved Critical or High finding.

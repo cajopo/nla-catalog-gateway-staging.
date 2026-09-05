@@ -241,14 +241,12 @@ class AppProxyVerifierConfig:
 
 
 class VerifiedAppProxyRequest(NamedTuple):
-    """Authenticated request metadata; customer ID remains an untrusted claim."""
+    """Successful protocol gate with no application input or customer claim."""
 
     shop: str
     path_prefix: str
     request_path: str
     timestamp: int
-    claimed_logged_in_customer_id: str | None
-    parameters: tuple[tuple[str, str], ...]
 
     def __repr__(self) -> str:
         return "VerifiedAppProxyRequest()"
@@ -344,7 +342,7 @@ CATALOG_JSON_SECURITY_HEADERS: Mapping[str, str] = MappingProxyType(
 class _CanonicalQuery:
     signature: str = field(repr=False)
     message: bytes = field(repr=False)
-    parameters: tuple[tuple[str, str], ...] = field(repr=False)
+    gate_parameters: tuple[tuple[str, str], ...] = field(repr=False)
 
 
 def _verification_failure(code: AppProxyErrorCode) -> AppProxyVerificationError:
@@ -485,7 +483,11 @@ def _canonicalize_query(
     return _CanonicalQuery(
         signature=signature,
         message=message,
-        parameters=tuple(sorted(collapsed.items())),
+        gate_parameters=tuple(
+            (key, value)
+            for key, value in sorted(collapsed.items())
+            if key in _SECURITY_PARAMETER_NAMES
+        ),
     )
 
 
@@ -503,6 +505,13 @@ def _parse_timestamp(value: str | None) -> int:
     if timestamp > _SIGNED_64_MAX:
         raise _verification_failure(AppProxyErrorCode.INVALID_TIMESTAMP)
     return timestamp
+
+
+def _validate_discarded_customer_claim(value: str | None) -> None:
+    if value in (None, ""):
+        return
+    if _CUSTOMER_ID_RE.fullmatch(value) is None or int(value) > _SIGNED_64_MAX:
+        raise _verification_failure(AppProxyErrorCode.INVALID_QUERY)
 
 
 def _default_clock() -> int:
@@ -558,13 +567,13 @@ class AppProxyVerifier:
         ):
             raise _verification_failure(AppProxyErrorCode.INVALID_PATH)
 
-        shop = _parameter(canonical.parameters, "shop")
+        shop = _parameter(canonical.gate_parameters, "shop")
         if shop is None or _SHOP_RE.fullmatch(shop) is None or shop not in config.allowed_shops:
             raise _verification_failure(AppProxyErrorCode.INVALID_SHOP)
-        path_prefix = _parameter(canonical.parameters, "path_prefix")
+        path_prefix = _parameter(canonical.gate_parameters, "path_prefix")
         if path_prefix not in config.allowed_path_prefixes:
             raise _verification_failure(AppProxyErrorCode.INVALID_PATH)
-        timestamp = _parse_timestamp(_parameter(canonical.parameters, "timestamp"))
+        timestamp = _parse_timestamp(_parameter(canonical.gate_parameters, "timestamp"))
 
         try:
             now = clock()
@@ -577,21 +586,19 @@ class AppProxyVerifier:
         if timestamp > now + config.future_skew_seconds:
             raise _verification_failure(AppProxyErrorCode.FUTURE_REQUEST)
 
-        customer_id = _parameter(canonical.parameters, "logged_in_customer_id")
-        if customer_id == "":
-            customer_id = None
-        elif customer_id is not None and (
-            _CUSTOMER_ID_RE.fullmatch(customer_id) is None or int(customer_id) > _SIGNED_64_MAX
-        ):
-            raise _verification_failure(AppProxyErrorCode.INVALID_QUERY)
+        # Shopify's separator-free canonical message is not an injective encoding of
+        # the decoded parameter map. Validate this protocol claim only as input
+        # hardening, then discard it. Application input must come from the independently
+        # validated request-body envelope, never from App Proxy query parameters.
+        _validate_discarded_customer_claim(
+            _parameter(canonical.gate_parameters, "logged_in_customer_id")
+        )
 
         return VerifiedAppProxyRequest(
             shop=shop,
             path_prefix=path_prefix,
             request_path=request_path,
             timestamp=timestamp,
-            claimed_logged_in_customer_id=customer_id,
-            parameters=canonical.parameters,
         )
 
 
