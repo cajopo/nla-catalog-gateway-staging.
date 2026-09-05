@@ -2251,17 +2251,24 @@ def _validate_records(records: tuple[CatalogProductRecordV1, ...]) -> None:
             inventory_item_gids.add(variant.inventory_item_gid)
 
 
+_CATALOG_CONTENT_PREFIX = (
+    b'{"contractVersion":'
+    + str(CONTRACT_VERSION).encode("ascii")
+    + b',"domain":"nla-catalog-product-records-v1","records":['
+)
+_CATALOG_CONTENT_SUFFIX = b"]}"
+
+
 def _catalog_content_sha256(records: tuple[CatalogProductRecordV1, ...]) -> str:
-    ordered = sorted(records, key=lambda record: _gid_sort_key(record.product_gid))
-    return hashlib.sha256(
-        _canonical_json_bytes(
-            {
-                "contractVersion": CONTRACT_VERSION,
-                "domain": "nla-catalog-product-records-v1",
-                "records": [record.as_dict() for record in ordered],
-            }
-        )
-    ).hexdigest()
+    digest = hashlib.sha256()
+    digest.update(_CATALOG_CONTENT_PREFIX)
+    separator = b""
+    for record in sorted(records, key=lambda item: _gid_sort_key(item.product_gid)):
+        digest.update(separator)
+        digest.update(_canonical_json_bytes(record.as_dict()))
+        separator = b","
+    digest.update(_CATALOG_CONTENT_SUFFIX)
+    return digest.hexdigest()
 
 
 _FIELD_DISPOSITIONS_V1 = {

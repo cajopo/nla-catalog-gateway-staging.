@@ -28,6 +28,7 @@ nla_catalog_gateway = ["catalog_taxonomy.v1.json"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+pythonpath = ["src", "."]
 addopts = "-ra --strict-config --strict-markers"
 
 [tool.coverage.run]

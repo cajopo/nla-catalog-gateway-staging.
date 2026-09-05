@@ -419,18 +419,26 @@ def _catalog_gid(value: Any, catalog_type: str, context: str) -> str:
 def _inventory_level_gid(
     value: Any,
     *,
-    location_gid: str,
     inventory_item_gid: str,
     context: str,
 ) -> str:
     if not isinstance(value, str) or value != value.strip():
         raise BulkContractError(f"{context}: invalid InventoryLevel GID; canonical form required")
-    _location, location_id = _gid_parts(location_gid, "Location", context)
     _item, item_id = _gid_parts(inventory_item_gid, "InventoryItem", context)
-    expected = f"gid://shopify/InventoryLevel/{location_id}?inventory_item_id={item_id}"
-    if value != expected:
+    prefix = "gid://shopify/InventoryLevel/"
+    if not value.startswith(prefix):
+        raise BulkContractError(f"{context}: invalid InventoryLevel GID; canonical form required")
+    component, separator, supplied_item_id = value[len(prefix) :].partition("?inventory_item_id=")
+    if (
+        separator != "?inventory_item_id="
+        or not POSITIVE_DECIMAL_PATTERN.fullmatch(component)
+        or not POSITIVE_DECIMAL_PATTERN.fullmatch(supplied_item_id)
+        or value != f"{prefix}{component}?inventory_item_id={supplied_item_id}"
+    ):
+        raise BulkContractError(f"{context}: invalid InventoryLevel GID; canonical form required")
+    if supplied_item_id != item_id:
         raise BulkContractError(
-            f"{context}: invalid InventoryLevel GID; does not match location and inventory item"
+            f"{context}: invalid InventoryLevel GID; does not match inventory item"
         )
     return value
 
@@ -460,14 +468,14 @@ def _money(
     return value
 
 
-def _source_metafield(value: Any, context: str) -> str | None:
+def _source_metafield(value: Any, context: str, *, expected_type: str) -> str | None:
     if value is None:
         return None
     if not isinstance(value, dict):
         raise BulkContractError(f"{context}: source metafield must be an object or null")
     _exact_keys(value, {"type", "value"}, context)
-    if _text(value, "type", context) != "number_integer":
-        raise BulkContractError(f"{context}: source metafield type must be number_integer")
+    if _text(value, "type", context) != expected_type:
+        raise BulkContractError(f"{context}: source metafield type does not match its contract")
     source_id = _text(value, "value", context)
     if not POSITIVE_DECIMAL_PATTERN.fullmatch(source_id):
         raise BulkContractError(
@@ -660,7 +668,8 @@ CREATE TABLE inventory_levels (
     inventory_item_gid TEXT NOT NULL,
     location_gid TEXT NOT NULL,
     location_name TEXT NOT NULL,
-    quantities_json TEXT NOT NULL
+    quantities_json TEXT NOT NULL,
+    UNIQUE (inventory_item_gid, location_gid)
 );
 
 CREATE TABLE inventory_quantities (
@@ -734,8 +743,16 @@ def _insert_product(connection: sqlite3.Connection, row: dict[str, Any], line: i
             _integer(row, "totalInventory", context),
             int(_boolean(row, "tracksInventory", context)),
             expected_variants,
-            _source_metafield(row.get("syncProductId"), f"{context}.syncProductId"),
-            _source_metafield(row.get("powertoolsId"), f"{context}.powertoolsId"),
+            _source_metafield(
+                row.get("syncProductId"),
+                f"{context}.syncProductId",
+                expected_type="number_integer",
+            ),
+            _source_metafield(
+                row.get("powertoolsId"),
+                f"{context}.powertoolsId",
+                expected_type="single_line_text_field",
+            ),
             *media,
         ),
     )
@@ -851,7 +868,6 @@ def _insert_inventory_level(connection: sqlite3.Connection, row: dict[str, Any],
     location_gid = _gid(location, "id", "Location", f"{context}.location")
     level_gid = _inventory_level_gid(
         row.get("id"),
-        location_gid=location_gid,
         inventory_item_gid=inventory_item_gid,
         context=f"{context}.id",
     )

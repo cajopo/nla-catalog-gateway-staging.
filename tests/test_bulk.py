@@ -70,7 +70,9 @@ def _product(
             None if source_id is None else {"type": "number_integer", "value": source_id}
         ),
         "powertoolsId": (
-            None if powertools_id is None else {"type": "number_integer", "value": powertools_id}
+            None
+            if powertools_id is None
+            else {"type": "single_line_text_field", "value": powertools_id}
         ),
     }
 
@@ -131,14 +133,17 @@ def _publication(
     }
 
 
-def _level(item: int, number: int, *, quantity: int = -1) -> dict[str, object]:
+def _level(
+    item: int, number: int, *, location: int | None = None, quantity: int = -1
+) -> dict[str, object]:
+    location_id = number if location is None else location
     return {
         "__typename": "InventoryLevel",
         "id": f"gid://shopify/InventoryLevel/{number}?inventory_item_id={item}",
         "__parentId": f"gid://shopify/InventoryItem/{item}",
         "location": {
-            "id": f"gid://shopify/Location/{number}",
-            "name": f"Location {number}",
+            "id": f"gid://shopify/Location/{location_id}",
+            "name": f"Location {location_id}",
         },
         "quantities": [
             {"name": "incoming", "quantity": quantity},
@@ -512,7 +517,11 @@ def test_bounded_pathological_json_is_a_contract_error_without_artifacts(
         ),
         (
             lambda row: row["syncProductId"].update(type="text"),
-            "type must be number_integer",
+            "type does not match its contract",
+        ),
+        (
+            lambda row: row["powertoolsId"].update(type="number_integer"),
+            "type does not match its contract",
         ),
         (
             lambda row: row["syncProductId"].update(value="abc"),
@@ -996,17 +1005,42 @@ def test_canonical_gid_contract_and_unbounded_decimal_identity(tmp_path: Path) -
             bulk_module._gid_value(f"gid://shopify/{kind}/1?x=1", kind, "test")
 
     mismatch_cases = (
-        "gid://shopify/InventoryLevel/2?inventory_item_id=11",
+        "gid://shopify/Location/1?inventory_item_id=11",
         "gid://shopify/InventoryLevel/1?inventory_item_id=12",
         "gid://shopify/InventoryLevel/1?inventory_item_id=11&x=1",
         "gid://shopify/InventoryLevel/1?inventory_item_id=%31%31",
         "gid://shopify/InventoryLevel/1?x=1&inventory_item_id=11",
+        "gid://shopify/InventoryLevel/0?inventory_item_id=11",
+        "gid://shopify/InventoryLevel/01?inventory_item_id=11",
     )
     for index, invalid_gid in enumerate(mismatch_cases):
         level = _level(11, 1)
         level["id"] = invalid_gid
         with pytest.raises(BulkContractError, match="invalid InventoryLevel GID"):
             _build(tmp_path / f"level-{index}", [*_minimal_rows(), level])
+
+    opaque_level, _manifest = _build(
+        tmp_path / "opaque-level-identity",
+        [*_minimal_rows(), _level(11, 2, location=1)],
+    )
+    connection = sqlite3.connect(opaque_level / "catalog.sqlite3")
+    try:
+        assert connection.execute("SELECT gid, location_gid FROM inventory_levels").fetchone() == (
+            "gid://shopify/InventoryLevel/2?inventory_item_id=11",
+            "gid://shopify/Location/1",
+        )
+    finally:
+        connection.close()
+
+    with pytest.raises(BulkContractError, match="duplicate or conflicting InventoryLevel"):
+        _build(
+            tmp_path / "duplicate-item-location",
+            [
+                *_minimal_rows(),
+                _level(11, 1, location=9),
+                _level(11, 2, location=9),
+            ],
+        )
 
     large = 9007199254740993
     output, _manifest = _build(
@@ -1264,6 +1298,7 @@ def test_candidate_output_safety_and_failure_cleanup(tmp_path: Path) -> None:
     snapshot, query, evidence = _paths(tmp_path, _minimal_rows())
     repository = tmp_path / "repository"
     repository.mkdir()
+    assert bulk_module._inside(tmp_path / "external", repository) is False
     with pytest.raises(BulkContractError, match="outside the repository"):
         build_source_candidate(
             snapshot,

@@ -10,15 +10,17 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import sqlite3
+import stat
 import tempfile
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 from pathlib import Path
-from typing import Any, ClassVar, Final
+from typing import Any, BinaryIO, ClassVar, Final
 
 from nla_catalog_gateway import bulk
 from nla_catalog_gateway import runtime_contract as runtime
@@ -567,6 +569,9 @@ class SnapshotPartInputV1:
     manifest: SnapshotPartManifestV1
     snapshot_path: Path
     query_path: Path
+    snapshot_handle: BinaryIO | None = field(default=None, repr=False, compare=False)
+    query_handle: BinaryIO | None = field(default=None, repr=False, compare=False)
+    query_bytes: bytes | None = field(default=None, repr=False, compare=False)
 
 
 def _validated_path(value: object, context: str) -> Path:
@@ -583,38 +588,65 @@ class _PartScan:
     object_counts: tuple[tuple[str, int], ...]
 
 
+def _verify_pinned_handle(handle: BinaryIO, context: str) -> tuple[int, int, int, int]:
+    try:
+        handle_facts = os.fstat(handle.fileno())
+    except (OSError, ValueError) as exc:
+        raise ReconciliationDataError(f"{context} pinned identity cannot be verified") from exc
+    if not stat.S_ISREG(handle_facts.st_mode) or handle_facts.st_nlink != 1:
+        raise ReconciliationDataError(f"{context} pinned handle is not one regular file")
+    return (
+        handle_facts.st_dev,
+        handle_facts.st_ino,
+        handle_facts.st_size,
+        handle_facts.st_mtime_ns,
+    )
+
+
 def _read_part(
     path: Path,
     part: SnapshotPart,
     consumer: Callable[[dict[str, Any], int, bytes], None] | None = None,
+    *,
+    handle: BinaryIO | None = None,
 ) -> _PartScan:
     counts = dict.fromkeys(_PART_TYPES[part], 0)
     digest = hashlib.sha256()
     byte_count = 0
     line_count = 0
+
+    def scan(stream: BinaryIO) -> None:
+        nonlocal byte_count, line_count
+        while raw := bulk._next_line(stream):
+            line_count += 1
+            byte_count += len(raw)
+            digest.update(raw)
+            if not raw.strip():
+                raise ReconciliationDataError("snapshot part contains a blank JSONL record")
+            payload = bulk._strict_json(raw, "snapshot part record")
+            if type(payload) is not dict:
+                raise ReconciliationDataError("snapshot part record must be an object")
+            typename = payload.get("__typename")
+            if typename not in counts:
+                raise ReconciliationDataError("snapshot part contains an unexpected object type")
+            if consumer is not None:
+                consumer(payload, line_count, raw)
+            counts[typename] += 1
+
     try:
-        handle = path.open("rb")
-    except OSError as exc:
-        raise ReconciliationDataError("cannot read snapshot part") from exc
-    try:
-        with handle:
-            while raw := bulk._next_line(handle):
-                line_count += 1
-                byte_count += len(raw)
-                digest.update(raw)
-                if not raw.strip():
-                    raise ReconciliationDataError("snapshot part contains a blank JSONL record")
-                payload = bulk._strict_json(raw, "snapshot part record")
-                if type(payload) is not dict:
-                    raise ReconciliationDataError("snapshot part record must be an object")
-                typename = payload.get("__typename")
-                if typename not in counts:
-                    raise ReconciliationDataError(
-                        "snapshot part contains an unexpected object type"
-                    )
-                if consumer is not None:
-                    consumer(payload, line_count, raw)
-                counts[typename] += 1
+        if handle is None:
+            try:
+                opened = path.open("rb")
+            except OSError as exc:
+                raise ReconciliationDataError("cannot read snapshot part") from exc
+            with opened:
+                scan(opened)
+        else:
+            pinned_state = _verify_pinned_handle(handle, "snapshot part")
+            handle.seek(0)
+            scan(handle)
+            if _verify_pinned_handle(handle, "snapshot part") != pinned_state:
+                raise ReconciliationDataError("snapshot part pinned state changed while reading")
     except ReconciliationDataError:
         raise
     except (OSError, bulk.BulkContractError) as exc:
@@ -636,11 +668,29 @@ def _file_sha256(path: Path, context: str) -> str:
         raise ReconciliationDataError(f"cannot read {context}") from exc
 
 
-def _read_query_bytes(path: Path) -> bytes:
+def _read_query_bytes(
+    path: Path,
+    *,
+    handle: BinaryIO | None = None,
+    frozen: bytes | None = None,
+) -> bytes:
+    if handle is not None and frozen is not None:
+        raise ReconciliationContractError("snapshot query must use one immutable source")
     try:
-        with path.open("rb") as handle:
+        if frozen is not None:
+            if type(frozen) is not bytes:
+                raise ReconciliationContractError("frozen snapshot query must be exact bytes")
+            raw = frozen
+        elif handle is None:
+            with path.open("rb") as opened:
+                raw = opened.read(MAX_BULK_QUERY_BYTES + 1)
+        else:
+            pinned_state = _verify_pinned_handle(handle, "snapshot query")
+            handle.seek(0)
             raw = handle.read(MAX_BULK_QUERY_BYTES + 1)
-    except OSError as exc:
+            if _verify_pinned_handle(handle, "snapshot query") != pinned_state:
+                raise ReconciliationDataError("snapshot query pinned state changed while reading")
+    except (OSError, ValueError) as exc:
         raise ReconciliationDataError("cannot read snapshot query") from exc
     if not raw or len(raw) > MAX_BULK_QUERY_BYTES:
         raise ReconciliationDataError("snapshot query bytes are invalid")
@@ -651,6 +701,25 @@ def _read_query_bytes(path: Path) -> bytes:
     return raw
 
 
+def _shopify_terminal_query_transport(canonical_query: bytes) -> bytes:
+    """Return the one observed Shopify terminal representation of an approved query."""
+
+    return canonical_query.replace(b"\n", b"\r\n") + b"\r\n"
+
+
+def _terminal_query_transport_mode(terminal_query: str, canonical_query: bytes) -> str:
+    """Classify only canonical bytes or Shopify's exact CRLF-plus-newline transport."""
+
+    raw = terminal_query.encode("utf-8")
+    if raw == canonical_query:
+        return "canonical-lf-v1"
+    if raw == _shopify_terminal_query_transport(canonical_query):
+        return "shopify-crlf-plus-one-terminal-newline-v1"
+    raise ReconciliationDataError(
+        "snapshot query does not match approved bytes or the exact Shopify transport"
+    )
+
+
 def create_snapshot_part_manifest(
     snapshot_path: Path,
     *,
@@ -658,6 +727,9 @@ def create_snapshot_part_manifest(
     part: SnapshotPart,
     expectation: ReconciliationExpectationV1,
     terminal_evidence: BulkOperationTerminalEvidenceV1,
+    snapshot_handle: BinaryIO | None = None,
+    query_handle: BinaryIO | None = None,
+    query_bytes: bytes | None = None,
 ) -> SnapshotPartManifestV1:
     """Create canonical evidence after checking exact terminal BulkOperation metadata."""
 
@@ -667,15 +739,16 @@ def create_snapshot_part_manifest(
         raise ReconciliationContractError("part must be SnapshotPart")
     snapshot_path = _validated_path(snapshot_path, "snapshot path")
     query_path = _validated_path(query_path, "query path")
-    query_bytes = _read_query_bytes(query_path)
-    query_sha256 = hashlib.sha256(query_bytes).hexdigest()
+    approved_query_bytes = _read_query_bytes(
+        query_path,
+        handle=query_handle,
+        frozen=query_bytes,
+    )
+    query_sha256 = hashlib.sha256(approved_query_bytes).hexdigest()
     if query_sha256 != _APPROVED_QUERY_SHA256[part]:
         raise ReconciliationDataError("snapshot query is not the approved query for its part")
-    if terminal.query.encode("utf-8") != query_bytes:
-        raise ReconciliationDataError(
-            "snapshot query does not match terminal BulkOperation evidence"
-        )
-    scan = _read_part(snapshot_path, part)
+    _terminal_query_transport_mode(terminal.query, approved_query_bytes)
+    scan = _read_part(snapshot_path, part, handle=snapshot_handle)
     if scan.snapshot_bytes != terminal.file_size:
         raise ReconciliationDataError("snapshot byte count does not match terminal evidence")
     if scan.object_count != terminal.object_count:
@@ -768,8 +841,27 @@ def _ordered_inputs(
             manifest=manifest,
             snapshot_path=snapshot_path,
             query_path=query_path,
+            snapshot_handle=value.snapshot_handle,
+            query_handle=value.query_handle,
+            query_bytes=value.query_bytes,
         )
     ordered = (by_part[SnapshotPart.PRODUCTS], by_part[SnapshotPart.VARIANTS])
+    snapshot_handles = tuple(
+        item.snapshot_handle for item in ordered if item.snapshot_handle is not None
+    )
+    if snapshot_handles and len(snapshot_handles) != 2:
+        raise ReconciliationContractError("pinned snapshot inputs must include both handles")
+    query_handles = tuple(item.query_handle for item in ordered if item.query_handle is not None)
+    frozen_queries = tuple(item.query_bytes for item in ordered if item.query_bytes is not None)
+    if query_handles and frozen_queries:
+        raise ReconciliationContractError("snapshot queries must use one immutable source mode")
+    if query_handles and len(query_handles) != 2:
+        raise ReconciliationContractError("pinned snapshot queries must include both handles")
+    if frozen_queries and len(frozen_queries) != 2:
+        raise ReconciliationContractError("frozen snapshot queries must include both byte strings")
+    handles = snapshot_handles + query_handles
+    if handles and len({id(handle) for handle in handles}) != len(handles):
+        raise ReconciliationContractError("pinned snapshot input handles must be distinct")
     if ordered[0].manifest.operation_id == ordered[1].manifest.operation_id:
         raise ReconciliationDataError("snapshot parts must use distinct Bulk operations")
     try:
@@ -868,6 +960,27 @@ def _normalize_root_variant(payload: dict[str, Any]) -> dict[str, Any]:
     return normalized
 
 
+def _normalize_split_inventory_level(
+    connection: sqlite3.Connection, payload: dict[str, Any]
+) -> dict[str, Any]:
+    try:
+        variant_gid = bulk._gid_value(
+            payload.get("__parentId"),
+            "ProductVariant",
+            "InventoryLevel split parent",
+        )
+    except bulk.BulkContractError as exc:
+        raise ReconciliationDataError("InventoryLevel split shape is invalid") from exc
+    owner = connection.execute(
+        "SELECT inventory_item_gid FROM variants WHERE gid=?", (variant_gid,)
+    ).fetchone()
+    if owner is None or type(owner[0]) is not str:
+        raise ReconciliationDataError("InventoryLevel parent ProductVariant is unavailable")
+    normalized = dict(payload)
+    normalized["__parentId"] = owner[0]
+    return normalized
+
+
 def _row_identity(payload: dict[str, Any]) -> tuple[str, str]:
     typename = payload.get("__typename")
     try:
@@ -944,7 +1057,11 @@ def _insert_source_row(
                 raise ReconciliationDataError("conflicting InventoryItem ownership")
             bulk._insert_variant(connection, normalized, line)
         elif typename == "InventoryLevel":
-            bulk._insert_inventory_level(connection, payload, line)
+            bulk._insert_inventory_level(
+                connection,
+                _normalize_split_inventory_level(connection, payload),
+                line,
+            )
         else:
             bulk._gid_value(
                 payload.get("__parentId"), "ProductVariant", "ProductVariant Metafield owner"
@@ -1042,13 +1159,6 @@ def _reconcile_database(
         "OR sync_source_id <> powertools_source_id LIMIT 1",
         "conflicting secondary source identity",
     )
-    _require_no_row(
-        connection,
-        "SELECT 1 FROM products WHERE sync_source_id IS NOT NULL "
-        "GROUP BY sync_source_id HAVING COUNT(*) > 1 LIMIT 1",
-        "duplicate secondary source identity",
-    )
-
     product_count = _scalar(connection, "SELECT COUNT(*) FROM products")
     variant_count = _scalar(connection, "SELECT COUNT(*) FROM variants")
     if product_count != expectation.product_count or variant_count != expectation.variant_count:
@@ -1448,7 +1558,17 @@ def reconcile_snapshot_parts(
     ordered = _ordered_inputs(inputs, expected)
     scans: dict[SnapshotPart, _PartScan] = {}
     for item in ordered:
-        if _file_sha256(item.query_path, "snapshot query") != item.manifest.query_sha256:
+        if item.query_bytes is not None:
+            query_sha256 = hashlib.sha256(
+                _read_query_bytes(item.query_path, frozen=item.query_bytes)
+            ).hexdigest()
+        elif item.query_handle is None:
+            query_sha256 = _file_sha256(item.query_path, "snapshot query")
+        else:
+            query_sha256 = hashlib.sha256(
+                _read_query_bytes(item.query_path, handle=item.query_handle)
+            ).hexdigest()
+        if query_sha256 != item.manifest.query_sha256:
             raise ReconciliationDataError("snapshot query does not match its immutable manifest")
     try:
         with tempfile.TemporaryDirectory(prefix="nla-reconcile-") as directory:
@@ -1465,6 +1585,7 @@ def reconcile_snapshot_parts(
                         lambda payload, line, _raw, part=item.manifest.part: _insert_source_row(
                             connection, part, payload, line
                         ),
+                        handle=item.snapshot_handle,
                     )
                     _validate_scan(scan, item.manifest)
                     scans[item.manifest.part] = scan
@@ -1482,6 +1603,7 @@ def reconcile_snapshot_parts(
                     facts,
                     classifications,
                 )
+                del facts, classifications
             finally:
                 connection.close()
     except ReconciliationError:
