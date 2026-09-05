@@ -83,12 +83,28 @@ class InputSet:
 def portable_core_filesystem_backend(
     monkeypatch: pytest.MonkeyPatch,
     request: pytest.FixtureRequest,
+    tmp_path: Path,
 ) -> Any:
     """Exercise portable runner logic on CI while production remains Win32 fail-closed."""
 
     if not PORTABLE_CORE_BACKEND or request.node.name.startswith("test_native_"):
         yield
         return
+
+    products_query_bytes = PRODUCT_QUERY.read_bytes()
+    variants_query_bytes = VARIANT_QUERY.read_bytes()
+    portable_repository = tmp_path / "portable-repository"
+    portable_graphql = portable_repository / "graphql"
+    portable_graphql.mkdir(parents=True)
+    portable_product_query = portable_graphql / PRODUCT_QUERY.name
+    portable_variant_query = portable_graphql / VARIANT_QUERY.name
+    portable_product_query.write_bytes(products_query_bytes)
+    portable_variant_query.write_bytes(variants_query_bytes)
+    test_module = sys.modules[__name__]
+    monkeypatch.setattr(test_module, "PROJECT_ROOT", portable_repository)
+    monkeypatch.setattr(test_module, "PRODUCT_QUERY", portable_product_query)
+    monkeypatch.setattr(test_module, "VARIANT_QUERY", portable_variant_query)
+    monkeypatch.setattr(cli, "REPOSITORY_ROOT", portable_repository)
 
     registered_paths: dict[int, Path] = {}
     registered_files: dict[int, Any] = {}
@@ -815,6 +831,17 @@ def test_unsupported_windows_namespaces_are_rejected_early(raw: str) -> None:
         cli._require_supported_path_namespace(Path(raw), "input")
 
 
+@pytest.mark.parametrize(
+    "raw",
+    [
+        r"\\?\C:\safe",
+        r"\\?\Volume{12345678-1234-1234-1234-123456789ABC}\safe",
+    ],
+)
+def test_supported_extended_windows_namespaces_are_recognized_early(raw: str) -> None:
+    cli._require_supported_path_namespace(Path(raw), "input")
+
+
 def test_canonical_handle_path_parser_and_component_boundaries() -> None:
     root = cli._parse_canonical_handle_path(
         r"\\?\Volume{12345678-1234-1234-1234-123456789ABC}\Repo",
@@ -857,6 +884,8 @@ def test_canonical_handle_path_parser_and_component_boundaries() -> None:
 
 
 def _extended_path(path: Path) -> Path:
+    if sys.platform != "win32":
+        return path.resolve()
     return Path("\\\\?\\" + os.fspath(path.resolve()))
 
 
@@ -1193,6 +1222,13 @@ def test_native_backend_availability_and_close_fail_closed(
         )
         with pytest.raises(cli.ReconciliationCliError, match="cannot be closed safely"):
             cli._native_close(101)
+    with monkeypatch.context() as patch:
+        patch.setattr(
+            cli,
+            "_windows_kernel32",
+            lambda: SimpleNamespace(CloseHandle=NativeCall(True)),
+        )
+        cli._native_close(101)
 
     for result, expected in ((101, 101), (cli._INVALID_NATIVE_HANDLE, None)):
         with monkeypatch.context() as patch:
@@ -1362,7 +1398,10 @@ def test_native_file_stream_enumeration_uses_the_exact_handle(tmp_path: Path) ->
 
 def test_native_directory_stream_enumeration_distinguishes_clean_and_ads(tmp_path: Path) -> None:
     if sys.platform != "win32":
-        with pytest.raises(cli.ReconciliationCliError, match="streams cannot be verified"):
+        with pytest.raises(
+            cli.ReconciliationCliError,
+            match="strong filesystem handle guarantees are unavailable",
+        ):
             cli._native_file_streams(101, "directory")
         return
 
@@ -1617,6 +1656,16 @@ def test_native_file_binding_failures_close_exact_resources(
             with opener() as handle:
                 assert handle.read() == b"source"
 
+    descriptor = os.open(source, os.O_RDWR)
+    writable_msvcrt = SimpleNamespace(open_osfhandle=lambda *_args: descriptor)
+    with monkeypatch.context() as patch:
+        patch.setattr(cli, "_native_create_file", lambda *_args, **_kwargs: 101)
+        patch.setattr(cli, "_windows_msvcrt", lambda: writable_msvcrt)
+        with cli._native_binary_file(
+            source, writable=True, create=False, context="output"
+        ) as handle:
+            assert handle.read() == b"source"
+
 
 def test_native_handle_and_directory_error_paths_are_fail_closed(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -1673,6 +1722,7 @@ def test_native_handle_and_directory_error_paths_are_fail_closed(
             )
             if result:
                 cli._native_mark_delete(101, "output")
+                cli._native_cancel_delete(101, "output")
             else:
                 with pytest.raises(cli.ReconciliationCliError, match="deleted by exact handle"):
                     cli._native_mark_delete(101, "output")
@@ -1747,6 +1797,16 @@ def test_native_handle_and_directory_error_paths_are_fail_closed(
         )
         with pytest.raises(cli.ReconciliationCliError, match="published safely"):
             cli._rename_directory_by_handle(open_lease, target)
+    with monkeypatch.context() as patch:
+        patch.setattr(cli, "_verify_directory_lease_canonical_path", lambda *_args: None)
+        patch.setattr(
+            cli,
+            "_windows_kernel32",
+            lambda: SimpleNamespace(SetFileInformationByHandle=NativeCall(True)),
+        )
+        cli._rename_directory_by_handle(open_lease, target)
+    assert open_lease.path == target
+    assert open_lease.canonical_path == cli._canonical_child(parent_canonical, target.name)
 
 
 def test_pinned_input_freeze_error_paths_are_bounded(
@@ -3218,11 +3278,19 @@ def test_module_entrypoint_is_covered(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     inputs = make_inputs(tmp_path)
-    monkeypatch.setattr(sys, "argv", [str(cli.__file__), *inputs.argv(tmp_path / "generation")])
+    output = tmp_path / "generation"
+    monkeypatch.setattr(sys, "argv", [str(cli.__file__), *inputs.argv(output)])
     with pytest.raises(SystemExit) as error:
         runpy.run_path(str(cli.__file__), run_name="__main__")
+    captured = capsys.readouterr()
+    if sys.platform != "win32":
+        assert error.value.code == 2
+        assert captured.out == ""
+        assert captured.err.strip() == "split snapshot reconciliation failed"
+        assert not output.exists()
+        return
     assert error.value.code == 0
-    assert json.loads(capsys.readouterr().out)["status"] == "ok"
+    assert json.loads(captured.out)["status"] == "ok"
 
 
 def test_database_files_are_never_created_by_the_cli(tmp_path: Path) -> None:

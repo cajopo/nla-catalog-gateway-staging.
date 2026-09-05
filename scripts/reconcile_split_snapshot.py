@@ -434,10 +434,10 @@ def _native_file_streams(
 ) -> tuple[tuple[str, int], ...]:
     class _FileStreamInfo(ctypes.Structure):
         _fields_ = (
-            ("next_entry_offset", wintypes.DWORD),
-            ("stream_name_length", wintypes.DWORD),
-            ("stream_size", ctypes.c_longlong),
-            ("stream_allocation_size", ctypes.c_longlong),
+            ("next_entry_offset", ctypes.c_uint32),
+            ("stream_name_length", ctypes.c_uint32),
+            ("stream_size", ctypes.c_int64),
+            ("stream_allocation_size", ctypes.c_int64),
         )
 
     kernel32 = _windows_kernel32()
@@ -716,8 +716,8 @@ def _rename_directory_by_handle(lease: _DirectoryLease, target: Path) -> None:
         _fields_ = (
             ("replace_if_exists", ctypes.c_ubyte),
             ("root_directory", wintypes.HANDLE),
-            ("file_name_length", wintypes.DWORD),
-            ("file_name", wintypes.WCHAR * 1),
+            ("file_name_length", ctypes.c_uint32),
+            ("file_name", ctypes.c_uint16 * 1),
         )
 
     if lease.closed:
