@@ -12,9 +12,12 @@ Issue #43 is the separate real-baseline gate and runner-hardening follow-up. It 
 issue-#32 evidence model while adding pinned input handles, hostile NTFS path rejection and
 identity-safe staged output publication required before a current capture can be accepted.
 
-Repository fixtures and committed executable evidence remain conspicuously synthetic. A current
-capture is held outside Git, but real-baseline acceptance, distributions and capability promotion
-remain blocked until the independently reviewed external-data run succeeds.
+Repository fixtures and committed executable evidence remain conspicuously synthetic. The current
+capture and all generated artifacts remain outside Git. The independently reviewed frozen run on
+candidate `2543575fe00144627ae433a56e11e9e249cef8e7` completed with exit zero and status `ok`, and
+its subsequent value-free audit was `APPROVED`. This establishes reviewable issue-#43 real-baseline
+evidence only: the output remains provisional and no dataset activation or capability promotion
+was performed.
 
 ## Query split and schema evidence
 
@@ -118,12 +121,13 @@ canonical positive decimal digits. The runner does not accept either type interc
 the aliases for every Product in the current capture; this corrects the earlier synthetic-only
 assumption without weakening the identity fence.
 
-The current value-free probe accounts for all 291795 Products with paired, equal sync and
-PowerTools aliases. It found four duplicated secondary-value groups covering eight Products, with
-maximum multiplicity two and exactly one `ACTIVE` plus one `UNLISTED` Product in each group. Their
-distinct Shopify Product GIDs remain the sole primary identities; reconciliation preserves every
-Product and does not merge, drop or deduplicate on a secondary value. Any later global-uniqueness
-policy belongs to the sync workstream and is not an activation claim in issue #43.
+The successful frozen run and value-free audit account for all 291795 Products and 293866 Variants,
+with paired, equal sync and PowerTools aliases on every Product. They found four duplicated
+secondary-value groups covering eight Products, with maximum multiplicity two and exactly one
+`ACTIVE` plus one `UNLISTED` Product in each group. Their distinct Shopify Product GIDs remain the
+sole primary identities; reconciliation preserves every Product and does not merge, drop or
+deduplicate on a secondary value. Any later global-uniqueness policy belongs to the sync
+workstream and is not an activation claim in issue #43.
 
 ## Projection and accounting
 
@@ -140,8 +144,8 @@ mixed/partial captures, missing and orphan children, duplicate/conflicting rows,
 identity conflicts, hostile values and every defensive branch. It contains no real Shopify row or
 commercial value.
 
-All runtime capabilities remain at their existing provisional/unsupported states. This candidate
-is evidence for a later real-baseline gate, not evidence that global browse, search, filters,
+All runtime capabilities remain at their existing provisional/unsupported states. This is
+reviewed issue-#43 real-baseline evidence, not evidence that global browse, search, filters,
 incremental sync or live serving is production-ready.
 
 ## Offline reconciliation CLI
@@ -318,6 +322,21 @@ secondary source identities. A subsequent value-free aggregate probe established
 recorded above and showed that Shopify Product GID, not the repeated secondary value, remains the
 correct identity boundary. The final target, private staging directory and temporary database were
 again absent afterward; no dataset was activated and neither Shopify nor PowerTools was mutated.
-The secondary-identity correction in this candidate has not yet been rerun against the external
-capture. Independent review and a fresh frozen invocation remain required, so this evidence does
-not change the real-baseline, distribution, staging or capability status above.
+
+A fourth frozen invocation on independently approved candidate
+`2543575fe00144627ae433a56e11e9e249cef8e7` completed with exit zero and status `ok`. It accounted
+for all 291795 Products and 293866 Variants and atomically created exactly seven external
+provisional artifacts. The separately captured reconciliation-summary SHA-256 is
+`9f17942d891fac4bb3bac7df0009d26182c16bee2408c1a57b14ec1395c4edb0`; the bound dataset generation
+is `sha256:5ddd4d73bc875d4e6660e3d84582bf5b8539f771ce2770922697e53319667a6c` and the source generation is
+`sha256:6041a94b6a2dfe60f774eee7c04e8a4058a8e7b85546b57c6070075d23d36116`.
+
+The value-free post-run audit returned `APPROVED`: it checked the exact seven-file shape, separate
+summary trust root, canonical and cross-linked manifests, two stable size/hash passes, every
+catalog line's 2 MiB bound and byte-identical contract round-trip, global Product/handle/Variant/
+InventoryItem identity and ordering, incremental catalog digest, aggregate counts, fixed-NTFS
+file identity/stream boundaries and complete temporary cleanup. Both frozen snapshot hashes and
+all five control/query hashes remained unchanged. The artifacts still state
+`reconciled-provisional`, `datasetActivation: not-performed` and
+`capabilityPromotion: not-performed`; no dataset was activated and neither Shopify nor PowerTools
+was mutated.
