@@ -111,8 +111,14 @@ def normalize_search_text(value: str) -> str:
         raise CanonicalSearchError("search text must be a plain string")
     try:
         value.encode("utf-8")
-    except UnicodeEncodeError as exc:
-        raise CanonicalSearchError("search text must contain valid Unicode") from exc
+    except UnicodeEncodeError:
+        invalid_unicode = True
+    else:
+        invalid_unicode = False
+    if invalid_unicode:
+        # Raise outside the handler so the public error retains neither an attacker-
+        # controlled cause nor an implicit exception context.
+        raise CanonicalSearchError("search text must contain valid Unicode")
     return " ".join(unicodedata.normalize("NFKC", value).casefold().split())
 
 
@@ -248,8 +254,14 @@ def _validated_records(
         try:
             record.__post_init__()
             canonical = CatalogProductRecordV1.from_json_bytes(record.to_json_bytes())
-        except Exception as exc:
-            raise CanonicalSearchError("search record violates the runtime v1 contract") from exc
+        except Exception:
+            record_invalid = True
+        else:
+            record_invalid = False
+        if record_invalid:
+            # Do not chain or retain nested runtime/serialization failures: their
+            # messages may contain values controlled by the source record.
+            raise CanonicalSearchError("search record violates the runtime v1 contract")
         if canonical.product_gid in seen:
             raise CanonicalSearchError("search records contain a duplicate Product GID")
         seen.add(canonical.product_gid)

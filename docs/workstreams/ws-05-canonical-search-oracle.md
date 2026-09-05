@@ -53,7 +53,8 @@ Every supplied Product is outer-validated, rendered to canonical v1 JSON, and de
 through the complete runtime schema before it is searched or reported. Only the reconstructed
 Product graph is consumed. This makes nested Variant and selected-option validation part of
 the oracle boundary and normalizes validation or serialization failures to
-`CanonicalSearchError`.
+`CanonicalSearchError`. Public failures retain neither the nested exception cause/context nor
+its traceback values, because malformed source fields may be attacker controlled.
 
 ## Evidence boundary and real-data gaps
 

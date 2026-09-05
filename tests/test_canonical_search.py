@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import traceback
 from dataclasses import replace
 from pathlib import Path
 from typing import Any
@@ -26,7 +27,6 @@ from nla_catalog_gateway.runtime_contract import (
     CatalogVariantRecordV1,
     InventoryPolicy,
     ProductStatus,
-    RuntimeContractError,
     SelectedOptionV1,
 )
 from nla_catalog_gateway.taxonomy import Game, ProductFamily
@@ -336,8 +336,10 @@ def test_normalization_and_result_invariants_hold_for_bounded_property_matrix(
     ],
 )
 def test_normalization_rejects_non_plain_or_invalid_unicode(value: Any, message: str) -> None:
-    with pytest.raises(CanonicalSearchError, match=message):
+    with pytest.raises(CanonicalSearchError, match=message) as error:
         normalize_search_text(value)  # type: ignore[arg-type]
+    assert error.value.__cause__ is None
+    assert error.value.__context__ is None
 
 
 def test_plain_string_and_tuple_subclasses_are_rejected(
@@ -407,7 +409,8 @@ def test_each_consumed_runtime_field_is_revalidated_and_errors_are_normalized(
     object.__setattr__(forged, field, invalid_value)
     with pytest.raises(CanonicalSearchError, match="violates the runtime v1 contract") as error:
         search_single_cards((forged,), game=Game.MAGIC, query="bolt")
-    assert type(error.value.__cause__) is RuntimeContractError
+    assert error.value.__cause__ is None
+    assert error.value.__context__ is None
 
 
 def test_nested_variant_and_selected_option_forgery_fails_closed(
@@ -447,11 +450,8 @@ def test_nested_variant_and_selected_option_forgery_fails_closed(
             CanonicalSearchError, match="violates the runtime v1 contract"
         ) as search_error:
             search_single_cards((forged_product,), game=Game.MAGIC, query="lightning bolt")
-        assert type(search_error.value.__cause__) in {
-            AttributeError,
-            RuntimeContractError,
-            TypeError,
-        }
+        assert search_error.value.__cause__ is None
+        assert search_error.value.__context__ is None
 
     forged_product = replace(product, variants=(bad_inventory,))
     with pytest.raises(CanonicalSearchError, match="violates the runtime v1 contract"):
@@ -489,8 +489,9 @@ def test_hostile_nested_rendering_failures_are_normalized_at_both_entry_points(
             report_missing_canonical_names((forged_product,), game=Game.MAGIC)
 
     assert str(error.value) == "search record violates the runtime v1 contract"
-    assert type(error.value.__cause__) is ValueError
-    assert str(error.value.__cause__) == hostile_detail
+    assert error.value.__cause__ is None
+    assert error.value.__context__ is None
+    assert hostile_detail not in "".join(traceback.format_exception(error.value))
 
 
 def test_validation_does_not_catch_base_exception(
