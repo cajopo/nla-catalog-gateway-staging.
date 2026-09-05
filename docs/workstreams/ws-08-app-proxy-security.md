@@ -65,11 +65,13 @@ Verification proceeds in this order:
 5. Require one unencoded, exactly 64-character lowercase hexadecimal `signature`; remove it,
    reject non-ASCII text as the same bounded signature error, calculate HMAC-SHA256 and compare
    with `hmac.compare_digest`.
-6. Only after the signature passes, validate the exact lowercase `*.myshopify.com` shop
-   allowlist, signed storefront prefix allowlist, canonical backend route prefix and timestamp.
+6. Only after the signature passes, validate the decoded lowercase `*.myshopify.com` shop and
+   signed storefront prefix against the one configured shop and one configured prefix, then
+   validate the canonical backend route prefix and timestamp.
 7. Syntax-check any `logged_in_customer_id` only as input hardening and discard it. Return
-   tuple-backed immutable protocol-gate metadata without the supplied signature, customer
-   claim, or arbitrary query parameters. Its representation redacts every retained field.
+   only the two tuple-backed immutable shop/prefix policy constants. The supplied signature,
+   decoded query values, backend request path, timestamp, customer claim, and arbitrary query
+   parameters are not exposed. The result representation redacts both retained constants.
 
 `hmac` is not accepted as an alias for App Proxy `signature`; it remains in neither an OAuth
 nor webhook verification path by accident.
@@ -82,11 +84,16 @@ Shopify's required canonicalization has intrinsic collisions. For example, `a=1b
 does not replace or modify Shopify's official algorithm. Consequently, a valid HMAC establishes
 the documented canonical message, not a unique application-parameter map.
 
-The public verification result therefore exposes no arbitrary query parameter and no customer
-claim. Collision-equivalent requests produce the same narrow protocol-gate result, so neither
-decoded map can become an authenticated application input. The catalog request must instead be
-decoded independently from the bounded JSON body envelope defined by issue #33 after this gate
-succeeds. Query parameters are never merged into that body or used to override it.
+Each verifier instance represents NLA's single App Proxy root and rejects configuration unless
+it contains exactly one canonical shop and exactly one canonical storefront prefix. After the
+HMAC passes, the decoded values must equal those constants, but the result is built from the
+policy snapshot rather than from the query. Consequently every collision-equivalent request
+that passes one fixed verifier produces the same narrow two-constant result; a collision that
+moves a boundary into a different decoded shop or prefix fails policy instead. The backend path
+and timestamp remain internal gate checks, and no arbitrary query parameter or customer claim
+is exposed. The catalog request must instead be decoded independently from the bounded JSON
+body envelope defined by issue #33 after this gate succeeds. Query parameters are never merged
+into that body or used to override it.
 
 ### Default limits
 
@@ -107,8 +114,8 @@ and only an exactly constructed consumer instance is accepted. Later mutation of
 frozen dataclass, an exact private snapshot assigned through `object.__setattr__`, explicit
 re-initialization, state copied from another verifier, a subclass, or an `object.__new__`
 instance cannot change or acquire verification authority. Corrupted or incompletely forged
-configuration instances fail at the boundary. Invalid types, empty allowlists, non-canonical
-paths/domains and out-of-range limits fail at construction time.
+configuration instances fail at the boundary. Invalid types, empty or multi-value policies,
+non-canonical paths/domains and out-of-range limits fail at construction time.
 
 ## Replay policy
 
@@ -124,11 +131,13 @@ by this workstream.
 
 ## Shop, path and direct-origin policy
 
-Allowed shops and merchant-visible `path_prefix` values are explicit immutable sets. A prefix
-change in Shopify must be deliberately added and reviewed; accepting arbitrary `/apps/*`
-values would weaken tenant and route isolation. The backend path must match the configured
-prefix on a segment boundary, so `/proxy` and `/proxy/catalog` match while `/proxyevil`, dot
-segments, double slashes and encoded path variants do not.
+The allowed shop and merchant-visible `path_prefix` are singleton immutable policies. NLA has
+one App Proxy root per verifier; supporting a second shop or prefix requires a separate verifier
+and routing decision rather than widening either set. A prefix change in Shopify must therefore
+replace the reviewed singleton configuration. Accepting arbitrary `/apps/*` values would weaken
+tenant and route isolation. The backend path must match the configured prefix on a segment
+boundary, so `/proxy` and `/proxy/catalog` match while `/proxyevil`, dot segments, double slashes
+and encoded path variants do not.
 
 `GatewayExposurePolicy` makes the routing invariant explicit. Its validated immutable state is
 also held only in a closure-owned weak identity registry. Public configuration values are
@@ -174,11 +183,11 @@ from `repr`.
 
 | Threat / failure | Local control and automated evidence | Remaining operational gate |
 |---|---|---|
-| Query tampering | HMAC-SHA256 and constant-time comparison reject changes to the canonical message; collision regressions prove ambiguous decoded maps are not exposed | Real installed App Proxy vector |
+| Query tampering | HMAC-SHA256 and constant-time comparison protect the canonical message; singleton shop/prefix policy and collision regressions ensure every collision-equivalent request that passes returns the same constant-only result | Real installed App Proxy vector |
 | Duplicate security keys | Decoded-name duplicate rejection, including encoded aliases | Framework must pass raw bytes |
 | Encoding ambiguity/injection | Strict escapes/UTF-8/NFC, one decode, bounded keys, no decoded `=`, and no application parameters in the public result | Shopify's canonical message remains intrinsically non-injective |
-| Cross-shop request | Canonical `myshopify.com` validation plus exact allowlist | Production shop value/rotation procedure |
-| Wrong proxy route | Signed storefront allowlist plus backend segment-boundary check | Edge route configuration |
+| Cross-shop request | Canonical `myshopify.com` validation plus one exact configured shop returned only from policy | Production shop value/rotation procedure |
+| Wrong proxy route | One exact signed storefront prefix plus backend segment-boundary check | Edge route configuration |
 | Replay / clock skew | Injectable clock; inclusive 300-second/30-second boundary tests | Clock monitoring; one-time store if scope changes |
 | Customer-ID privilege confusion | Empty/malformed tests followed by unconditional claim discard; no claim field or authorization API | Separate authorization for any customer data |
 | Direct `/api` bypass | Production/staging deny and startup failure for bypass flag | Deployed route and origin-access test |
@@ -192,7 +201,8 @@ Adversarial tests cover both official examples; valid anonymous/customer-claim f
 parameters and sort order; percent-case, spaces and Unicode; tampering; signature case, size and
 alphabet; encoded/duplicate security keys; missing fields; malformed UTF-8 and escapes;
 second decoding, normalization, delimiter ambiguity and separator-free application/customer
-claim collisions; all configured limits; path traversal and prefix confusion; shop-domain
+claim, prefix-boundary and shop-boundary collisions; singleton policy cardinality; all
+configured limits; path traversal and prefix confusion; shop-domain
 confusion; timestamp boundaries; clock failure and
 `BaseException`; customer claim formats; non-ASCII signatures; post-construction mutation and
 forged configuration/policy instances; exact private snapshot replacement; cross-instance

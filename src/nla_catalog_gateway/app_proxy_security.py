@@ -104,8 +104,8 @@ class IngressDecision(StrEnum):
 
 class _VerifierConfigSnapshot(NamedTuple):
     shared_secret: bytes
-    allowed_shops: frozenset[str]
-    allowed_path_prefixes: frozenset[str]
+    shop: str
+    path_prefix: str
     backend_path_prefix: str
     replay_window_seconds: int
     future_skew_seconds: int
@@ -188,17 +188,18 @@ class AppProxyVerifierConfig:
             raise AppProxyConfigurationError("shared secret must be non-empty bytes")
         if len(self.shared_secret) > _MAX_SECRET_BYTES:
             raise AppProxyConfigurationError("shared secret exceeds its byte limit")
-        if type(self.allowed_shops) is not frozenset or not self.allowed_shops:
-            raise AppProxyConfigurationError("shop allowlist must be a non-empty frozenset")
-        if len(self.allowed_shops) > 32 or any(
+        if type(self.allowed_shops) is not frozenset or len(self.allowed_shops) != 1:
+            raise AppProxyConfigurationError("shop policy must be a singleton frozenset")
+        if any(
             type(shop) is not str or _SHOP_RE.fullmatch(shop) is None for shop in self.allowed_shops
         ):
             raise AppProxyConfigurationError("shop allowlist contains an invalid domain")
-        if type(self.allowed_path_prefixes) is not frozenset or not self.allowed_path_prefixes:
-            raise AppProxyConfigurationError("path-prefix allowlist must be a non-empty frozenset")
-        if len(self.allowed_path_prefixes) > 32 or any(
-            not _is_canonical_path(prefix) for prefix in self.allowed_path_prefixes
+        if (
+            type(self.allowed_path_prefixes) is not frozenset
+            or len(self.allowed_path_prefixes) != 1
         ):
+            raise AppProxyConfigurationError("path-prefix policy must be a singleton frozenset")
+        if any(not _is_canonical_path(prefix) for prefix in self.allowed_path_prefixes):
             raise AppProxyConfigurationError("path-prefix allowlist contains an invalid path")
         if not _is_canonical_path(self.backend_path_prefix):
             raise AppProxyConfigurationError("backend path prefix is invalid")
@@ -241,12 +242,10 @@ class AppProxyVerifierConfig:
 
 
 class VerifiedAppProxyRequest(NamedTuple):
-    """Successful protocol gate with no application input or customer claim."""
+    """Successful protocol gate containing only constant singleton-policy values."""
 
     shop: str
     path_prefix: str
-    request_path: str
-    timestamp: int
 
     def __repr__(self) -> str:
         return "VerifiedAppProxyRequest()"
@@ -376,8 +375,8 @@ def _snapshot_verifier_config(config: object) -> _VerifierConfigSnapshot:
         raise AppProxyConfigurationError("verifier dependencies are invalid") from None
     return _VerifierConfigSnapshot(
         validated.shared_secret,
-        validated.allowed_shops,
-        validated.allowed_path_prefixes,
+        next(iter(validated.allowed_shops)),
+        next(iter(validated.allowed_path_prefixes)),
         validated.backend_path_prefix,
         validated.replay_window_seconds,
         validated.future_skew_seconds,
@@ -567,11 +566,15 @@ class AppProxyVerifier:
         ):
             raise _verification_failure(AppProxyErrorCode.INVALID_PATH)
 
-        shop = _parameter(canonical.gate_parameters, "shop")
-        if shop is None or _SHOP_RE.fullmatch(shop) is None or shop not in config.allowed_shops:
+        decoded_shop = _parameter(canonical.gate_parameters, "shop")
+        if (
+            decoded_shop is None
+            or _SHOP_RE.fullmatch(decoded_shop) is None
+            or decoded_shop != config.shop
+        ):
             raise _verification_failure(AppProxyErrorCode.INVALID_SHOP)
-        path_prefix = _parameter(canonical.gate_parameters, "path_prefix")
-        if path_prefix not in config.allowed_path_prefixes:
+        decoded_path_prefix = _parameter(canonical.gate_parameters, "path_prefix")
+        if decoded_path_prefix != config.path_prefix:
             raise _verification_failure(AppProxyErrorCode.INVALID_PATH)
         timestamp = _parse_timestamp(_parameter(canonical.gate_parameters, "timestamp"))
 
@@ -595,10 +598,8 @@ class AppProxyVerifier:
         )
 
         return VerifiedAppProxyRequest(
-            shop=shop,
-            path_prefix=path_prefix,
-            request_path=request_path,
-            timestamp=timestamp,
+            shop=config.shop,
+            path_prefix=config.path_prefix,
         )
 
 

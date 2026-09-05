@@ -17,6 +17,7 @@ from nla_catalog_gateway.app_proxy_security import (
     DeploymentEnvironment,
     GatewayExposurePolicy,
     IngressDecision,
+    VerifiedAppProxyRequest,
 )
 
 _OFFICIAL_VECTOR_KEY = b"hush"
@@ -42,8 +43,8 @@ def _config(**changes: object) -> AppProxyVerifierConfig:
 def _attacker_config_snapshot() -> security._VerifierConfigSnapshot:
     return security._VerifierConfigSnapshot(
         _ATTACKER_VECTOR_KEY,
-        frozenset({_OTHER_SHOP}),
-        frozenset({"/apps/attacker"}),
+        _OTHER_SHOP,
+        "/apps/attacker",
         "/owned",
         security.DEFAULT_REPLAY_WINDOW_SECONDS,
         security.DEFAULT_FUTURE_SKEW_SECONDS,
@@ -156,9 +157,10 @@ def test_valid_request_exposes_only_validated_protocol_gate_metadata() -> None:
 
     assert verified.shop == _TEST_SHOP
     assert verified.path_prefix == _STOREFRONT_PREFIX
-    assert verified.request_path == "/proxy/catalog/search"
-    assert verified.timestamp == _NOW
-    assert verified._fields == ("shop", "path_prefix", "request_path", "timestamp")
+    assert verified == VerifiedAppProxyRequest(_TEST_SHOP, _STOREFRONT_PREFIX)
+    assert verified._fields == ("shop", "path_prefix")
+    assert not hasattr(verified, "request_path")
+    assert not hasattr(verified, "timestamp")
     assert not hasattr(verified, "claimed_logged_in_customer_id")
     assert not hasattr(verified, "parameters")
     assert repr(verified) == "VerifiedAppProxyRequest()"
@@ -210,6 +212,56 @@ def test_separator_free_application_parameter_collision_is_never_exposed() -> No
     assert first == second
     assert not hasattr(first, "parameters")
     assert not hasattr(second, "parameters")
+
+
+def test_separator_free_path_prefix_collision_has_one_singleton_policy_result() -> None:
+    protocol_pairs = [
+        pair for pair in _base_pairs(customer_id=None) if pair[0] not in {"extra", "path_prefix"}
+    ]
+    extended_prefix = f"{_STOREFRONT_PREFIX}r"
+    extended_pairs = [("path_prefix", extended_prefix), ("q", "2"), *protocol_pairs]
+    configured_pairs = [("path_prefix", _STOREFRONT_PREFIX), ("rq", "2"), *protocol_pairs]
+
+    assert _canonical_message(extended_pairs) == _canonical_message(configured_pairs)
+    extended_query = _signed_query(extended_pairs)
+    configured_query = _signed_query(configured_pairs)
+    assert extended_query != configured_query
+    assert (
+        extended_query.rsplit(b"signature=", 1)[1] == configured_query.rsplit(b"signature=", 1)[1]
+    )
+
+    verifier = _verifier()
+    result = verifier.verify(raw_query=configured_query, request_path="/proxy/catalog")
+    assert result == VerifiedAppProxyRequest(_TEST_SHOP, _STOREFRONT_PREFIX)
+    _assert_error(
+        AppProxyErrorCode.INVALID_PATH,
+        raw_query=extended_query,
+        verifier=verifier,
+    )
+
+
+def test_separator_free_shop_boundary_collision_has_one_valid_policy_result() -> None:
+    protocol_pairs = [
+        pair for pair in _base_pairs(customer_id=None) if pair[0] not in {"extra", "shop"}
+    ]
+    invalid_extended_shop = f"{_TEST_SHOP}s"
+    invalid_pairs = [("shop", invalid_extended_shop), ("szz", "2"), *protocol_pairs]
+    configured_pairs = [("shop", _TEST_SHOP), ("sszz", "2"), *protocol_pairs]
+
+    assert _canonical_message(invalid_pairs) == _canonical_message(configured_pairs)
+    invalid_query = _signed_query(invalid_pairs)
+    configured_query = _signed_query(configured_pairs)
+    assert invalid_query != configured_query
+    assert invalid_query.rsplit(b"signature=", 1)[1] == configured_query.rsplit(b"signature=", 1)[1]
+
+    verifier = _verifier()
+    result = verifier.verify(raw_query=configured_query, request_path="/proxy/catalog")
+    assert result == VerifiedAppProxyRequest(_TEST_SHOP, _STOREFRONT_PREFIX)
+    _assert_error(
+        AppProxyErrorCode.INVALID_SHOP,
+        raw_query=invalid_query,
+        verifier=verifier,
+    )
 
 
 def test_separator_free_customer_claim_collision_cannot_create_authority() -> None:
@@ -465,7 +517,8 @@ def test_replay_and_future_boundaries_are_inclusive(offset: int) -> None:
         raw_query=_signed_query(_base_pairs(timestamp=str(_NOW + offset))),
         request_path="/proxy",
     )
-    assert verified.timestamp == _NOW + offset
+    assert verified == VerifiedAppProxyRequest(_TEST_SHOP, _STOREFRONT_PREFIX)
+    assert not hasattr(verified, "timestamp")
 
 
 @pytest.mark.parametrize(
@@ -529,12 +582,16 @@ def test_base_exception_from_clock_is_not_swallowed() -> None:
         {"allowed_shops": set()},
         {"allowed_shops": frozenset()},
         {"allowed_shops": frozenset({"bad.example.com"})},
+        {"allowed_shops": frozenset({7})},
         {"allowed_shops": frozenset({_TEST_SHOP, 7})},
+        {"allowed_shops": frozenset({_TEST_SHOP, _OTHER_SHOP})},
         {"allowed_shops": frozenset(f"s{index}.myshopify.com" for index in range(33))},
         {"allowed_path_prefixes": set()},
         {"allowed_path_prefixes": frozenset()},
         {"allowed_path_prefixes": frozenset({"relative"})},
+        {"allowed_path_prefixes": frozenset({7})},
         {"allowed_path_prefixes": frozenset({_STOREFRONT_PREFIX, 7})},
+        {"allowed_path_prefixes": frozenset({_STOREFRONT_PREFIX, f"{_STOREFRONT_PREFIX}r"})},
         {"allowed_path_prefixes": frozenset(f"/apps/p{index}" for index in range(33))},
         {"backend_path_prefix": "relative"},
         {"replay_window_seconds": 0},
@@ -593,12 +650,12 @@ def test_verifier_snapshots_every_config_field_against_alias_mutation() -> None:
     assert verifier.verify(raw_query=_signed_query(old_pairs), request_path=long_path).shop == (
         _TEST_SHOP
     )
-    assert (
-        verifier.verify(
-            raw_query=_signed_query(future_pairs),
-            request_path="/proxy",
-        ).timestamp
-        == _NOW + security.DEFAULT_FUTURE_SKEW_SECONDS
+    assert verifier.verify(
+        raw_query=_signed_query(future_pairs),
+        request_path="/proxy",
+    ) == VerifiedAppProxyRequest(
+        _TEST_SHOP,
+        _STOREFRONT_PREFIX,
     )
 
     attacker_pairs = [
