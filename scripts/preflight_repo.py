@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import html
 import json
 import math
@@ -10,7 +11,7 @@ import re
 import shlex
 import shutil
 import subprocess
-from collections import Counter
+from collections import Counter, deque
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -22,6 +23,10 @@ from yaml.nodes import MappingNode
 
 ROOT = Path(__file__).resolve().parents[1]
 MAX_TRACKABLE_BYTES = 5 * 1024 * 1024
+MAX_TRACKED_AGGREGATE_BYTES = 64 * 1024 * 1024
+MAX_TRACKED_FILE_COUNT = 10_000
+MAX_GIT_INDEX_BYTES = 8 * 1024 * 1024
+MAX_GIT_OBJECT_SIZE_BYTES = 32
 MAX_SHELL_SCAN_CHARS = 32 * 1024
 MAX_SHELL_SCAN_DEPTH = 3
 MAX_HEREDOC_QUEUE = 8
@@ -287,6 +292,28 @@ COMMAND_RESOLUTION_ENV_ASSIGNMENT_PATTERN = re.compile(
 )
 BASH_INDIRECT_EXPANSION_PATTERN = re.compile(r"\$\{![^}\r\n]+\}")
 SHELL_SUBEXPRESSION_PATTERN = re.compile(r"(?:\$\(|<\(|>\(|@\()")
+GIT_OBJECT_SIZE_PATTERN = re.compile(rb"(?:0|[1-9][0-9]*)(?:\r?\n)?\Z")
+REMOVED_FIXTURE_PATH_SHA256 = "e5d2a692b1a78016d9e5164938c5968b53d408c9dd774d7e1b1bc98e5b296792"
+REMOVED_PRODUCT_ID_SHA256 = frozenset(
+    {
+        "2150d71b7555d7492e0674cb978e4aaa60200a822aca30b7eca6419ccea935d8",
+        "3eeb107a9fdc78c10db9e41100a052ad962bdd8675d0aaab5982b7aa0b49b7cc",
+        "90bfd59d22b47668ec66958a3b70e5073d9a192916fefe7806925e2fa2b610a7",
+        "cc5ff51b400b13f22b214cf92f12e05a981586a922473892a7d74e20ef3fa73a",
+    }
+)
+REMOVED_TITLE_WORD_SHA256 = {
+    9: frozenset({"e6b7215aacc422dadab37890b29459342448208362e9141b957ef202302b4569"}),
+    10: frozenset({"a22b978f138b8bf6dfdb4405b48c83c7ab2c0c9ff89e16277f52c0ea1377dfe4"}),
+    11: frozenset(
+        {
+            "1465626ed0f1dd190d1f11c1c590350b1572039e6e258f1f12212864e461d538",
+            "261d3aecf007e47ad9565efb48e76065b1655a9ce8cdd5c5142241978be38c88",
+        }
+    ),
+}
+LONG_DECIMAL_PATTERN = re.compile(r"(?<![0-9])[0-9]{12,}(?![0-9])")
+WORD_PATTERN = re.compile(r"[A-Za-z0-9]+")
 
 
 class PreflightError(RuntimeError):
@@ -295,11 +322,12 @@ class PreflightError(RuntimeError):
 
 @dataclass(frozen=True, slots=True)
 class TrackedBlob:
-    """One stage-zero Git index entry and its exact blob bytes."""
+    """One stage-zero Git index entry and its bounded regular-file bytes."""
 
     relative: Path
     mode: str
-    content: bytes
+    content: bytes | None
+    declared_size: int | None = None
 
 
 class UniqueKeySafeLoader(yaml.SafeLoader):
@@ -341,29 +369,65 @@ UniqueKeySafeLoader.add_constructor(
 )
 
 
-def _git(root: Path, *arguments: str) -> bytes:
+def _git(
+    root: Path,
+    *arguments: str,
+    max_output_bytes: int | None = None,
+) -> bytes:
     git_executable = shutil.which("git")
     if git_executable is None:
         raise PreflightError("git executable not found")
     try:
+        if max_output_bytes is not None:
+            with subprocess.Popen(  # noqa: S603 - fixed executable, controlled arguments
+                [git_executable, "-C", str(root), *arguments],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+            ) as process:
+                stdout = process.stdout
+                if stdout is None:  # pragma: no cover - PIPE always supplies stdout
+                    raise PreflightError("git stdout pipe unavailable")
+                output = stdout.read(max_output_bytes + 1)
+                if len(output) > max_output_bytes:
+                    process.kill()
+                    process.wait()
+                    raise PreflightError(
+                        f"git command output exceeds inspection limit: {' '.join(arguments)}"
+                    )
+                if process.wait() != 0:
+                    raise PreflightError(f"git command failed: {' '.join(arguments)}")
+                return output
         completed = subprocess.run(  # noqa: S603 - fixed executable, controlled arguments
             [git_executable, "-C", str(root), *arguments],
             check=True,
             capture_output=True,
         )
+    except PreflightError:
+        raise
     except (OSError, subprocess.CalledProcessError) as exc:
         raise PreflightError(f"git command failed: {' '.join(arguments)}") from exc
     return completed.stdout
 
 
 def tracked_blobs(root: Path) -> list[TrackedBlob]:
-    """Read stage-zero paths and bytes directly from the Git index."""
-    entries = _git(root, "ls-files", "--stage", "-z")
-    blobs: list[TrackedBlob] = []
+    """Read bounded stage-zero regular-file bytes directly from the Git index."""
+    entries = _git(
+        root,
+        "ls-files",
+        "--stage",
+        "-z",
+        max_output_bytes=MAX_GIT_INDEX_BYTES,
+    )
+    if len(entries) > MAX_GIT_INDEX_BYTES:
+        raise PreflightError("Git index listing exceeds inspection limit")
+
+    indexed: list[tuple[Path, str, str]] = []
     seen_paths: set[Path] = set()
     for raw_entry in entries.split(b"\0"):
         if not raw_entry:
             continue
+        if len(indexed) >= MAX_TRACKED_FILE_COUNT:
+            raise PreflightError("tracked file count exceeds inspection limit")
         try:
             metadata, raw_path = raw_entry.split(b"\t", 1)
             mode_bytes, sha_bytes, stage_bytes = metadata.split()
@@ -378,9 +442,73 @@ def tracked_blobs(root: Path) -> list[TrackedBlob]:
         if relative in seen_paths:
             raise PreflightError(f"duplicate Git index path: {relative.as_posix()}")
         seen_paths.add(relative)
-        content = _git(root, "cat-file", "blob", blob_sha)
-        blobs.append(TrackedBlob(relative=relative, mode=mode, content=content))
-    return sorted(blobs, key=lambda item: item.relative.as_posix())
+        indexed.append((relative, mode, blob_sha))
+
+    indexed.sort(key=lambda item: item[0].as_posix())
+    sizes: dict[Path, int] = {}
+    aggregate_size = 0
+    for relative, mode, blob_sha in indexed:
+        if mode not in {"100644", "100755"}:
+            continue
+        raw_size = _git(
+            root,
+            "cat-file",
+            "-s",
+            blob_sha,
+            max_output_bytes=MAX_GIT_OBJECT_SIZE_BYTES,
+        )
+        if (
+            len(raw_size) > MAX_GIT_OBJECT_SIZE_BYTES
+            or GIT_OBJECT_SIZE_PATTERN.fullmatch(raw_size) is None
+        ):
+            raise PreflightError(f"cannot parse Git blob size: {relative.as_posix()}")
+        size = int(raw_size.strip())
+        sizes[relative] = size
+        aggregate_size += size
+        if aggregate_size > MAX_TRACKED_AGGREGATE_BYTES:
+            raise PreflightError("tracked bytes exceed aggregate inspection limit")
+
+    blobs: list[TrackedBlob] = []
+    for relative, mode, blob_sha in indexed:
+        if mode not in {"100644", "100755"}:
+            blobs.append(
+                TrackedBlob(
+                    relative=relative,
+                    mode=mode,
+                    content=b"",
+                    declared_size=0,
+                )
+            )
+            continue
+        size = sizes[relative]
+        if size > MAX_TRACKABLE_BYTES:
+            blobs.append(
+                TrackedBlob(
+                    relative=relative,
+                    mode=mode,
+                    content=None,
+                    declared_size=size,
+                )
+            )
+            continue
+        content = _git(
+            root,
+            "cat-file",
+            "blob",
+            blob_sha,
+            max_output_bytes=size,
+        )
+        if len(content) != size:
+            raise PreflightError(f"Git blob size changed during inspection: {relative.as_posix()}")
+        blobs.append(
+            TrackedBlob(
+                relative=relative,
+                mode=mode,
+                content=content,
+                declared_size=size,
+            )
+        )
+    return blobs
 
 
 def _load_workflow(text: str) -> Any:
@@ -1275,6 +1403,39 @@ def secret_failures(text: str) -> list[str]:
     return failures
 
 
+def _sha256_text(value: str) -> str:
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+def removed_shopify_observation_failures(relative: Path, text: str) -> list[str]:
+    """Reject source observations removed by issue #35 without retaining their values."""
+    failures: list[str] = []
+    if _sha256_text(relative.as_posix().casefold()) == REMOVED_FIXTURE_PATH_SHA256:
+        failures.append("removed_shopify_observation_path")
+
+    if any(
+        _sha256_text(match.group()) in REMOVED_PRODUCT_ID_SHA256
+        for match in LONG_DECIMAL_PATTERN.finditer(text)
+    ):
+        failures.append("removed_shopify_observation_identifier")
+
+    word_window: deque[str] = deque(maxlen=max(REMOVED_TITLE_WORD_SHA256, default=1))
+    title_found = False
+    for match in WORD_PATTERN.finditer(text):
+        word_window.append(match.group().casefold())
+        words = tuple(word_window)
+        if any(
+            len(words) >= word_count
+            and _sha256_text(" ".join(words[-word_count:])) in forbidden_digests
+            for word_count, forbidden_digests in REMOVED_TITLE_WORD_SHA256.items()
+        ):
+            title_found = True
+            break
+    if title_found:
+        failures.append("removed_shopify_observation_title")
+    return failures
+
+
 def run_preflight(root: Path) -> dict[str, Any]:
     failures: list[dict[str, str]] = []
     try:
@@ -1301,8 +1462,18 @@ def run_preflight(root: Path) -> dict[str, Any]:
         ) or FORBIDDEN_FILE_WITH_WRAPPERS_PATTERN.search(relative.name)
         if forbidden_filename:
             failures.append({"path": relative_text, "reason": "forbidden_artifact_type"})
-        if len(blob.content) > MAX_TRACKABLE_BYTES:
+        declared_size = (
+            blob.declared_size if blob.declared_size is not None else len(blob.content or b"")
+        )
+        if declared_size > MAX_TRACKABLE_BYTES:
             failures.append({"path": relative_text, "reason": "file_larger_than_5_mib"})
+            continue
+        if blob.content is None:
+            failures.append({"path": relative_text, "reason": "tracked_blob_content_missing"})
+            continue
+        if len(blob.content) != declared_size:
+            failures.append({"path": relative_text, "reason": "tracked_blob_size_mismatch"})
+            continue
         try:
             text = blob.content.decode("utf-8")
         except UnicodeDecodeError:
@@ -1311,6 +1482,8 @@ def run_preflight(root: Path) -> dict[str, Any]:
 
         for reason in secret_failures(text):
             failures.append({"path": relative_text, "reason": f"secret:{reason}"})
+        for reason in removed_shopify_observation_failures(relative, text):
+            failures.append({"path": relative_text, "reason": reason})
         if _looks_like_shopify_snapshot(relative, text):
             failures.append({"path": relative_text, "reason": "forbidden_shopify_snapshot"})
         if relative.parts[:2] == (".github", "workflows"):
