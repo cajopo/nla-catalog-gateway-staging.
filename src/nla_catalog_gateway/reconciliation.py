@@ -571,6 +571,7 @@ class SnapshotPartInputV1:
     query_path: Path
     snapshot_handle: BinaryIO | None = field(default=None, repr=False, compare=False)
     query_handle: BinaryIO | None = field(default=None, repr=False, compare=False)
+    query_bytes: bytes | None = field(default=None, repr=False, compare=False)
 
 
 def _validated_path(value: object, context: str) -> Path:
@@ -587,20 +588,19 @@ class _PartScan:
     object_counts: tuple[tuple[str, int], ...]
 
 
-def _verify_pinned_handle(path: Path, handle: BinaryIO, context: str) -> None:
+def _verify_pinned_handle(handle: BinaryIO, context: str) -> tuple[int, int, int, int]:
     try:
-        path_facts = path.stat()
         handle_facts = os.fstat(handle.fileno())
     except (OSError, ValueError) as exc:
         raise ReconciliationDataError(f"{context} pinned identity cannot be verified") from exc
-    if (
-        not stat.S_ISREG(path_facts.st_mode)
-        or not stat.S_ISREG(handle_facts.st_mode)
-        or path_facts.st_nlink != 1
-        or handle_facts.st_nlink != 1
-        or (path_facts.st_dev, path_facts.st_ino) != (handle_facts.st_dev, handle_facts.st_ino)
-    ):
-        raise ReconciliationDataError(f"{context} pinned identity does not match its path")
+    if not stat.S_ISREG(handle_facts.st_mode) or handle_facts.st_nlink != 1:
+        raise ReconciliationDataError(f"{context} pinned handle is not one regular file")
+    return (
+        handle_facts.st_dev,
+        handle_facts.st_ino,
+        handle_facts.st_size,
+        handle_facts.st_mtime_ns,
+    )
 
 
 def _read_part(
@@ -642,10 +642,11 @@ def _read_part(
             with opened:
                 scan(opened)
         else:
-            _verify_pinned_handle(path, handle, "snapshot part")
+            pinned_state = _verify_pinned_handle(handle, "snapshot part")
             handle.seek(0)
             scan(handle)
-            _verify_pinned_handle(path, handle, "snapshot part")
+            if _verify_pinned_handle(handle, "snapshot part") != pinned_state:
+                raise ReconciliationDataError("snapshot part pinned state changed while reading")
     except ReconciliationDataError:
         raise
     except (OSError, bulk.BulkContractError) as exc:
@@ -667,16 +668,28 @@ def _file_sha256(path: Path, context: str) -> str:
         raise ReconciliationDataError(f"cannot read {context}") from exc
 
 
-def _read_query_bytes(path: Path, *, handle: BinaryIO | None = None) -> bytes:
+def _read_query_bytes(
+    path: Path,
+    *,
+    handle: BinaryIO | None = None,
+    frozen: bytes | None = None,
+) -> bytes:
+    if handle is not None and frozen is not None:
+        raise ReconciliationContractError("snapshot query must use one immutable source")
     try:
-        if handle is None:
+        if frozen is not None:
+            if type(frozen) is not bytes:
+                raise ReconciliationContractError("frozen snapshot query must be exact bytes")
+            raw = frozen
+        elif handle is None:
             with path.open("rb") as opened:
                 raw = opened.read(MAX_BULK_QUERY_BYTES + 1)
         else:
-            _verify_pinned_handle(path, handle, "snapshot query")
+            pinned_state = _verify_pinned_handle(handle, "snapshot query")
             handle.seek(0)
             raw = handle.read(MAX_BULK_QUERY_BYTES + 1)
-            _verify_pinned_handle(path, handle, "snapshot query")
+            if _verify_pinned_handle(handle, "snapshot query") != pinned_state:
+                raise ReconciliationDataError("snapshot query pinned state changed while reading")
     except (OSError, ValueError) as exc:
         raise ReconciliationDataError("cannot read snapshot query") from exc
     if not raw or len(raw) > MAX_BULK_QUERY_BYTES:
@@ -716,6 +729,7 @@ def create_snapshot_part_manifest(
     terminal_evidence: BulkOperationTerminalEvidenceV1,
     snapshot_handle: BinaryIO | None = None,
     query_handle: BinaryIO | None = None,
+    query_bytes: bytes | None = None,
 ) -> SnapshotPartManifestV1:
     """Create canonical evidence after checking exact terminal BulkOperation metadata."""
 
@@ -725,11 +739,15 @@ def create_snapshot_part_manifest(
         raise ReconciliationContractError("part must be SnapshotPart")
     snapshot_path = _validated_path(snapshot_path, "snapshot path")
     query_path = _validated_path(query_path, "query path")
-    query_bytes = _read_query_bytes(query_path, handle=query_handle)
-    query_sha256 = hashlib.sha256(query_bytes).hexdigest()
+    approved_query_bytes = _read_query_bytes(
+        query_path,
+        handle=query_handle,
+        frozen=query_bytes,
+    )
+    query_sha256 = hashlib.sha256(approved_query_bytes).hexdigest()
     if query_sha256 != _APPROVED_QUERY_SHA256[part]:
         raise ReconciliationDataError("snapshot query is not the approved query for its part")
-    _terminal_query_transport_mode(terminal.query, query_bytes)
+    _terminal_query_transport_mode(terminal.query, approved_query_bytes)
     scan = _read_part(snapshot_path, part, handle=snapshot_handle)
     if scan.snapshot_bytes != terminal.file_size:
         raise ReconciliationDataError("snapshot byte count does not match terminal evidence")
@@ -825,17 +843,24 @@ def _ordered_inputs(
             query_path=query_path,
             snapshot_handle=value.snapshot_handle,
             query_handle=value.query_handle,
+            query_bytes=value.query_bytes,
         )
     ordered = (by_part[SnapshotPart.PRODUCTS], by_part[SnapshotPart.VARIANTS])
-    handles = tuple(
-        handle
-        for item in ordered
-        for handle in (item.snapshot_handle, item.query_handle)
-        if handle is not None
+    snapshot_handles = tuple(
+        item.snapshot_handle for item in ordered if item.snapshot_handle is not None
     )
-    if handles and len(handles) != 4:
-        raise ReconciliationContractError("pinned snapshot inputs must include all four handles")
-    if len(handles) == 4 and len({id(handle) for handle in handles}) != 4:
+    if snapshot_handles and len(snapshot_handles) != 2:
+        raise ReconciliationContractError("pinned snapshot inputs must include both handles")
+    query_handles = tuple(item.query_handle for item in ordered if item.query_handle is not None)
+    frozen_queries = tuple(item.query_bytes for item in ordered if item.query_bytes is not None)
+    if query_handles and frozen_queries:
+        raise ReconciliationContractError("snapshot queries must use one immutable source mode")
+    if query_handles and len(query_handles) != 2:
+        raise ReconciliationContractError("pinned snapshot queries must include both handles")
+    if frozen_queries and len(frozen_queries) != 2:
+        raise ReconciliationContractError("frozen snapshot queries must include both byte strings")
+    handles = snapshot_handles + query_handles
+    if handles and len({id(handle) for handle in handles}) != len(handles):
         raise ReconciliationContractError("pinned snapshot input handles must be distinct")
     if ordered[0].manifest.operation_id == ordered[1].manifest.operation_id:
         raise ReconciliationDataError("snapshot parts must use distinct Bulk operations")
@@ -1515,7 +1540,11 @@ def reconcile_snapshot_parts(
     ordered = _ordered_inputs(inputs, expected)
     scans: dict[SnapshotPart, _PartScan] = {}
     for item in ordered:
-        if item.query_handle is None:
+        if item.query_bytes is not None:
+            query_sha256 = hashlib.sha256(
+                _read_query_bytes(item.query_path, frozen=item.query_bytes)
+            ).hexdigest()
+        elif item.query_handle is None:
             query_sha256 = _file_sha256(item.query_path, "snapshot query")
         else:
             query_sha256 = hashlib.sha256(

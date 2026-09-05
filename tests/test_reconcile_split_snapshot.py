@@ -28,6 +28,7 @@ SNAPSHOT_SET = "sha256:" + "b" * 64
 SOURCE_SHA = "a" * 40
 NOW = "2026-09-05T10:00:00Z"
 LATER = "2026-09-05T10:01:00Z"
+PORTABLE_CORE_BACKEND = sys.platform != "win32" or os.environ.get("NLA_PORTABLE_CORE_TEST") == "1"
 
 
 @dataclass(frozen=True)
@@ -71,6 +72,93 @@ class InputSet:
             "--output-directory",
             str(output),
         ]
+
+
+@pytest.fixture(autouse=True)
+def portable_core_filesystem_backend(
+    monkeypatch: pytest.MonkeyPatch,
+    request: pytest.FixtureRequest,
+) -> Any:
+    """Exercise portable runner logic on CI while production remains Win32 fail-closed."""
+
+    if not PORTABLE_CORE_BACKEND or request.node.name.startswith("test_native_"):
+        yield
+        return
+
+    registered_paths: dict[int, Path] = {}
+    registered_files: dict[int, Any] = {}
+    next_handle = 100
+
+    def register(path: Path, handle: Any = None) -> int:
+        nonlocal next_handle
+        next_handle += 1
+        registered_paths[next_handle] = path
+        if handle is not None:
+            registered_files[next_handle] = handle
+        return next_handle
+
+    def binary_file(
+        path: Path,
+        *,
+        writable: bool,
+        create: bool,
+        context: str,
+    ) -> Any:
+        try:
+            mode = "x+b" if create else ("r+b" if writable else "rb")
+            return path.open(mode, buffering=0)
+        except OSError as exc:
+            raise cli.ReconciliationCliError(f"{context} cannot be locked safely") from exc
+
+    def sealed_file(path: Path, _context: str) -> Any:
+        try:
+            return path.open("rb", buffering=0)
+        except OSError as exc:
+            raise cli.ReconciliationCliError("output artifact cannot be sealed safely") from exc
+
+    def create_file(path: Path, **_kwargs: object) -> int:
+        if not path.exists():
+            raise cli.ReconciliationCliError("portable test handle target is unavailable")
+        return register(path)
+
+    def os_handle(handle: Any, _context: str) -> int:
+        return register(Path(handle.name), handle)
+
+    def reopen_for_delete(handle: Any, _context: str) -> int:
+        return register(Path(handle.name))
+
+    def mark_delete(raw_handle: int, _context: str) -> None:
+        path = registered_paths[raw_handle]
+        open_file = registered_files.pop(raw_handle, None)
+        if open_file is not None:
+            open_file.close()
+        if path.is_dir():
+            path.rmdir()
+        else:
+            path.unlink()
+
+    def close_handle(raw_handle: int) -> None:
+        registered_paths.pop(raw_handle, None)
+        registered_files.pop(raw_handle, None)
+
+    def rename_directory(lease: cli._DirectoryLease, target: Path) -> None:
+        source = lease.path
+        source.rename(target)
+        for raw_handle, registered in tuple(registered_paths.items()):
+            if registered == source:
+                registered_paths[raw_handle] = target
+        lease.path = target
+
+    monkeypatch.setattr(cli, "_native_binary_file", binary_file)
+    monkeypatch.setattr(cli, "_native_sealed_file", sealed_file)
+    monkeypatch.setattr(cli, "_native_create_file", create_file)
+    monkeypatch.setattr(cli, "_native_os_handle", os_handle)
+    monkeypatch.setattr(cli, "_native_reopen_for_delete", reopen_for_delete)
+    monkeypatch.setattr(cli, "_native_mark_delete", mark_delete)
+    monkeypatch.setattr(cli, "_native_close", close_handle)
+    monkeypatch.setattr(cli, "_rename_directory_by_handle", rename_directory)
+    monkeypatch.setattr(cli, "_require_local_ntfs", lambda *_args: None)
+    yield
 
 
 def gid(kind: str, number: int) -> str:
@@ -611,7 +699,6 @@ def test_input_files_are_absolute_regular_external_and_distinct(
     monkeypatch.setattr(cli, "_path_has_alias", real_alias)
 
 
-@pytest.mark.skipif(sys.platform != "win32", reason="NTFS path syntax is Windows-specific")
 def test_windows_ads_and_trailing_input_components_are_rejected(tmp_path: Path) -> None:
     carrier = tmp_path / "carrier"
     carrier.write_bytes(b"carrier")
@@ -650,12 +737,13 @@ def test_atomic_expectation_replacement_is_rejected_before_consumption(
         state: cli._InputFileState,
         context: str,
         stack: Any,
+        **kwargs: Any,
     ) -> Any:
         nonlocal replaced
         if context == "reconciliation expectation" and not replaced:
             replacement.replace(path)
             replaced = True
-        return real_pin(path, state, context, stack)
+        return real_pin(path, state, context, stack, **kwargs)
 
     monkeypatch.setattr(cli, "_pin_regular_file", swap_then_pin)
     output = tmp_path / "generation"
@@ -663,6 +751,51 @@ def test_atomic_expectation_replacement_is_rejected_before_consumption(
         cli.run_reconciliation(**inputs.kwargs(output))
     assert replaced is True
     assert not output.exists()
+
+
+def test_restored_inplace_expectation_attack_is_blocked_by_the_pin(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    inputs = make_inputs(tmp_path)
+    output = tmp_path / "generation"
+    real_pin = cli._pin_regular_file
+    attempted = False
+
+    def tamper_after_pin(
+        path: Path,
+        state: cli._InputFileState,
+        context: str,
+        stack: Any,
+        **kwargs: Any,
+    ) -> Any:
+        nonlocal attempted
+        pinned = real_pin(path, state, context, stack, **kwargs)
+        if context == "reconciliation expectation":
+            attempted = True
+            original_times = path.stat()
+            changed = expectation_document()
+            changed["snapshotSetId"] = "sha256:" + "c" * 64
+            replacement = json.dumps(
+                changed,
+                allow_nan=False,
+                separators=(",", ":"),
+                sort_keys=True,
+            ).encode("utf-8")
+            assert len(replacement) == state.byte_count
+            path.write_bytes(replacement)
+            os.utime(path, ns=(original_times.st_atime_ns, original_times.st_mtime_ns))
+        return pinned
+
+    monkeypatch.setattr(cli, "_pin_regular_file", tamper_after_pin)
+    if not PORTABLE_CORE_BACKEND:
+        with pytest.raises(OSError):
+            cli.run_reconciliation(**inputs.kwargs(output))
+        assert not output.exists()
+    else:
+        summary = cli.run_reconciliation(**inputs.kwargs(output))
+        assert summary["snapshotSetId"] == SNAPSHOT_SET
+        assert json.loads(inputs.expectation_path.read_bytes())["snapshotSetId"] != SNAPSHOT_SET
+    assert attempted is True
 
 
 def test_path_and_filesystem_failures_are_bounded(
@@ -712,8 +845,8 @@ def test_pinned_input_failures_are_bounded(tmp_path: Path, monkeypatch: pytest.M
                 cli._handle_input_state(handle, "input")
     with monkeypatch.context() as patch:
         patch.setattr(
-            Path,
-            "open",
+            cli,
+            "_native_binary_file",
             lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("synthetic open failure")),
         )
         with cli.ExitStack() as stack:
@@ -727,8 +860,400 @@ def test_pinned_input_failures_are_bounded(tmp_path: Path, monkeypatch: pytest.M
     bad_reader = BadReader()
     synthetic = cli._PinnedInputFile(path, state, bad_reader, "input")  # type: ignore[arg-type]
     monkeypatch.setattr(cli, "_verify_pinned_input", lambda _pinned: None)
-    with pytest.raises(cli.ReconciliationCliError, match="cannot be read"):
+    with pytest.raises(cli.ReconciliationCliError, match="not frozen"):
         cli._read_pinned_bytes(synthetic, maximum=10)
+
+
+def test_native_backend_availability_and_close_fail_closed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class NativeCall:
+        def __init__(self, result: object) -> None:
+            self.result = result
+
+        def __call__(self, *_args: object) -> object:
+            return self.result
+
+    with monkeypatch.context() as patch:
+        patch.setattr(cli, "_WINDOWS_HANDLE_API_AVAILABLE", False)
+        with pytest.raises(cli.ReconciliationCliError, match="guarantees are unavailable"):
+            cli._windows_kernel32()
+        with pytest.raises(cli.ReconciliationCliError, match="guarantees are unavailable"):
+            cli._windows_msvcrt()
+    with monkeypatch.context() as patch:
+        patch.setattr(cli, "_WINDOWS_HANDLE_API_AVAILABLE", True)
+        patch.setattr(
+            cli.ctypes,
+            "WinDLL",
+            lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("synthetic loader")),
+            raising=False,
+        )
+        with pytest.raises(cli.ReconciliationCliError, match="guarantees are unavailable"):
+            cli._windows_kernel32()
+    msvcrt_sentinel = SimpleNamespace(name="portable-msvcrt-sentinel")
+    with monkeypatch.context() as patch:
+        patch.setattr(cli, "_WINDOWS_HANDLE_API_AVAILABLE", True)
+        patch.setitem(sys.modules, "msvcrt", msvcrt_sentinel)
+        assert cli._windows_msvcrt() is msvcrt_sentinel
+    with monkeypatch.context() as patch:
+        patch.setattr(
+            cli,
+            "_windows_kernel32",
+            lambda: SimpleNamespace(CloseHandle=NativeCall(False)),
+        )
+        with pytest.raises(cli.ReconciliationCliError, match="cannot be closed safely"):
+            cli._native_close(101)
+
+    for result, expected in ((101, 101), (cli._INVALID_NATIVE_HANDLE, None)):
+        with monkeypatch.context() as patch:
+            patch.setattr(
+                cli,
+                "_windows_kernel32",
+                lambda selected=result: SimpleNamespace(CreateFileW=NativeCall(selected)),
+            )
+            if expected is None:
+                with pytest.raises(cli.ReconciliationCliError, match="cannot be locked safely"):
+                    cli._native_create_file(
+                        Path("synthetic"),
+                        access=1,
+                        share=1,
+                        creation=1,
+                        flags=1,
+                        context="input",
+                    )
+            else:
+                assert (
+                    cli._native_create_file(
+                        Path("synthetic"),
+                        access=1,
+                        share=1,
+                        creation=1,
+                        flags=1,
+                        context="input",
+                    )
+                    == expected
+                )
+
+
+def test_native_runner_fails_closed_before_output_when_backend_is_unavailable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    inputs = make_inputs(tmp_path)
+    output = tmp_path / "generation"
+    monkeypatch.setattr(cli, "_WINDOWS_HANDLE_API_AVAILABLE", False)
+
+    with pytest.raises(cli.ReconciliationCliError, match="guarantees are unavailable"):
+        cli.run_reconciliation(**inputs.kwargs(output))
+
+    assert not output.exists()
+    assert not tuple(tmp_path.glob(".nla-reconcile-staging-*"))
+
+
+def test_native_local_ntfs_boundary_is_explicit_and_fail_closed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    class NativeCall:
+        def __init__(self, callback: Any) -> None:
+            self.callback = callback
+
+        def __call__(self, *args: object) -> object:
+            return self.callback(*args)
+
+    def kernel(
+        *,
+        volume_path_ok: bool = True,
+        drive_type: int = cli._DRIVE_FIXED,
+        volume_info_ok: bool = True,
+        filesystem: str = "NTFS",
+    ) -> Any:
+        def volume_path(_path: object, output: Any, _length: object) -> bool:
+            if volume_path_ok:
+                output.value = "C:\\"
+            return volume_path_ok
+
+        def volume_info(*args: object) -> bool:
+            if volume_info_ok:
+                args[6].value = filesystem
+            return volume_info_ok
+
+        return SimpleNamespace(
+            GetVolumePathNameW=NativeCall(volume_path),
+            GetDriveTypeW=NativeCall(lambda _root: drive_type),
+            GetVolumeInformationW=NativeCall(volume_info),
+        )
+
+    with monkeypatch.context() as patch:
+        patch.setattr(cli, "_windows_kernel32", kernel)
+        cli._require_local_ntfs(tmp_path, "input")
+
+    for selected, message in (
+        (kernel(volume_path_ok=False), "boundary cannot be verified"),
+        (kernel(drive_type=4), "local fixed NTFS"),
+        (kernel(volume_info_ok=False), "boundary cannot be verified"),
+        (kernel(filesystem="ReFS"), "local fixed NTFS"),
+    ):
+        with monkeypatch.context() as patch:
+            patch.setattr(cli, "_windows_kernel32", lambda value=selected: value)
+            with pytest.raises(cli.ReconciliationCliError, match=message):
+                cli._require_local_ntfs(tmp_path, "input")
+
+
+def test_native_file_binding_failures_close_exact_resources(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import builtins
+
+    source = tmp_path / "source"
+    source.write_bytes(b"source")
+    real_import = builtins.__import__
+
+    def missing_msvcrt(name: str, *args: object, **kwargs: object) -> Any:
+        if name == "msvcrt":
+            raise ImportError("synthetic missing backend")
+        return real_import(name, *args, **kwargs)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(cli, "_WINDOWS_HANDLE_API_AVAILABLE", True)
+        patch.setattr(builtins, "__import__", missing_msvcrt)
+        with pytest.raises(cli.ReconciliationCliError, match="guarantees are unavailable"):
+            cli._windows_msvcrt()
+
+    for opener, expected_message in (
+        (
+            lambda: cli._native_binary_file(source, writable=False, create=False, context="input"),
+            "bound to a binary handle",
+        ),
+        (lambda: cli._native_sealed_file(source, "output"), "sealed to an exact handle"),
+    ):
+        closed: list[int] = []
+        fake_msvcrt = SimpleNamespace(
+            open_osfhandle=lambda *_args: (_ for _ in ()).throw(
+                OSError("synthetic binding failure")
+            )
+        )
+        with monkeypatch.context() as patch:
+            patch.setattr(cli, "_native_create_file", lambda *_args, **_kwargs: 101)
+            patch.setattr(cli, "_windows_msvcrt", lambda value=fake_msvcrt: value)
+            patch.setattr(cli, "_native_close", closed.append)
+            with pytest.raises(cli.ReconciliationCliError, match=expected_message):
+                opener()
+        assert closed == [101]
+
+    for opener, expected_message in (
+        (
+            lambda: cli._native_binary_file(source, writable=False, create=False, context="input"),
+            "bound to a binary handle",
+        ),
+        (lambda: cli._native_sealed_file(source, "output"), "sealed to an exact handle"),
+    ):
+        descriptor = os.open(os.devnull, os.O_RDONLY)
+        fake_msvcrt = SimpleNamespace(open_osfhandle=lambda *_args, fd=descriptor: fd)
+        with monkeypatch.context() as patch:
+            patch.setattr(cli, "_native_create_file", lambda *_args, **_kwargs: 101)
+            patch.setattr(cli, "_windows_msvcrt", lambda value=fake_msvcrt: value)
+            patch.setattr(
+                os,
+                "fdopen",
+                lambda *_args, **_kwargs: (_ for _ in ()).throw(
+                    ValueError("synthetic descriptor failure")
+                ),
+            )
+            with pytest.raises(cli.ReconciliationCliError, match=expected_message):
+                opener()
+        with pytest.raises(OSError):
+            os.fstat(descriptor)
+
+    for opener in (
+        lambda: cli._native_binary_file(source, writable=False, create=False, context="input"),
+        lambda: cli._native_sealed_file(source, "output"),
+    ):
+        descriptor = os.open(source, os.O_RDONLY)
+        fake_msvcrt = SimpleNamespace(open_osfhandle=lambda *_args, fd=descriptor: fd)
+        with monkeypatch.context() as patch:
+            patch.setattr(cli, "_native_create_file", lambda *_args, **_kwargs: 101)
+            patch.setattr(cli, "_windows_msvcrt", lambda value=fake_msvcrt: value)
+            with opener() as handle:
+                assert handle.read() == b"source"
+
+
+def test_native_handle_and_directory_error_paths_are_fail_closed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    class NativeCall:
+        def __init__(self, result: object) -> None:
+            self.result = result
+
+        def __call__(self, *_args: object) -> object:
+            return self.result
+
+    class BadFileno:
+        def fileno(self) -> int:
+            raise ValueError("synthetic native handle failure")
+
+    with pytest.raises(cli.ReconciliationCliError, match="native handle is unavailable"):
+        cli._native_os_handle(BadFileno(), "input")  # type: ignore[arg-type]
+    with tmp_path.joinpath("native-source").open("w+b") as handle:
+        with monkeypatch.context() as patch:
+            patch.setattr(
+                cli,
+                "_windows_msvcrt",
+                lambda: SimpleNamespace(get_osfhandle=lambda _descriptor: 202),
+            )
+            assert cli._native_os_handle(handle, "input") == 202
+
+    with monkeypatch.context() as patch:
+        patch.setattr(cli, "_native_os_handle", lambda *_args: 101)
+        patch.setattr(cli.ctypes, "get_last_error", lambda: 0, raising=False)
+        patch.setattr(
+            cli,
+            "_windows_kernel32",
+            lambda: SimpleNamespace(ReOpenFile=NativeCall(cli._INVALID_NATIVE_HANDLE)),
+        )
+        with pytest.raises(cli.ReconciliationCliError, match="exact delete access"):
+            cli._native_reopen_for_delete(BadFileno(), "output")  # type: ignore[arg-type]
+    with monkeypatch.context() as patch:
+        patch.setattr(cli, "_native_os_handle", lambda *_args: 101)
+        patch.setattr(
+            cli,
+            "_windows_kernel32",
+            lambda: SimpleNamespace(ReOpenFile=NativeCall(303)),
+        )
+        assert cli._native_reopen_for_delete(BadFileno(), "output") == 303  # type: ignore[arg-type]
+
+    for result in (True, False):
+        with monkeypatch.context() as patch:
+            patch.setattr(
+                cli,
+                "_windows_kernel32",
+                lambda selected=result: SimpleNamespace(
+                    SetFileInformationByHandle=NativeCall(selected)
+                ),
+            )
+            if result:
+                cli._native_mark_delete(101, "output")
+            else:
+                with pytest.raises(cli.ReconciliationCliError, match="deleted by exact handle"):
+                    cli._native_mark_delete(101, "output")
+
+    source = tmp_path / "staging"
+    target = tmp_path / "generation"
+    identity = cli._FileIdentity(1, 2)
+    closed: list[int] = []
+    calls = 0
+
+    def fail_second_open(*_args: object, **_kwargs: object) -> int:
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise cli.ReconciliationCliError("synthetic staging open")
+        return 101
+
+    with monkeypatch.context() as patch:
+        patch.setattr(cli, "_native_create_file", fail_second_open)
+        patch.setattr(cli, "_native_close", closed.append)
+        with pytest.raises(cli.ReconciliationCliError, match="synthetic staging open"):
+            cli._open_directory_lease(source, identity)
+    assert closed == [101]
+
+    closed.clear()
+    with monkeypatch.context() as patch:
+        patch.setattr(cli, "_native_create_file", lambda *_args, **_kwargs: 101)
+        patch.setattr(cli, "_native_close", closed.append)
+        patch.setattr(
+            cli,
+            "_require_directory_identity",
+            lambda *_args: (_ for _ in ()).throw(
+                cli.ReconciliationCliError("synthetic directory identity")
+            ),
+        )
+        with pytest.raises(cli.ReconciliationCliError, match="synthetic directory identity"):
+            cli._open_directory_lease(source, identity)
+    assert closed == [101, 101]
+
+    closed_lease = cli._DirectoryLease(source, identity, 101, 102, closed=True)
+    with pytest.raises(cli.ReconciliationCliError, match="lease is closed"):
+        cli._rename_directory_by_handle(closed_lease, target)
+    cli._delete_directory_by_handle(closed_lease)
+    cli._close_directory_lease(closed_lease)
+
+    open_lease = cli._DirectoryLease(source, identity, 101, 102)
+    with pytest.raises(cli.ReconciliationCliError, match="remain in its parent"):
+        cli._rename_directory_by_handle(open_lease, tmp_path.parent / "generation")
+    with monkeypatch.context() as patch:
+        patch.setattr(
+            cli,
+            "_windows_kernel32",
+            lambda: SimpleNamespace(SetFileInformationByHandle=NativeCall(False)),
+        )
+        with pytest.raises(cli.ReconciliationCliError, match="published safely"):
+            cli._rename_directory_by_handle(open_lease, target)
+
+
+def test_pinned_input_freeze_error_paths_are_bounded(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = tmp_path / "source"
+    source.write_bytes(b"source")
+    path, state = cli._regular_file(source, "input", external=True)
+    with monkeypatch.context() as patch:
+        patch.setattr(
+            cli,
+            "_native_binary_file",
+            lambda *_args, **_kwargs: (_ for _ in ()).throw(
+                cli.ReconciliationCliError("synthetic native rejection")
+            ),
+        )
+        with cli.ExitStack() as stack:
+            with pytest.raises(cli.ReconciliationCliError, match="synthetic native rejection"):
+                cli._pin_regular_file(path, state, "input", stack)
+
+    with cli.ExitStack() as stack:
+        with pytest.raises(cli.ReconciliationCliError, match="byte bound is invalid"):
+            cli._pin_regular_file(path, state, "input", stack, freeze_maximum=0)
+
+    class BadFreezeHandle:
+        def __enter__(self) -> BadFreezeHandle:
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+        def seek(self, _offset: int) -> None:
+            return None
+
+        def read(self, _maximum: int) -> bytes:
+            raise OSError("synthetic freeze failure")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(cli, "_native_binary_file", lambda *_args, **_kwargs: BadFreezeHandle())
+        patch.setattr(cli, "_verify_pinned_input", lambda _pinned: None)
+        with cli.ExitStack() as stack:
+            with pytest.raises(cli.ReconciliationCliError, match="cannot be frozen"):
+                cli._pin_regular_file(path, state, "input", stack, freeze_maximum=10)
+
+    incomplete_state = cli._InputFileState(
+        identity=state.identity,
+        byte_count=state.byte_count + 1,
+        modified_ns=state.modified_ns,
+    )
+    with monkeypatch.context() as patch:
+        patch.setattr(cli, "_verify_pinned_input", lambda _pinned: None)
+        with cli.ExitStack() as stack:
+            with pytest.raises(cli.ReconciliationCliError, match="snapshot is incomplete"):
+                cli._pin_regular_file(
+                    path,
+                    incomplete_state,
+                    "input",
+                    stack,
+                    freeze_maximum=10,
+                )
+
+    with path.open("rb") as handle:
+        frozen = cli._PinnedInputFile(path, state, handle, "input", frozen_bytes=b"source")
+        with pytest.raises(cli.ReconciliationCliError, match="exceeds its bound"):
+            cli._read_pinned_bytes(frozen, maximum=5)
+
+    assert cli._input_state(path, "input") == state
 
 
 def test_alias_probe_detects_links_junctions_and_probe_errors(
@@ -805,6 +1330,120 @@ def test_directory_identity_is_fail_closed(tmp_path: Path, monkeypatch: pytest.M
             cli._artifact_identity(artifact)
     with pytest.raises(cli.ReconciliationCliError, match="cannot be verified"):
         cli._artifact_identity(tmp_path / "missing-artifact")
+    with pytest.raises(cli.ReconciliationCliError, match="not a regular"):
+        cli._artifact_identity(directory)
+
+    lease = cli._DirectoryLease(directory, identity, 101, 102, closed=True)
+    with pytest.raises(cli.ReconciliationCliError, match="shape cannot be verified"):
+        cli._verify_output_shape(lease)
+    lease.closed = False
+    with monkeypatch.context() as patch:
+        patch.setattr(
+            os,
+            "scandir",
+            lambda _path: (_ for _ in ()).throw(OSError("synthetic shape scan failure")),
+        )
+        with pytest.raises(cli.ReconciliationCliError, match="shape cannot be verified"):
+            cli._verify_output_shape(lease)
+
+
+def test_artifact_handle_verification_error_paths_are_fail_closed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import io
+
+    path = tmp_path / "artifact"
+    path.write_bytes(b"")
+    identity = cli._artifact_identity(path)
+    unavailable = cli._CreatedArtifact(path, identity)
+    with pytest.raises(cli.ReconciliationCliError, match="handle is unavailable"):
+        cli._artifact_handle_state(unavailable)
+
+    class BadFileno:
+        closed = False
+
+        def fileno(self) -> int:
+            raise ValueError("synthetic output handle failure")
+
+    broken = cli._CreatedArtifact(path, identity, handle=BadFileno())  # type: ignore[arg-type]
+    with pytest.raises(cli.ReconciliationCliError, match="handle cannot be verified"):
+        cli._artifact_handle_state(broken)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(os, "fstat", lambda _fd: SimpleNamespace(st_mode=0, st_nlink=1))
+        with path.open("rb") as handle:
+            nonregular = cli._CreatedArtifact(path, identity, handle=handle)
+            with pytest.raises(cli.ReconciliationCliError, match="not one regular"):
+                cli._artifact_handle_state(nonregular)
+
+    no_expected = cli._CreatedArtifact(path, identity, handle=io.BytesIO())
+    with pytest.raises(cli.ReconciliationCliError, match="expected content is unavailable"):
+        cli._verify_artifact_contents(no_expected)
+
+    mismatched_state = cli._InputFileState(cli._FileIdentity(99, 100), 0, 0)
+    handle_mismatch = cli._CreatedArtifact(
+        path,
+        identity,
+        handle=io.BytesIO(),
+        expected_sha256=hashlib.sha256(b"").hexdigest(),
+        expected_byte_count=0,
+    )
+    with monkeypatch.context() as patch:
+        patch.setattr(cli, "_artifact_handle_state", lambda _artifact: mismatched_state)
+        with pytest.raises(cli.ReconciliationCliError, match="handle identity changed"):
+            cli._verify_artifact_contents(handle_mismatch)
+
+    class BadReader(io.BytesIO):
+        def seek(self, _offset: int, _whence: int = 0) -> int:
+            raise OSError("synthetic read failure")
+
+    stable_state = cli._InputFileState(identity, 0, 0)
+    read_failure = cli._CreatedArtifact(
+        path,
+        identity,
+        handle=BadReader(),
+        expected_sha256=hashlib.sha256(b"").hexdigest(),
+        expected_byte_count=0,
+    )
+    with monkeypatch.context() as patch:
+        patch.setattr(cli, "_artifact_handle_state", lambda _artifact: stable_state)
+        with pytest.raises(cli.ReconciliationCliError, match="verified from its handle"):
+            cli._verify_artifact_contents(read_failure)
+
+    changed_state = cli._InputFileState(identity, 1, 0)
+    states = iter((stable_state, changed_state))
+    state_change = cli._CreatedArtifact(
+        path,
+        identity,
+        handle=io.BytesIO(),
+        expected_sha256=hashlib.sha256(b"").hexdigest(),
+        expected_byte_count=0,
+    )
+    with monkeypatch.context() as patch:
+        patch.setattr(cli, "_artifact_handle_state", lambda _artifact: next(states))
+        with pytest.raises(cli.ReconciliationCliError, match="state changed while verifying"):
+            cli._verify_artifact_contents(state_change)
+
+
+def test_output_handle_cleanup_and_close_errors_are_bounded(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    identity = cli._FileIdentity(1, 2)
+    artifact = cli._CreatedArtifact(tmp_path / "artifact", identity)
+    with pytest.raises(cli.ReconciliationCliError, match="exact handle is unavailable"):
+        cli._delete_artifact_by_handle(artifact)
+
+    class BadClose:
+        closed = False
+
+        def close(self) -> None:
+            raise OSError("synthetic close failure")
+
+    artifact.handle = BadClose()  # type: ignore[assignment]
+    with monkeypatch.context() as patch:
+        patch.setattr(cli, "_verify_artifact_contents", lambda _artifact: None)
+        with pytest.raises(cli.ReconciliationCliError, match="could not be closed safely"):
+            cli._close_created_output([artifact])
 
 
 def test_partial_output_is_cleaned_without_recursive_deletion(
@@ -822,16 +1461,70 @@ def test_partial_output_is_cleaned_without_recursive_deletion(
     assert not output.exists()
 
 
+def test_published_same_inode_tamper_is_detected_by_post_rename_handle_hash(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    inputs = make_inputs(tmp_path)
+    output = tmp_path / "generation"
+    real_rename = cli._rename_directory_by_handle
+    tampered = False
+    identity_was_preserved = False
+
+    def rename_then_tamper(lease: cli._DirectoryLease, target: Path) -> None:
+        nonlocal identity_was_preserved, tampered
+        real_rename(lease, target)
+        artifact = target / "dataset-manifest.v1.json"
+        before_identity = cli._artifact_identity(artifact)
+        original_times = artifact.stat()
+        raw = artifact.read_bytes()
+        replacement = bytes([raw[0] ^ 1]) + raw[1:]
+        assert len(replacement) == len(raw)
+        artifact.write_bytes(replacement)
+        os.utime(artifact, ns=(original_times.st_atime_ns, original_times.st_mtime_ns))
+        identity_was_preserved = cli._artifact_identity(artifact) == before_identity
+        tampered = True
+
+    monkeypatch.setattr(cli, "_rename_directory_by_handle", rename_then_tamper)
+    with pytest.raises(cli.ReconciliationCliError, match="published output identity"):
+        cli.run_reconciliation(**inputs.kwargs(output))
+    assert tampered is True
+    assert identity_was_preserved is True
+    assert not output.exists()
+    assert not tuple(tmp_path.glob(".nla-reconcile-staging-*"))
+
+
+def test_published_extra_artifact_is_rejected_without_deleting_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    inputs = make_inputs(tmp_path)
+    output = tmp_path / "generation"
+    real_rename = cli._rename_directory_by_handle
+    injected_payload = b"third-party-injection"
+
+    def rename_then_inject(lease: cli._DirectoryLease, target: Path) -> None:
+        real_rename(lease, target)
+        (target / "injected.txt").write_bytes(injected_payload)
+
+    monkeypatch.setattr(cli, "_rename_directory_by_handle", rename_then_inject)
+    with pytest.raises(cli.ReconciliationCliError, match="could not be cleaned safely"):
+        cli.run_reconciliation(**inputs.kwargs(output))
+
+    assert output.is_dir()
+    assert (output / "injected.txt").read_bytes() == injected_payload
+    assert {path.name for path in output.iterdir()} == {"injected.txt"}
+    assert not tuple(tmp_path.glob(".nla-reconcile-staging-*"))
+
+
 def test_cleanup_refuses_unknown_or_aliased_artifacts(tmp_path: Path) -> None:
     output = tmp_path / "generation"
     output.mkdir()
     identity = cli._directory_identity(output)
+    lease = cli._open_directory_lease(output, identity)
     unsafe = output / "unsafe"
     unsafe.mkdir()
     with pytest.raises(cli.ReconciliationCliError, match="cleaned safely"):
         cli._cleanup_created_output(
-            output,
-            identity,
+            lease,
             [cli._CreatedArtifact(unsafe, cli._FileIdentity(1, 1))],
         )
 
@@ -840,6 +1533,7 @@ def test_cleanup_never_unlinks_a_replacement_artifact(tmp_path: Path) -> None:
     output = tmp_path / "generation"
     output.mkdir()
     directory_identity = cli._directory_identity(output)
+    lease = cli._open_directory_lease(output, directory_identity)
     created: list[cli._CreatedArtifact] = []
     path, handle, _artifact = cli._open_output_file(
         output,
@@ -853,45 +1547,72 @@ def test_cleanup_never_unlinks_a_replacement_artifact(tmp_path: Path) -> None:
     replacement.replace(path)
 
     with pytest.raises(cli.ReconciliationCliError, match="cleaned safely"):
-        cli._cleanup_created_output(output, directory_identity, created)
+        cli._cleanup_created_output(lease, created)
     assert path.read_bytes() == b"replacement"
 
 
-def test_directory_swap_does_not_leave_or_delete_an_unowned_artifact(
+def test_replacement_after_delete_handle_acquisition_is_never_deleted(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    target = tmp_path / "generation"
+    lease, _parent_identity = cli._create_staging_directory(target)
+    created: list[cli._CreatedArtifact] = []
+    cli._write_bytes(
+        lease.path,
+        lease.identity,
+        "dataset-manifest.v1.json",
+        b"owned",
+        created,
+    )
+    artifact = created[0]
+    replacement = tmp_path / "replacement"
+    replacement.write_bytes(b"third-party")
+    if PORTABLE_CORE_BACKEND:
+        with monkeypatch.context() as patch:
+            patch.setattr(cli, "_WINDOWS_HANDLE_API_AVAILABLE", False)
+            with pytest.raises(cli.ReconciliationCliError, match="guarantees are unavailable"):
+                cli._windows_kernel32()
+        cli._cleanup_created_output(lease, created)
+        assert replacement.read_bytes() == b"third-party"
+        return
+    real_mark_delete = cli._native_mark_delete
+    replacement_was_blocked = False
+
+    def replace_after_exact_handle_check(raw_handle: int, context: str) -> None:
+        nonlocal replacement_was_blocked
+        if context == "output artifact" and not replacement_was_blocked:
+            with pytest.raises(OSError):
+                replacement.replace(artifact.path)
+            replacement_was_blocked = True
+        real_mark_delete(raw_handle, context)
+
+    monkeypatch.setattr(cli, "_native_mark_delete", replace_after_exact_handle_check)
+    cli._cleanup_created_output(lease, created)
+    assert replacement_was_blocked is True
+    assert replacement.read_bytes() == b"third-party"
+    assert not lease.path.exists()
+
+
+def test_directory_lease_blocks_swap_and_is_deleted_by_exact_handle(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     output = tmp_path / "generation"
     output.mkdir()
     moved_original = tmp_path / "moved-original"
-    replacement_directory = tmp_path / "replacement-directory"
-    replacement_directory.mkdir()
-    unowned = replacement_directory / "unowned"
-    unowned.write_bytes(b"unowned")
     directory_identity = cli._directory_identity(output)
-    real_require = cli._require_directory_identity
-    calls = 0
-
-    def swap_after_first_check(path: Path, expected: cli._FileIdentity) -> None:
-        nonlocal calls
-        real_require(path, expected)
-        calls += 1
-        if calls == 1:
-            path.rename(moved_original)
-            replacement_directory.rename(path)
-
-    monkeypatch.setattr(cli, "_require_directory_identity", swap_after_first_check)
-    created: list[cli._CreatedArtifact] = []
-    with pytest.raises(cli.ReconciliationCliError, match="identity changed"):
-        cli._open_output_file(
-            output,
-            directory_identity,
-            "dataset-manifest.v1.json",
-            created,
-        )
-    with pytest.raises(cli.ReconciliationCliError, match="cleaned safely"):
-        cli._cleanup_created_output(output, directory_identity, created)
-    assert not (output / "dataset-manifest.v1.json").exists()
-    assert (output / "unowned").read_bytes() == b"unowned"
+    lease = cli._open_directory_lease(output, directory_identity)
+    if PORTABLE_CORE_BACKEND:
+        with monkeypatch.context() as patch:
+            patch.setattr(cli, "_WINDOWS_HANDLE_API_AVAILABLE", False)
+            with pytest.raises(cli.ReconciliationCliError, match="guarantees are unavailable"):
+                cli._windows_kernel32()
+        cli._cleanup_created_output(lease, [])
+        assert not output.exists()
+        return
+    with pytest.raises(OSError):
+        output.rename(moved_original)
+    cli._cleanup_created_output(lease, [])
+    assert not output.exists()
 
 
 @pytest.mark.parametrize("created_kind", ["missing", "outside"])
@@ -899,34 +1620,20 @@ def test_cleanup_ignores_only_paths_it_did_not_create(tmp_path: Path, created_ki
     output = tmp_path / "generation"
     output.mkdir()
     identity = cli._directory_identity(output)
+    lease = cli._open_directory_lease(output, identity)
     created = output / "missing" if created_kind == "missing" else tmp_path / "outside"
-    cli._cleanup_created_output(
-        output,
-        identity,
-        [cli._CreatedArtifact(created, cli._FileIdentity(1, 1))],
-    )
-    assert not output.exists()
-
-    cli._cleanup_created_output(output, identity, [])
-
-
-def test_empty_output_cleanup_is_nonrecursive_and_alias_safe(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    output = tmp_path / "generation"
-    output.mkdir()
-    cli._cleanup_empty_output_directory(output)
-    assert not output.exists()
-
-    unsafe = tmp_path / "unsafe"
-    unsafe.write_bytes(b"x")
-    with pytest.raises(cli.ReconciliationCliError, match="cleaned safely"):
-        cli._cleanup_empty_output_directory(unsafe)
-    alias = tmp_path / "alias"
-    alias.mkdir()
-    monkeypatch.setattr(Path, "is_symlink", lambda _path: True)
-    with pytest.raises(cli.ReconciliationCliError, match="cleaned safely"):
-        cli._cleanup_empty_output_directory(alias)
+    if created_kind == "outside":
+        with pytest.raises(cli.ReconciliationCliError, match="cleaned safely"):
+            cli._cleanup_created_output(
+                lease,
+                [cli._CreatedArtifact(created, cli._FileIdentity(1, 1))],
+            )
+    else:
+        cli._cleanup_created_output(
+            lease,
+            [cli._CreatedArtifact(created, cli._FileIdentity(1, 1))],
+        )
+        assert not output.exists()
 
 
 def test_output_writer_rejects_unapproved_names_and_nonregular_handles(
@@ -948,7 +1655,7 @@ def test_output_writer_rejects_unapproved_names_and_nonregular_handles(
             self.closed = True
 
     fake = FakeHandle()
-    monkeypatch.setattr(Path, "open", lambda *_args, **_kwargs: fake)
+    monkeypatch.setattr(cli, "_native_binary_file", lambda *_args, **_kwargs: fake)
     monkeypatch.setattr(os, "fstat", lambda _fd: SimpleNamespace(st_mode=0, st_nlink=1))
     with pytest.raises(cli.ReconciliationCliError, match="regular"):
         cli._open_output_file(output, identity, "dataset-manifest.v1.json", [])
@@ -976,7 +1683,11 @@ def test_output_open_and_write_failures_are_bounded(
             lambda *_args, selected=handle, **_kwargs: (
                 output / "artifact",
                 selected,
-                cli._CreatedArtifact(output / "artifact", cli._FileIdentity(1, 1)),
+                cli._CreatedArtifact(
+                    output / "artifact",
+                    cli._FileIdentity(1, 1),
+                    handle=selected,
+                ),
             ),
         )
         with pytest.raises(cli.ReconciliationCliError, match=message):
@@ -990,7 +1701,7 @@ def test_catalog_record_write_failures_and_count_gate(
     output.mkdir()
     identity = cli._directory_identity(output)
     monkeypatch.setattr(os, "fsync", lambda _fd: None)
-    monkeypatch.setattr(cli, "_require_artifact_identity", lambda _artifact: None)
+    monkeypatch.setattr(cli, "_verify_artifact_contents", lambda _artifact: None)
     for handle, message in (
         (ControlledHandle(short=True), "incomplete"),
         (ControlledHandle(os_error=True), "written safely"),
@@ -1001,7 +1712,11 @@ def test_catalog_record_write_failures_and_count_gate(
             lambda *_args, selected=handle, **_kwargs: (
                 output / "records",
                 selected,
-                cli._CreatedArtifact(output / "records", cli._FileIdentity(1, 1)),
+                cli._CreatedArtifact(
+                    output / "records",
+                    cli._FileIdentity(1, 1),
+                    handle=selected,
+                ),
             ),
         )
         with pytest.raises(cli.ReconciliationCliError, match=message):
@@ -1014,7 +1729,11 @@ def test_catalog_record_write_failures_and_count_gate(
         lambda *_args, **_kwargs: (
             output / "records",
             valid,
-            cli._CreatedArtifact(output / "records", cli._FileIdentity(1, 1)),
+            cli._CreatedArtifact(
+                output / "records",
+                cli._FileIdentity(1, 1),
+                handle=valid,
+            ),
         ),
     )
     with pytest.raises(cli.ReconciliationCliError, match="count is inconsistent"):
@@ -1052,39 +1771,6 @@ def test_generation_output_creation_and_cleanup_failures_are_bounded(
             cli._write_generation_output(output, manifest, manifest, generation, synthetic_audits())
         assert not output.exists()
 
-    unsafe_identity_output = tmp_path / "unsafe-identity-generation"
-    with monkeypatch.context() as patch:
-        real_identity = cli._directory_identity
-        calls = 0
-
-        def fail_staging_identity(path: Path) -> Any:
-            nonlocal calls
-            calls += 1
-            if calls == 2:
-                raise cli.ReconciliationCliError("synthetic identity failure")
-            return real_identity(path)
-
-        patch.setattr(
-            cli,
-            "_directory_identity",
-            fail_staging_identity,
-        )
-        patch.setattr(
-            cli,
-            "_cleanup_empty_output_directory",
-            lambda _path: (_ for _ in ()).throw(
-                cli.ReconciliationCliError("synthetic empty cleanup failure")
-            ),
-        )
-        with pytest.raises(cli.ReconciliationCliError, match="empty cleanup failure"):
-            cli._write_generation_output(
-                unsafe_identity_output,
-                manifest,
-                manifest,
-                generation,
-                synthetic_audits(),
-            )
-
     with monkeypatch.context() as patch:
         patch.setattr(
             cli,
@@ -1113,24 +1799,40 @@ def test_staging_and_publish_failures_are_bounded(
         with pytest.raises(cli.ReconciliationCliError, match="staging directory is unsafe"):
             cli._create_staging_directory(target)
 
-    staging, staging_identity, parent_identity = cli._create_staging_directory(target)
+    real_cleanup = cli._cleanup_created_output
+
+    def cleanup_then_fail(*args: object, **kwargs: object) -> None:
+        real_cleanup(*args, **kwargs)  # type: ignore[arg-type]
+        raise cli.ReconciliationCliError("synthetic staging cleanup failure")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(cli, "_has_unsafe_path_component", lambda _path: True)
+        patch.setattr(cli, "_cleanup_created_output", cleanup_then_fail)
+        with pytest.raises(cli.ReconciliationCliError, match="staging cleanup failure"):
+            cli._create_staging_directory(target)
+
+    lease, parent_identity = cli._create_staging_directory(target)
     target.mkdir()
-    with pytest.raises(cli.ReconciliationCliError, match="already exist"):
-        cli._publish_staging_directory(staging, target, staging_identity, parent_identity, [])
+    with monkeypatch.context() as patch:
+        patch.setattr(cli, "_verify_output_shape", lambda _lease: None)
+        with pytest.raises(cli.ReconciliationCliError, match="already exist"):
+            cli._publish_staging_directory(lease, target, parent_identity, [])
     target.rmdir()
     with monkeypatch.context() as patch:
+        patch.setattr(cli, "_verify_output_shape", lambda _lease: None)
         patch.setattr(
-            Path,
-            "rename",
+            cli,
+            "_rename_directory_by_handle",
             lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("synthetic rename failure")),
         )
         with pytest.raises(cli.ReconciliationCliError, match="published safely"):
-            cli._publish_staging_directory(staging, target, staging_identity, parent_identity, [])
-    cli._cleanup_created_output(staging, staging_identity, [])
+            cli._publish_staging_directory(lease, target, parent_identity, [])
+    cli._cleanup_created_output(lease, [])
 
-    staging, staging_identity, parent_identity = cli._create_staging_directory(target)
+    lease, parent_identity = cli._create_staging_directory(target)
     real_require = cli._require_directory_identity
     with monkeypatch.context() as patch:
+        patch.setattr(cli, "_verify_output_shape", lambda _lease: None)
         patch.setattr(
             cli,
             "_require_directory_identity",
@@ -1141,11 +1843,13 @@ def test_staging_and_publish_failures_are_bounded(
             ),
         )
         with pytest.raises(cli.ReconciliationCliError, match="published output identity"):
-            cli._publish_staging_directory(staging, target, staging_identity, parent_identity, [])
+            cli._publish_staging_directory(lease, target, parent_identity, [])
+    cli._cleanup_created_output(lease, [])
     assert not target.exists()
 
-    staging, staging_identity, parent_identity = cli._create_staging_directory(target)
+    lease, parent_identity = cli._create_staging_directory(target)
     with monkeypatch.context() as patch:
+        patch.setattr(cli, "_verify_output_shape", lambda _lease: None)
         patch.setattr(
             cli,
             "_require_directory_identity",
@@ -1163,8 +1867,14 @@ def test_staging_and_publish_failures_are_bounded(
             ),
         )
         with pytest.raises(cli.ReconciliationCliError, match="publish cleanup failure"):
-            cli._publish_staging_directory(staging, target, staging_identity, parent_identity, [])
-    target.rmdir()
+            cli._write_generation_output(
+                target,
+                synthetic_manifest(),
+                synthetic_manifest(),
+                synthetic_generation(),
+                synthetic_audits(),
+            )
+    cli._cleanup_created_output(lease, [])
 
 
 def test_argument_errors_and_unexpected_failures_never_echo_values(

@@ -142,12 +142,22 @@ must be regular, single-link files outside this repository. The two query files 
 reviewed documents or byte-identical external copies; their approved part-specific SHA-256 values
 remain enforced by the reconciliation model. Every input rejects alternate-data-stream syntax,
 unsafe trailing-dot/space components and every filesystem reparse-point ancestor, not only
-symlinks and junctions. The runner opens each validated input once, verifies the device/inode,
-size and modification-time state on the live handle and path, consumes that same pinned handle for
-both scans, and verifies every input again before publication. An atomic path replacement or
-in-place state change therefore fails closed. The output parent must already exist without any
-filesystem alias. The requested output directory must be new and outside this repository:
-existing targets, traversal and every unsafe path component fail closed.
+symlinks and junctions. This real-baseline runner has an explicit local Windows/NTFS filesystem
+backend: it uses Win32 handles opened without write/delete sharing and fails closed when those
+primitives, their sharing guarantees or native rename are unavailable. It has no weaker
+cross-platform or path-based fallback. `GetVolumePathNameW`, `GetDriveTypeW` and
+`GetVolumeInformationW` must identify every input and the output parent as the local fixed NTFS
+volume boundary; UNC/network paths and FAT, exFAT, ReFS or unknown filesystems are rejected.
+
+The runner opens each validated input once and holds all seven handles through reconciliation and
+output publication. The two large JSONL streams are consumed only through their pinned,
+write/delete-denying handles, with handle state checked around every scan. The two reviewed query
+documents and three bounded control documents are copied to immutable byte values while the same
+locks are held, and all later parsing and query checks consume only those frozen bytes. No input is
+reopened by path. Atomic replacement and same-inode, same-size changes with restored timestamps
+are therefore denied or cannot alter the consumed evidence. The output parent must already exist
+without any filesystem alias. The requested output directory must be new and outside this
+repository: existing targets, traversal and every unsafe path component fail closed.
 
 The expectation document is strict JSON, at most 64 KiB, with exactly these fields:
 
@@ -206,10 +216,34 @@ the CLI therefore permits it only outside the repository. The summary explicitly
 `reconciled-provisional`, `datasetActivation: not-performed` and
 `capabilityPromotion: not-performed`. No output file contains a signed Bulk URL, control-document
 path or raw JSONL row. Files are created exclusively, flushed and fsynced in an unpredictable
-sibling staging directory, then published to the requested absent target with one rename only
-after the complete set and all identities have been reverified. Cleanup tracks the exact
-device/inode identity of every created file: it unlinks only an exact match, refuses to delete a
-replacement owned by another actor, and never uses recursive deletion.
+sibling staging directory. Each live file handle is bound to its expected device/inode, byte count
+and SHA-256 and is checked before publication. Because Windows does not provide a portable
+contract for renaming a directory while these child handles deny deletion, they are closed only
+after this pre-publish seal; the directory itself remains bound to its native handle and is renamed
+with `SetFileInformationByHandle`. A sharing violation or unsupported native rename fails closed
+with no path-based fallback. Immediately after the rename, all seven files are reopened with exact
+read/delete handles that deny write and replacement, and every identity, byte count and SHA-256 is
+checked again while all seven handles remain held. Publication succeeds only after that complete
+post-rename seal. The reconciliation summary is created last and its handle is closed last. Exact
+directory shape is checked both immediately before and immediately after the native rename; a
+persistent eighth file makes publication fail, and cleanup removes only the seven owned artifacts
+while preserving the foreign file.
+
+Cleanup uses `ReOpenFile` and `FileDispositionInfo` (or an already delete-capable sealed handle) to
+delete only the exact file object owned by the run, then applies the same handle-bound disposition
+to the staging/published directory. It never unlinks or removes a directory by path, never recurses
+and preserves an identity-mismatched replacement. Deterministic adversarial tests cover restored
+same-inode input mutation, post-write/pre-seal artifact tampering, replacement after exact cleanup
+handle acquisition and native rename failure.
+
+These checks attest the point-in-time publish boundary; they do not claim that an external actor
+with later filesystem access cannot mutate a completed directory after the runner returns. The
+downstream issue-#01F consumer must independently require the exact seven-file shape and revalidate
+the summary-bound sizes and SHA-256 values before use. Linux CI exercises all portable parsing,
+reconciliation, publication and failure logic with a deterministic test-only filesystem backend,
+while also proving that the production runner rejects an unavailable Win32 backend. The real
+Win32 handle/share/rename/delete integration tests run separately on local fixed NTFS; the test
+backend is never selected by production code.
 
 The first issue-#43 invocation against the current Shopify-derived capture failed closed before
 publishing an output directory. Redacted diagnostics proved both immutable part manifests valid,

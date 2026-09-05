@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import sqlite3
+import stat
 from dataclasses import replace
 from pathlib import Path
 
@@ -758,6 +759,49 @@ def test_query_reader_is_bounded_and_utf8(tmp_path: Path) -> None:
         reconciliation._read_query_bytes(tmp_path / "missing.graphql")
 
 
+def test_query_reader_enforces_one_immutable_source_and_exact_frozen_bytes(
+    tmp_path: Path,
+) -> None:
+    query = tmp_path / "query.graphql"
+    query.write_bytes(b"query Synthetic { shop { id } }")
+    with query.open("rb") as handle:
+        with pytest.raises(ReconciliationContractError, match="one immutable source"):
+            reconciliation._read_query_bytes(query, handle=handle, frozen=b"query")
+    with pytest.raises(ReconciliationDataError, match="cannot read snapshot query"):
+        reconciliation._read_query_bytes(  # type: ignore[arg-type]
+            query, frozen=bytearray(b"query")
+        )
+
+
+def test_query_reader_uses_and_revalidates_the_pinned_handle(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    query = tmp_path / "query.graphql"
+    raw = b"query Synthetic { shop { id } }"
+    query.write_bytes(raw)
+    with query.open("rb") as handle:
+        assert reconciliation._read_query_bytes(query, handle=handle) == raw
+
+    states = iter(((1, 2, len(raw), 3), (1, 2, len(raw), 4)))
+    monkeypatch.setattr(
+        reconciliation,
+        "_verify_pinned_handle",
+        lambda _handle, _context: next(states),
+    )
+    with query.open("rb") as handle:
+        with pytest.raises(ReconciliationDataError, match="cannot read snapshot query"):
+            reconciliation._read_query_bytes(query, handle=handle)
+
+
+def test_terminal_query_reader_accepts_the_exact_shopify_transport() -> None:
+    canonical = b"query Synthetic {\n  shop { id }\n}"
+    transported = reconciliation._shopify_terminal_query_transport(canonical)
+    assert (
+        reconciliation._terminal_query_transport_mode(transported.decode("utf-8"), canonical)
+        == "shopify-crlf-plus-one-terminal-newline-v1"
+    )
+
+
 def test_fractional_timestamp_is_normalized_to_canonical_utc() -> None:
     assert (
         reconciliation._validated_timestamp("2026-09-02T12:00:00.5+02:00", "test")
@@ -1012,7 +1056,7 @@ def test_pinned_input_handles_must_be_complete_and_distinct(tmp_path: Path) -> N
     first, second = _inputs(tmp_path)
     with first.snapshot_path.open("rb") as handle:
         incomplete = replace(first, snapshot_handle=handle)
-        with pytest.raises(ReconciliationContractError, match="all four handles"):
+        with pytest.raises(ReconciliationContractError, match="both handles"):
             reconcile_snapshot_parts(
                 (incomplete, second),
                 expectation=_expectation(),
@@ -1029,19 +1073,126 @@ def test_pinned_input_handles_must_be_complete_and_distinct(tmp_path: Path) -> N
             )
 
 
-def test_pinned_handle_must_match_the_live_regular_path(tmp_path: Path) -> None:
+def test_query_immutable_source_modes_must_be_complete_and_exclusive(tmp_path: Path) -> None:
+    first, second = _inputs(tmp_path)
+    first_query = first.query_path.read_bytes()
+    second_query = second.query_path.read_bytes()
+    with first.query_path.open("rb") as first_handle:
+        with pytest.raises(ReconciliationContractError, match="one immutable source mode"):
+            reconcile_snapshot_parts(
+                (
+                    replace(first, query_handle=first_handle),
+                    replace(second, query_bytes=second_query),
+                ),
+                expectation=_expectation(),
+                taxonomy_config=load_taxonomy(),
+            )
+        with pytest.raises(ReconciliationContractError, match="both handles"):
+            reconcile_snapshot_parts(
+                (replace(first, query_handle=first_handle), second),
+                expectation=_expectation(),
+                taxonomy_config=load_taxonomy(),
+            )
+    with pytest.raises(ReconciliationContractError, match="both byte strings"):
+        reconcile_snapshot_parts(
+            (replace(first, query_bytes=first_query), second),
+            expectation=_expectation(),
+            taxonomy_config=load_taxonomy(),
+        )
+
+
+def test_reconciliation_accepts_two_distinct_pinned_query_handles(tmp_path: Path) -> None:
+    first, second = _inputs(tmp_path)
+    with (
+        first.query_path.open("rb") as first_handle,
+        second.query_path.open("rb") as second_handle,
+    ):
+        generation = reconcile_snapshot_parts(
+            (
+                replace(first, query_handle=first_handle),
+                replace(second, query_handle=second_handle),
+            ),
+            expectation=_expectation(),
+            taxonomy_config=load_taxonomy(),
+        )
+    assert len(generation.records) == 2
+
+
+def test_reconciliation_accepts_two_frozen_queries_and_pinned_snapshot_handles(
+    tmp_path: Path,
+) -> None:
+    first, second = _inputs(tmp_path)
+    with (
+        first.snapshot_path.open("rb") as first_handle,
+        second.snapshot_path.open("rb") as second_handle,
+    ):
+        generation = reconcile_snapshot_parts(
+            (
+                replace(
+                    first,
+                    snapshot_handle=first_handle,
+                    query_bytes=first.query_path.read_bytes(),
+                ),
+                replace(
+                    second,
+                    snapshot_handle=second_handle,
+                    query_bytes=second.query_path.read_bytes(),
+                ),
+            ),
+            expectation=_expectation(),
+            taxonomy_config=load_taxonomy(),
+        )
+    assert len(generation.records) == 2
+
+
+def test_pinned_handle_state_is_bound_to_the_open_regular_object(tmp_path: Path) -> None:
     expected = tmp_path / "expected"
     other = tmp_path / "other"
     expected.write_bytes(b"expected")
     other.write_bytes(b"other")
     with expected.open("rb") as expected_handle, other.open("rb") as other_handle:
-        reconciliation._verify_pinned_handle(expected, expected_handle, "input")
-        with pytest.raises(ReconciliationDataError, match="does not match"):
-            reconciliation._verify_pinned_handle(expected, other_handle, "input")
-        with pytest.raises(ReconciliationDataError, match="does not match"):
-            reconciliation._verify_pinned_handle(tmp_path, expected_handle, "input")
+        expected_state = reconciliation._verify_pinned_handle(expected_handle, "input")
+        other_state = reconciliation._verify_pinned_handle(other_handle, "input")
+        assert expected_state != other_state
     with pytest.raises(ReconciliationDataError, match="cannot be verified"):
-        reconciliation._verify_pinned_handle(expected, expected_handle, "input")
+        reconciliation._verify_pinned_handle(expected_handle, "input")
+
+
+@pytest.mark.parametrize(
+    ("mode", "links"),
+    [
+        (stat.S_IFDIR, 1),
+        (stat.S_IFREG, 2),
+    ],
+)
+def test_pinned_handle_rejects_non_regular_or_multiply_linked_objects(
+    monkeypatch: pytest.MonkeyPatch, mode: int, links: int
+) -> None:
+    facts = type("Facts", (), {"st_mode": mode, "st_nlink": links})()
+    monkeypatch.setattr(reconciliation.os, "fstat", lambda _descriptor: facts)
+    handle = type("Handle", (), {"fileno": lambda _self: 7})()
+    with pytest.raises(ReconciliationDataError, match="not one regular file"):
+        reconciliation._verify_pinned_handle(handle, "input")  # type: ignore[arg-type]
+
+
+def test_part_reader_revalidates_pinned_state_after_consuming_input(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    first, _second = _inputs(tmp_path)
+    size = first.snapshot_path.stat().st_size
+    states = iter(((1, 2, size, 3), (1, 2, size, 4)))
+    monkeypatch.setattr(
+        reconciliation,
+        "_verify_pinned_handle",
+        lambda _handle, _context: next(states),
+    )
+    with first.snapshot_path.open("rb") as handle:
+        with pytest.raises(ReconciliationDataError, match="pinned state changed"):
+            reconciliation._read_part(
+                first.snapshot_path,
+                SnapshotPart.PRODUCTS,
+                handle=handle,
+            )
 
 
 def test_identical_query_hashes_are_rejected(tmp_path: Path) -> None:
