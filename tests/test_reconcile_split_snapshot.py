@@ -17,6 +17,7 @@ from typing import Any
 import pytest
 from scripts import reconcile_split_snapshot as cli
 
+from nla_catalog_gateway import runtime_contract
 from nla_catalog_gateway.reconciliation import SnapshotPartManifestV1
 from nla_catalog_gateway.runtime_contract import (
     CapabilityState,
@@ -412,6 +413,8 @@ class ControlledHandle:
         self.short = short
         self.os_error = os_error
         self.closed = False
+        self.write_lengths: list[int] = []
+        self.last_byte: bytes | None = None
 
     def __enter__(self) -> ControlledHandle:
         return self
@@ -425,6 +428,8 @@ class ControlledHandle:
     def write(self, raw: bytes) -> int:
         if self.os_error:
             raise OSError("synthetic write error")
+        self.write_lengths.append(len(raw))
+        self.last_byte = raw[-1:]
         return len(raw) - 1 if self.short else len(raw)
 
     def flush(self) -> None:
@@ -435,13 +440,18 @@ class ControlledHandle:
 
 
 class SyntheticRecord:
+    def __init__(self, raw: bytes = b'{"record":"synthetic"}') -> None:
+        self.raw = raw
+
     def to_json_bytes(self) -> bytes:
-        return b'{"record":"synthetic"}'
+        return self.raw
 
 
-def synthetic_generation(*, included_count: int = 1) -> Any:
+def synthetic_generation(*, included_count: int = 1, record_bytes: bytes | None = None) -> Any:
     return SimpleNamespace(
-        records=(SyntheticRecord(),),
+        records=(
+            SyntheticRecord(b'{"record":"synthetic"}' if record_bytes is None else record_bytes),
+        ),
         dataset_manifest=SimpleNamespace(
             included_product_count=included_count,
             dataset_generation="sha256:" + "d" * 64,
@@ -551,9 +561,15 @@ def test_complete_generation_is_external_deterministic_and_self_accounting(tmp_p
             *dataset.capability_matrix.requests,
         )
     )
-    record_lines = (first_output / "catalog-records.v1.jsonl").read_bytes().splitlines()
+    records_raw = (first_output / "catalog-records.v1.jsonl").read_bytes()
+    assert records_raw.endswith(b"\n")
+    assert not records_raw.endswith(b"\r\n")
+    record_lines = records_raw.splitlines()
     assert len(record_lines) == 1
-    record = CatalogProductRecordV1.from_json_bytes(record_lines[0])
+    for record_line in record_lines:
+        assert len(record_line) <= runtime_contract.MAX_CONTRACT_BYTES
+        record = CatalogProductRecordV1.from_json_bytes(record_line)
+        assert record.to_json_bytes() == record_line
     assert record.product_gid == gid("Product", 9_007_199_254_740_993)
     taxonomy = json.loads((first_output / "taxonomy-report.v1.json").read_bytes())
     assert taxonomy["schemaVersion"] == 1
@@ -2969,6 +2985,76 @@ def test_catalog_record_write_failures_and_count_gate(
     )
     with pytest.raises(cli.ReconciliationCliError, match="count is inconsistent"):
         cli._write_records(output, identity, synthetic_generation(included_count=2), [])
+
+
+def test_catalog_record_write_enforces_runtime_byte_limit_before_newline_or_write(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    output = tmp_path / "generation"
+    output.mkdir()
+    identity = cli._directory_identity(output)
+    monkeypatch.setattr(os, "fsync", lambda _fd: None)
+    monkeypatch.setattr(cli, "_verify_artifact_contents", lambda _artifact: None)
+
+    exact_handle = ControlledHandle()
+    oversized_handle = ControlledHandle()
+    handles = iter((exact_handle, oversized_handle))
+
+    def open_output(*_args: object, **_kwargs: object) -> tuple[Path, ControlledHandle, Any]:
+        handle = next(handles)
+        artifact = cli._CreatedArtifact(
+            output / "records",
+            cli._FileIdentity(1, 1),
+            handle=handle,
+        )
+        return artifact.path, handle, artifact
+
+    monkeypatch.setattr(cli, "_open_output_file", open_output)
+    exact_raw = b"x" * runtime_contract.MAX_CONTRACT_BYTES
+    evidence = cli._write_records(
+        output,
+        identity,
+        synthetic_generation(record_bytes=exact_raw),
+        [],
+    )
+    assert exact_handle.write_lengths == [runtime_contract.MAX_CONTRACT_BYTES + 1]
+    assert exact_handle.last_byte == b"\n"
+    assert evidence.byte_count == runtime_contract.MAX_CONTRACT_BYTES + 1
+
+    with pytest.raises(
+        cli.ReconciliationCliError,
+        match="catalog record exceeds the runtime byte limit",
+    ):
+        cli._write_records(
+            output,
+            identity,
+            synthetic_generation(record_bytes=exact_raw + b"x"),
+            [],
+        )
+    assert oversized_handle.write_lengths == []
+
+
+def test_oversized_catalog_record_cleanup_leaves_no_output(
+    tmp_path: Path,
+) -> None:
+    generation = synthetic_generation(record_bytes=b"x" * (runtime_contract.MAX_CONTRACT_BYTES + 1))
+    manifest = synthetic_manifest()
+    output = tmp_path / "generation"
+
+    with pytest.raises(
+        cli.ReconciliationCliError,
+        match="catalog record exceeds the runtime byte limit",
+    ):
+        cli._write_generation_output(
+            output,
+            manifest,
+            manifest,
+            generation,
+            synthetic_audits(),
+        )
+
+    assert not output.exists()
+    assert not tuple(tmp_path.glob(".nla-reconcile-staging-*"))
 
 
 def test_generation_output_creation_and_cleanup_failures_are_bounded(

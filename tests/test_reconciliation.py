@@ -158,7 +158,7 @@ def _rows() -> tuple[list[dict[str, object]], list[dict[str, object]]]:
         _product(
             PRODUCT_TWO,
             handle="synthetic-two",
-            source_id="9007199254745002",
+            source_id="9007199254745001",
             product_type="Unknown Synthetic Type",
         ),
         _metafield(_gid("Product", PRODUCT_ONE), 9007199254747001, "game", "magic"),
@@ -324,6 +324,8 @@ def test_reconciliation_is_order_independent_and_projects_exact_large_gids(
     assert first.source_manifest.variant_count == 2
     assert first.source_manifest.inventory_item_count == 2
     assert first.source_manifest.inventory_level_count == 2
+    assert first.source_manifest.source_identity_product_count == 2
+    assert first.dataset_manifest.included_source_identity_product_count == 2
     assert first.dataset_manifest.source_product_count == (
         first.dataset_manifest.classified_product_count
         + first.dataset_manifest.unclassified_product_count
@@ -335,6 +337,9 @@ def test_reconciliation_is_order_independent_and_projects_exact_large_gids(
             *first.dataset_manifest.capability_matrix.requests,
         )
     )
+    assert len({record.product_gid for record in first.records}) == 2
+    assert len({record.sync_source_id for record in first.records}) == 1
+    assert all(record.sync_source_id == record.powertools_source_id for record in first.records)
     for item in inputs:
         encoded = item.manifest.to_json_bytes()
         assert SnapshotPartManifestV1.from_json_bytes(encoded).to_json_bytes() == encoded
@@ -469,7 +474,6 @@ def test_duplicate_and_conflicting_typed_gid_rows_fail(tmp_path: Path, conflict:
 @pytest.mark.parametrize(
     ("mutation", "message"),
     [
-        ("duplicate_source", "duplicate secondary source identity"),
         ("conflicting_source", "conflicting secondary source identity"),
         ("missing_child", "missing or excess ProductVariant children"),
         ("orphan_variant", "dangling ProductVariant"),
@@ -485,10 +489,7 @@ def test_reconciliation_rejects_identity_and_accounting_failures(
     message: str,
 ) -> None:
     products, variants = _rows()
-    if mutation == "duplicate_source":
-        products[3]["syncProductId"] = products[1]["syncProductId"]
-        products[3]["powertoolsId"] = products[1]["powertoolsId"]
-    elif mutation == "conflicting_source":
+    if mutation == "conflicting_source":
         products[1]["powertoolsId"] = {
             "type": "single_line_text_field",
             "value": "999",

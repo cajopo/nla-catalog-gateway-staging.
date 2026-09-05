@@ -1159,13 +1159,6 @@ def _reconcile_database(
         "OR sync_source_id <> powertools_source_id LIMIT 1",
         "conflicting secondary source identity",
     )
-    _require_no_row(
-        connection,
-        "SELECT 1 FROM products WHERE sync_source_id IS NOT NULL "
-        "GROUP BY sync_source_id HAVING COUNT(*) > 1 LIMIT 1",
-        "duplicate secondary source identity",
-    )
-
     product_count = _scalar(connection, "SELECT COUNT(*) FROM products")
     variant_count = _scalar(connection, "SELECT COUNT(*) FROM variants")
     if product_count != expectation.product_count or variant_count != expectation.variant_count:
@@ -1610,6 +1603,7 @@ def reconcile_snapshot_parts(
                     facts,
                     classifications,
                 )
+                del facts, classifications
             finally:
                 connection.close()
     except ReconciliationError:

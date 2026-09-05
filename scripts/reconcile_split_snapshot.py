@@ -19,7 +19,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, BinaryIO, NoReturn, cast
 
-from nla_catalog_gateway import bulk
+from nla_catalog_gateway import bulk, runtime_contract
 from nla_catalog_gateway import reconciliation as reconciliation_model
 from nla_catalog_gateway.reconciliation import (
     BulkOperationTerminalEvidenceV1,
@@ -1300,12 +1300,15 @@ def _write_records(
     record_count = 0
     try:
         for record in generation.records:
-            raw = record.to_json_bytes() + b"\n"
-            written = handle.write(raw)
-            if written != len(raw):
+            raw = record.to_json_bytes()
+            if len(raw) > runtime_contract.MAX_CONTRACT_BYTES:
+                raise ReconciliationCliError("catalog record exceeds the runtime byte limit")
+            line = raw + b"\n"
+            written = handle.write(line)
+            if written != len(line):
                 raise ReconciliationCliError("catalog record write was incomplete")
-            digest.update(raw)
-            byte_count += len(raw)
+            digest.update(line)
+            byte_count += len(line)
             record_count += 1
         handle.flush()
         os.fsync(handle.fileno())

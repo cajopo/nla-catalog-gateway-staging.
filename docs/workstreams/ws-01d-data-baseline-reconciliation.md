@@ -99,16 +99,17 @@ Reconciliation rejects:
 - InventoryLevels without an already observed typed ProductVariant parent, with a mismatched
   InventoryItem parameter, or with duplicate InventoryItem/Location ownership;
 - one InventoryItem assigned to multiple ProductVariants;
-- duplicate/conflicting handles or matching secondary source IDs assigned to different Products;
+- duplicate/conflicting Product handles;
 - disagreement between verified sync and PowerTools source identities;
 - missing exact Online Store publication evidence;
 - root, typed-object, status or active-published accounting mismatches; and
 - any SQLite integrity or `quick_check` failure.
 
 Duplicate titles, SKUs, barcodes and secondary values across otherwise distinct records are not
-used as joins. Secondary source identity is only an independently accounted consistency signal.
-Input part order cannot affect the canonical source manifest, taxonomy result, catalog record
-bytes or dataset-manifest bytes.
+used as joins. Secondary source identity is preserved per Product and is only an independently
+accounted consistency signal: pairing, exact alias equality and field types remain mandatory, but
+global uniqueness is not a reconciliation invariant. Input part order cannot affect the canonical
+source manifest, taxonomy result, catalog record bytes or dataset-manifest bytes.
 
 The two reviewed source-identity aliases have distinct exact Shopify types. `syncProductId` must
 be `number_integer`; `powertoolsId` must be `single_line_text_field`. Both values must still be
@@ -116,6 +117,13 @@ canonical positive decimal digits. The runner does not accept either type interc
 #43's redacted full-Product diagnostic observed those two types, valid digits and equality between
 the aliases for every Product in the current capture; this corrects the earlier synthetic-only
 assumption without weakening the identity fence.
+
+The current value-free probe accounts for all 291795 Products with paired, equal sync and
+PowerTools aliases. It found four duplicated secondary-value groups covering eight Products, with
+maximum multiplicity two and exactly one `ACTIVE` plus one `UNLISTED` Product in each group. Their
+distinct Shopify Product GIDs remain the sole primary identities; reconciliation preserves every
+Product and does not merge, drop or deduplicate on a secondary value. Any later global-uniqueness
+policy belongs to the sync workstream and is not an activation claim in issue #43.
 
 ## Projection and accounting
 
@@ -232,7 +240,12 @@ It is not a raw snapshot or a public-serving index, but it is still a generated 
 the CLI therefore permits it only outside the repository. The summary explicitly records
 `reconciled-provisional`, `datasetActivation: not-performed` and
 `capabilityPromotion: not-performed`. No output file contains a signed Bulk URL, control-document
-path or raw JSONL row. Files are created exclusively, flushed and fsynced in an unpredictable
+path or raw JSONL row. Each canonical Product record is limited to 2 MiB before its single JSONL
+LF delimiter is added; an oversized record fails before any of its bytes are written. The dataset
+content SHA-256 is streamed over the same canonical envelope and ordered per-record bytes as the
+legacy renderer, without materializing a second all-record JSON tree or byte string. Consumers can
+parse every line and require byte-identical canonical re-encoding. Files are created exclusively,
+flushed and fsynced in an unpredictable
 sibling staging directory. Each live file handle is bound to its expected device/inode, byte count
 and SHA-256 and is checked before publication. Because Windows does not provide a portable
 contract for renaming a directory while child handles remain open under their required access and
@@ -294,6 +307,17 @@ incorrectly required its flattened `__parentId` to be an InventoryItem rather th
 ProductVariant and had incorrectly equated the opaque InventoryLevel identity with the Location
 identity. The final target, private staging directory and temporary reconciliation database were
 all absent afterward; no dataset was activated and neither Shopify nor PowerTools was mutated.
-The current correction has not yet been rerun against the external capture. Independent re-review
-and a fresh frozen invocation remain required, so this evidence does not change the real-baseline,
+That InventoryLevel correction was independently re-reviewed before the subsequent frozen
+invocation described below; the second-run evidence by itself did not change the real-baseline,
 distribution, staging or capability status above.
+
+A third frozen invocation on candidate `2684f02d348f14682161ff0fe6ab276efa09ccc4`
+completed both Products and variants semantic passes and satisfied all earlier manifest, identity,
+publication, variant and inventory fences. It then failed closed at the global uniqueness check for
+secondary source identities. A subsequent value-free aggregate probe established the distribution
+recorded above and showed that Shopify Product GID, not the repeated secondary value, remains the
+correct identity boundary. The final target, private staging directory and temporary database were
+again absent afterward; no dataset was activated and neither Shopify nor PowerTools was mutated.
+The secondary-identity correction in this candidate has not yet been rerun against the external
+capture. Independent review and a fresh frozen invocation remain required, so this evidence does
+not change the real-baseline, distribution, staging or capability status above.

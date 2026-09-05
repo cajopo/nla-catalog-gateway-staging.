@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import itertools
 import json
 from dataclasses import replace
 from pathlib import Path
@@ -427,6 +428,74 @@ def test_generation_and_manifest_bytes_are_deterministic_and_timestamp_free() ->
     changed_manifest = _manifest((changed, *records[1:]))
     assert changed_manifest.dataset_generation != first.dataset_generation
     assert changed_manifest.catalog_content_sha256 != first.catalog_content_sha256
+
+
+def test_catalog_content_hash_stream_matches_legacy_canonical_renderer() -> None:
+    records = _records()
+    decorated_variant = replace(
+        records[0].variants[0],
+        title='\u00c9lite "foil", path \\ snow \u96ea',
+        selected_options=(
+            SelectedOptionV1('Language, "edition" \\ path', "\u65e5\u672c\u8a9e, Foil"),
+        ),
+    )
+    decorated = replace(
+        records[0],
+        commercial_title='Mage, "quoted" \\ \u96ea',
+        canonical_card_name="\u00c9clair, mage",
+        variants=(decorated_variant,),
+    )
+    decorated_records = (decorated, *records[1:])
+    exact_prefix = b'{"contractVersion":1,"domain":"nla-catalog-product-records-v1","records":['
+    exact_suffix = b"]}"
+
+    assert runtime._CATALOG_CONTENT_PREFIX == exact_prefix
+    assert runtime._CATALOG_CONTENT_SUFFIX == exact_suffix
+    empty_legacy = runtime._canonical_json_bytes(
+        {
+            "contractVersion": runtime.CONTRACT_VERSION,
+            "domain": "nla-catalog-product-records-v1",
+            "records": [],
+        }
+    )
+    assert empty_legacy == exact_prefix + exact_suffix
+    assert runtime._catalog_content_sha256(()) == hashlib.sha256(empty_legacy).hexdigest()
+    expected_digest: str | None = None
+    for permutation in itertools.permutations(decorated_records):
+        ordered = sorted(permutation, key=lambda item: runtime._gid_sort_key(item.product_gid))
+        legacy = runtime._canonical_json_bytes(
+            {
+                "contractVersion": runtime.CONTRACT_VERSION,
+                "domain": "nla-catalog-product-records-v1",
+                "records": [record.as_dict() for record in ordered],
+            }
+        )
+        streamed = (
+            exact_prefix + b",".join(record.to_json_bytes() for record in ordered) + exact_suffix
+        )
+        assert streamed == legacy
+        assert streamed.startswith(exact_prefix)
+        assert streamed.endswith(exact_suffix)
+        digest = runtime._catalog_content_sha256(permutation)
+        assert digest == hashlib.sha256(legacy).hexdigest()
+        expected_digest = expected_digest or digest
+        assert digest == expected_digest
+
+
+def test_catalog_content_hash_never_materializes_the_legacy_records_tree(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    records = _records()
+    expected = runtime._catalog_content_sha256(records)
+    canonical_json_bytes = runtime._canonical_json_bytes
+
+    def reject_legacy_records_tree(value: Any) -> bytes:
+        if type(value) is dict and "records" in value:
+            raise AssertionError("legacy aggregate renderer was used")
+        return canonical_json_bytes(value)
+
+    monkeypatch.setattr(runtime, "_canonical_json_bytes", reject_legacy_records_tree)
+    assert runtime._catalog_content_sha256(tuple(reversed(records))) == expected
 
 
 def test_manifest_reconciles_nonzero_excluded_accounting() -> None:
