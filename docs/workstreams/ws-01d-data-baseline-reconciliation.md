@@ -53,7 +53,8 @@ query SHA-256, raw JSONL SHA-256, byte/object/root counts and complete per-typen
 Manifest creation accepts one exact frozen `BulkOperationTerminalEvidenceV1`, reconstructs it at
 the trust boundary, and accepts only a `QUERY` operation in exact `COMPLETED` state with null
 `errorCode`, a result URL and no partial-data URL. The query text returned by Shopify must equal
-the local query bytes exactly; those bytes must also match the reviewed part-specific query hash.
+the local LF bytes or the one measured Shopify transport representation defined below; the
+canonical local bytes must also match the reviewed part-specific query hash.
 The terminal `fileSize`, `objectCount` and `rootObjectCount` must independently match the rescanned
 JSONL and the trusted expected root count. A fake `shop { id }` query therefore cannot attest a
 Product or ProductVariant snapshot even when its own file and terminal query text agree.
@@ -116,3 +117,83 @@ claim real Shopify observations.
 All runtime capabilities remain at their existing provisional/unsupported states. This candidate
 is evidence for a later real-baseline gate, not evidence that global browse, search, filters,
 incremental sync or live serving is production-ready.
+
+## Offline reconciliation CLI
+
+`scripts/reconcile_split_snapshot.py` is the operational, network-free entry point for a later
+authorized capture. It only consumes files that already exist. It neither starts nor polls a Bulk
+operation, downloads a result URL, calls Shopify, writes SQLite outside the reconciliation
+module's private temporary directory, nor changes any product, publication, theme or PowerTools
+state.
+
+All paths must be absolute and normalized. The two JSONL parts and all three control documents
+must be regular, single-link files outside this repository. The two query files may be the tracked
+reviewed documents or byte-identical external copies; their approved part-specific SHA-256 values
+remain enforced by the reconciliation model. The output parent must already exist without
+symlinks or junctions. The requested output directory must be new and outside this repository:
+existing targets, traversal, filesystem aliases, Windows alternate-data-stream syntax and unsafe
+trailing-dot/space components fail closed.
+
+The expectation document is strict JSON, at most 64 KiB, with exactly these fields:
+
+- integer `schemaVersion` equal to `1`;
+- `snapshotSetId`, `shopDomain`, `apiVersion`, `onlineStorePublicationGid` and
+  independently supplied `sourceCodeSha`;
+- independent integer `productCount`, `variantCount` and
+  `expectedActiveOnlineStorePublishedProductCount` fences.
+
+Each part has a separate strict terminal-evidence document, also at most 64 KiB, containing
+exactly `schemaVersion`, `operationId`, `operationType`, `status`, `errorCode`, `query`,
+`createdAt`, `completedAt`, `fileSize`, `objectCount`, `rootObjectCount`, `urlPresent` and
+`partialDataUrlPresent`. It must be sanitized before use: the actual `url` and `partialDataUrl`
+values, request headers, tokens and every other field are forbidden. The boolean flags attest only
+the terminal presence/absence conditions. The terminal `query` text must equal the corresponding
+approved local query bytes exactly, except for Shopify's measured terminal transport. That one
+representation is accepted only when it is byte-for-byte equal to the approved LF artifact after
+replacing every LF with CRLF and appending exactly one additional CRLF. Canonical LF text remains
+valid for synthetic/offline evidence. Mixed line endings, CRLF without the extra terminal newline,
+LF with an extra newline, multiple extra newlines, whitespace trimming and every content change
+are rejected. The reconciliation summary records the raw terminal-query SHA-256, approved query
+SHA-256 and selected transport label for each part; it never records the query text.
+
+Duplicate or unknown JSON keys, BOMs, floats, non-finite numbers, surrogates, wrong exact types,
+invalid GIDs/domains/versions/timestamps, counts outside signed 64-bit bounds, inconsistent
+terminal sizes/counts and mixed captures all fail before the output directory is created. CLI
+failure output is one fixed message; it does not echo a path, source value, URL or exception.
+
+Example invocation after an independently authorized download and sanitization step:
+
+```bash
+python scripts/reconcile_split_snapshot.py \
+  --products-jsonl /external/capture/products.jsonl \
+  --variants-jsonl /external/capture/variants.jsonl \
+  --products-query /reviewed/graphql/catalog_products_snapshot.graphql \
+  --variants-query /reviewed/graphql/catalog_variants_snapshot.graphql \
+  --products-terminal /external/control/products-terminal.json \
+  --variants-terminal /external/control/variants-terminal.json \
+  --expectation /external/control/reconciliation-expectation.json \
+  --output-directory /external/generations/candidate-001
+```
+
+The new directory is published with a fixed seven-file shape:
+
+- canonical Product and ProductVariant part manifests;
+- canonical reconciled source and dataset manifests;
+- canonical taxonomy report;
+- `catalog-records.v1.jsonl`, one canonical `CatalogProductRecordV1` per line; and
+- a canonical reconciliation summary binding fixed filenames to SHA-256, byte and record counts,
+  plus the two terminal-query transport audits.
+
+The derived record stream is necessary for downstream pagination, search, facet and runtime
+workstreams to consume the exact same reconciled generation without reopening raw Shopify JSONL.
+It is not a raw snapshot or a public-serving index, but it is still a generated catalog artifact:
+the CLI therefore permits it only outside the repository. The summary explicitly records
+`reconciled-provisional`, `datasetActivation: not-performed` and
+`capabilityPromotion: not-performed`. No output file contains a signed Bulk URL, control-document
+path or raw JSONL row. Files are created exclusively, flushed and fsynced; any ordinary failure
+after directory creation removes only the fixed regular files created during that attempt and
+then removes the empty directory, never using recursive deletion.
+
+The CLI's executable evidence remains synthetic on this host. It has not been run against the
+frozen historical database or a current Shopify-derived capture, so it does not change the
+real-baseline, distribution, staging or capability status above.

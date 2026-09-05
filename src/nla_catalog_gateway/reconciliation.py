@@ -651,6 +651,25 @@ def _read_query_bytes(path: Path) -> bytes:
     return raw
 
 
+def _shopify_terminal_query_transport(canonical_query: bytes) -> bytes:
+    """Return the one observed Shopify terminal representation of an approved query."""
+
+    return canonical_query.replace(b"\n", b"\r\n") + b"\r\n"
+
+
+def _terminal_query_transport_mode(terminal_query: str, canonical_query: bytes) -> str:
+    """Classify only canonical bytes or Shopify's exact CRLF-plus-newline transport."""
+
+    raw = terminal_query.encode("utf-8")
+    if raw == canonical_query:
+        return "canonical-lf-v1"
+    if raw == _shopify_terminal_query_transport(canonical_query):
+        return "shopify-crlf-plus-one-terminal-newline-v1"
+    raise ReconciliationDataError(
+        "snapshot query does not match approved bytes or the exact Shopify transport"
+    )
+
+
 def create_snapshot_part_manifest(
     snapshot_path: Path,
     *,
@@ -671,10 +690,7 @@ def create_snapshot_part_manifest(
     query_sha256 = hashlib.sha256(query_bytes).hexdigest()
     if query_sha256 != _APPROVED_QUERY_SHA256[part]:
         raise ReconciliationDataError("snapshot query is not the approved query for its part")
-    if terminal.query.encode("utf-8") != query_bytes:
-        raise ReconciliationDataError(
-            "snapshot query does not match terminal BulkOperation evidence"
-        )
+    _terminal_query_transport_mode(terminal.query, query_bytes)
     scan = _read_part(snapshot_path, part)
     if scan.snapshot_bytes != terminal.file_size:
         raise ReconciliationDataError("snapshot byte count does not match terminal evidence")

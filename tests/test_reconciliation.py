@@ -697,7 +697,7 @@ def test_create_manifest_requires_exact_approved_query_and_deep_terminal_copy(
 
     query.write_bytes((PROJECT_ROOT / "graphql" / "catalog_products_snapshot.graphql").read_bytes())
     terminal = _terminal_evidence(query, raw, products, 1)
-    with pytest.raises(ReconciliationDataError, match="terminal BulkOperation"):
+    with pytest.raises(ReconciliationDataError, match="exact Shopify transport"):
         create_snapshot_part_manifest(
             snapshot,
             query_path=query,
