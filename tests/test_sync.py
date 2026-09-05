@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import fields, replace
@@ -12,12 +11,6 @@ import pytest
 
 import nla_catalog_gateway.sync as sync
 from nla_catalog_gateway import reconciliation
-from nla_catalog_gateway.bulk import (
-    ALLOWED_TYPES,
-    PRODUCT_STATUSES,
-    SourceSnapshotEvidence,
-    SourceSnapshotManifest,
-)
 from nla_catalog_gateway.runtime_contract import (
     CatalogProductRecordV1,
     CatalogVariantRecordV1,
@@ -130,89 +123,17 @@ def _records() -> tuple[CatalogProductRecordV1, ...]:
     )
 
 
-def _source_manifest(
-    records: tuple[CatalogProductRecordV1, ...],
-    *,
-    completed_at: str = BASE_TIME,
-    shop_domain: str = SHOP,
-) -> SourceSnapshotManifest:
-    product_count = len(records)
-    variant_count = sum(len(record.variants) for record in records)
-    active_published = sum(record.publishable for record in records)
-    identity_count = sum(record.powertools_source_id is not None for record in records)
-    evidence = SourceSnapshotEvidence(
-        shop_domain=shop_domain,
-        api_version="2026-07",
-        operation_id="gid://shopify/BulkOperation/1",
-        status="COMPLETED",
-        partial_data_url_present=False,
-        file_size=1234,
-        object_count=product_count + variant_count,
-        product_count=product_count,
-        expected_active_online_store_published_product_count=active_published,
-        query_sha256="a" * 64,
-        online_store_publication_gid="gid://shopify/Publication/1",
-        completed_at=completed_at,
-        source_code_sha="b" * 40,
-    )
-    object_counts = dict.fromkeys(ALLOWED_TYPES, 0)
-    object_counts["Product"] = product_count
-    object_counts["ProductVariant"] = variant_count
-    status_counts = tuple(
-        (status, sum(record.shopify_status.value == status for record in records))
-        for status in PRODUCT_STATUSES
-    )
-    return SourceSnapshotManifest(
-        schema_version=2,
-        source=evidence,
-        snapshot_sha256="c" * 64,
-        database_sha256="d" * 64,
-        snapshot_bytes=1234,
-        line_count=product_count + variant_count,
-        object_counts=tuple((name, object_counts[name]) for name in ALLOWED_TYPES),
-        product_status_counts=status_counts,
-        verified_active_online_store_published_product_count=active_published,
-        source_identity_products=identity_count,
-    )
-
-
-def _manifest_bundle(
-    records: tuple[CatalogProductRecordV1, ...],
-    *,
-    generated_at: str = BASE_TIME,
-    shop_domain: str = SHOP,
-) -> tuple[SourceSnapshotManifest, bytes, DatasetManifestV1]:
-    source = _source_manifest(
-        records,
-        completed_at=generated_at,
-        shop_domain=shop_domain,
-    )
-    source_bytes = (
-        json.dumps(source.as_dict(), ensure_ascii=False, indent=2, sort_keys=True) + "\n"
-    ).encode()
-    manifest = DatasetManifestV1.build(
-        records,
-        source_manifest=source,
-        source_manifest_bytes=source_bytes,
-        excluded_product_status_counts=tuple((status, 0) for status in PRODUCT_STATUSES),
-        excluded_variant_count=0,
-        excluded_source_identity_product_count=0,
-        excluded_active_online_store_published_product_count=0,
-    )
-    return source, source_bytes, manifest
-
-
 def _manifest(
     records: tuple[CatalogProductRecordV1, ...],
     *,
     generated_at: str = BASE_TIME,
     shop_domain: str = SHOP,
 ) -> DatasetManifestV1:
-    return _manifest_bundle(
+    return _reconciled_generation(
         records,
         generated_at=generated_at,
         shop_domain=shop_domain,
-    )[2]
+    ).dataset_manifest
 
 
 def _reconciled_part_manifest(
@@ -543,15 +464,13 @@ def _core(
     actual_records = records or _records()
     actual_adapters = adapters or Adapters()
     actual_clock = clock or MutableClock()
-    source_manifest, source_manifest_bytes, manifest = _manifest_bundle(actual_records)
     return (
         SyncCore(
             expected_shop_domain=SHOP,
-            initial_source_cut_at=BASE_TIME,
-            initial_source_manifest=source_manifest,
-            initial_source_manifest_bytes=source_manifest_bytes,
-            initial_manifest=manifest,
-            initial_records=actual_records,
+            initial_reconciled_generation=_reconciled_generation(
+                actual_records,
+                generated_at=BASE_TIME,
+            ),
             validator=actual_adapters.validate,
             projector=actual_adapters.project,
             clock=actual_clock,
@@ -887,14 +806,12 @@ def test_invalid_validated_event_binding_fails_closed(mutator: Any) -> None:
         return mutator(_validated(envelope))
 
     records = _records()
-    source_manifest, source_manifest_bytes, manifest = _manifest_bundle(records)
     core = SyncCore(
         expected_shop_domain=SHOP,
-        initial_source_cut_at=BASE_TIME,
-        initial_source_manifest=source_manifest,
-        initial_source_manifest_bytes=source_manifest_bytes,
-        initial_manifest=manifest,
-        initial_records=records,
+        initial_reconciled_generation=_reconciled_generation(
+            records,
+            generated_at=BASE_TIME,
+        ),
         validator=invalid_validator,
         projector=adapters.project,
         clock=MutableClock(),
@@ -1083,14 +1000,12 @@ def test_frozen_event_digest_tamper_and_validation_race_fail_closed() -> None:
         return _validated(value)
 
     records = _records()
-    source, source_bytes, manifest = _manifest_bundle(records)
     other_core = SyncCore(
         expected_shop_domain=SHOP,
-        initial_source_cut_at=BASE_TIME,
-        initial_source_manifest=source,
-        initial_source_manifest_bytes=source_bytes,
-        initial_manifest=manifest,
-        initial_records=records,
+        initial_reconciled_generation=_reconciled_generation(
+            records,
+            generated_at=BASE_TIME,
+        ),
         validator=racing_validator,
         projector=Adapters().project,
         clock=MutableClock(),
@@ -1427,6 +1342,46 @@ def test_reconciliation_fence_is_core_bound_and_tamper_evident() -> None:
         core.rollback(expected_active_generation=active.dataset_generation)
 
 
+@pytest.mark.parametrize("failure_mode", ["exception", "invalid-return"])
+def test_fence_token_failure_is_value_free_and_preserves_registered_fence(
+    failure_mode: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    core, _, _ = _core()
+    active = core.active_dataset()
+    registered = core.capture_reconciliation_fence(
+        expected_active_generation=active.dataset_generation
+    )
+
+    def fail_token(_size: int) -> str:
+        if failure_mode == "exception":
+            raise HostileError("SECRET_TOKEN_FAILURE")
+        return "not-a-token"
+
+    monkeypatch.setattr(sync.secrets, "token_hex", fail_token)
+    with pytest.raises(SyncOperationError) as caught:
+        core.capture_reconciliation_fence(expected_active_generation=active.dataset_generation)
+    assert str(caught.value) == "Reconciliation fence creation failed."
+    assert core._active_reconciliation_fence == registered
+    assert core.metrics().projection_paused
+
+
+def test_fence_token_base_exception_propagates_without_partial_fence(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    core, _, _ = _core()
+    active = core.active_dataset()
+
+    def abort_token(_size: int) -> str:
+        raise HostileBaseError()
+
+    monkeypatch.setattr(sync.secrets, "token_hex", abort_token)
+    with pytest.raises(HostileBaseError):
+        core.capture_reconciliation_fence(expected_active_generation=active.dataset_generation)
+    assert core._active_reconciliation_fence is None
+    assert not core.metrics().projection_paused
+
+
 def test_reconciliation_fence_rejects_wrong_generation_and_changed_active_pair() -> None:
     core, _, _ = _core()
     active = core.active_dataset()
@@ -1757,6 +1712,8 @@ def test_reconciliation_cut_blocks_received_and_failed_event_replay() -> None:
     installed = core.active_dataset()
     received_status = core.process(received.key)
     assert received_status.state is InboxState.PROJECTED
+    assert received_status.projected_generation == installed.dataset_generation
+    assert received_status.reconciliation_generation == installed.dataset_generation
     assert adapters.projector_calls == 0
     assert core.active_dataset() == installed
     assert installed.records[0].variants[0].price_text == "1.2300"
@@ -1773,11 +1730,122 @@ def test_reconciliation_cut_blocks_received_and_failed_event_replay() -> None:
         expected_active_generation=other.active_dataset().dataset_generation,
     )
     reconciled = other.active_dataset()
+    calls = failing_adapters.projector_calls
     failing_adapters.projector_failure = None
     retry = other.process(failed.key)
     assert retry.state is InboxState.PROJECTED
-    assert failing_adapters.projector_calls == 1
+    assert retry.failure_code is None
+    assert retry.projected_generation == reconciled.dataset_generation
+    assert retry.reconciliation_generation == reconciled.dataset_generation
+    assert failing_adapters.projector_calls == calls
     assert other.active_dataset() == reconciled
+
+
+@pytest.mark.parametrize(
+    "starting_state",
+    ["received", "validated", "failed", "projected", "reconcile_required"],
+)
+def test_pre_fence_resolution_is_monotonic_terminal_and_auditable(
+    starting_state: str,
+) -> None:
+    adapters = Adapters()
+    core, _, _ = _core(adapters)
+    envelope = _envelope(f"covered-{starting_state}")
+    if starting_state == "received":
+        delivery = core.receive(envelope)
+    elif starting_state == "validated":
+        active = core.active_dataset().dataset_generation
+        core.capture_reconciliation_fence(expected_active_generation=active)
+        delivery = core.ingest(envelope)
+    elif starting_state == "failed":
+        adapters.validator_failure = HostileError("redacted")
+        delivery = core.ingest(envelope)
+        adapters.validator_failure = None
+    elif starting_state == "projected":
+        delivery = core.ingest(envelope)
+    else:
+        envelope = _envelope(
+            f"covered-{starting_state}",
+            topic="products/unknown",
+        )
+        delivery = core.ingest(envelope)
+
+    before = core.event_status(delivery.key)
+    assert before.state.value == starting_state
+    before_rank = sync._STATE_RANK[before.state]
+    calls = (adapters.validator_calls, adapters.projector_calls)
+    active = core.active_dataset()
+    fence = core.capture_reconciliation_fence(expected_active_generation=active.dataset_generation)
+    installed = core.install_reconciliation(
+        shop_domain=SHOP,
+        fence=fence,
+        reconciled_generation=_reconciled_generation(
+            active.records,
+            generated_at="2026-09-02T00:02:00Z",
+        ),
+        expected_active_generation=active.dataset_generation,
+    )
+
+    after = core.event_status(delivery.key)
+    expected_state = (
+        InboxState.RECONCILE_REQUIRED
+        if before.state is InboxState.RECONCILE_REQUIRED
+        else InboxState.PROJECTED
+    )
+    assert after.state is expected_state
+    assert sync._STATE_RANK[after.state] >= before_rank
+    assert after.reconciliation_generation == installed
+    if before_rank < sync._STATE_RANK[InboxState.PROJECTED]:
+        assert after.projected_generation == installed
+        assert after.failure_code is None
+    else:
+        assert after.projected_generation == before.projected_generation
+    assert core.process(delivery.key) == after
+    assert (adapters.validator_calls, adapters.projector_calls) == calls
+    assert core.pending_reconciliation() == ()
+    assert core.dead_letters() == ()
+    metrics = core.metrics()
+    assert metrics.unresolved_failed_events == 0
+    assert metrics.unresolved_reconciliation_events == 0
+    assert not metrics.projection_paused
+    assert not metrics.stale
+
+
+def test_conflict_after_reconciliation_resolution_preserves_audit_and_reopens_pending() -> None:
+    core, _, _ = _core()
+    envelope = _envelope("resolved-conflict", topic="products/unknown")
+    delivery = core.ingest(envelope)
+    before = core.event_status(delivery.key)
+    assert before.state is InboxState.RECONCILE_REQUIRED
+    active = core.active_dataset()
+    installed = core.install_reconciliation(
+        shop_domain=SHOP,
+        **_candidate_args(
+            core,
+            active.records,
+            generated_at="2026-09-02T00:02:00Z",
+        ),
+        expected_active_generation=active.dataset_generation,
+    )
+    resolved = core.event_status(delivery.key)
+    assert resolved.state is InboxState.RECONCILE_REQUIRED
+    assert resolved.reconciliation_generation == installed
+    assert core.pending_reconciliation() == ()
+
+    conflict = core.receive(
+        _envelope(
+            "resolved-conflict",
+            topic="products/unknown",
+            payload=b'{"conflict":true}',
+        )
+    )
+    assert conflict.conflict
+    assert conflict.status.state is InboxState.RECONCILE_REQUIRED
+    assert conflict.status.reconciliation_generation is None
+    pending = core.pending_reconciliation()
+    assert len(pending) == 1
+    assert pending[0].state is InboxState.RECONCILE_REQUIRED
+    assert pending[0].reconciliation_generation is None
 
 
 def test_rollback_does_not_lower_reconciliation_high_watermarks() -> None:
@@ -1861,11 +1929,14 @@ def test_reconciliation_coverage_uses_fence_sequence_not_event_timestamp() -> No
         )
     )
     current = core.active_dataset().dataset_generation
-    core.install_reconciliation(
+    installed = core.install_reconciliation(
         shop_domain=SHOP,
         **_candidate_args(core, _records(), generated_at="2026-09-02T00:02:00Z"),
         expected_active_generation=current,
     )
+    status = core.event_status(WebhookKey(SHOP, "future-unknown"))
+    assert status.state is InboxState.RECONCILE_REQUIRED
+    assert status.reconciliation_generation == installed
     assert core.pending_reconciliation() == ()
     assert not core.metrics().projection_paused
 
@@ -1877,11 +1948,14 @@ def test_reconciliation_clears_covered_validated_event_watermark() -> None:
     result = core.ingest(_envelope("covered-stale"))
     assert result.status.state is InboxState.RECONCILE_REQUIRED
     current = core.active_dataset().dataset_generation
-    core.install_reconciliation(
+    installed = core.install_reconciliation(
         shop_domain=SHOP,
         **_candidate_args(core, _records(), generated_at="2026-09-02T00:02:00Z"),
         expected_active_generation=current,
     )
+    status = core.event_status(result.key)
+    assert status.state is InboxState.RECONCILE_REQUIRED
+    assert status.reconciliation_generation == installed
     assert core.pending_reconciliation() == ()
     assert not core.metrics().projection_paused
 
@@ -2053,8 +2127,7 @@ def test_projection_context_rejects_invalid_fields(kwargs: dict[str, Any]) -> No
         {"clock": None},
         {"activation_probe": object()},
         {"expected_shop_domain": "a.b.myshopify.com"},
-        {"initial_source_cut_at": "2026-09-02T00:00:00-00:00"},
-        {"initial_source_cut_at": EVENT_TIME},
+        {"initial_reconciled_generation": object()},
         {"stale_after_seconds": -1},
         {"stale_after_seconds": True},
         {"max_inbox_events": 0},
@@ -2065,14 +2138,12 @@ def test_projection_context_rejects_invalid_fields(kwargs: dict[str, Any]) -> No
 def test_core_constructor_rejects_invalid_configuration(override: dict[str, Any]) -> None:
     adapters = Adapters()
     records = _records()
-    source_manifest, source_manifest_bytes, manifest = _manifest_bundle(records)
     values: dict[str, Any] = {
         "expected_shop_domain": SHOP,
-        "initial_source_cut_at": BASE_TIME,
-        "initial_source_manifest": source_manifest,
-        "initial_source_manifest_bytes": source_manifest_bytes,
-        "initial_manifest": manifest,
-        "initial_records": records,
+        "initial_reconciled_generation": _reconciled_generation(
+            records,
+            generated_at=BASE_TIME,
+        ),
         "validator": adapters.validate,
         "projector": adapters.project,
         "clock": MutableClock(),
@@ -2082,50 +2153,91 @@ def test_core_constructor_rejects_invalid_configuration(override: dict[str, Any]
         SyncCore(**values)
 
 
-def test_core_constructor_rejects_noncanonical_source_snapshot_boundary() -> None:
+def test_core_bootstraps_from_exact_reconciled_v2_without_path_access(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     adapters = Adapters()
     records = _records()
-    source, source_bytes, manifest = _manifest_bundle(records)
+    reconciled = _reconciled_generation(records, generated_at=BASE_TIME)
+
+    def forbid_path_open(*_args: Any, **_kwargs: Any) -> None:
+        raise AssertionError("fresh sync bootstrap must not read a Path")
+
+    monkeypatch.setattr(Path, "open", forbid_path_open)
+    core = SyncCore(
+        expected_shop_domain=SHOP,
+        initial_reconciled_generation=reconciled,
+        validator=adapters.validate,
+        projector=adapters.project,
+        clock=MutableClock(),
+    )
+    active = core.active_dataset()
+    assert active.dataset_generation == reconciled.dataset_manifest.dataset_generation
+    assert active.source_cut_at == reconciled.source_manifest.capture_completed_at
+    assert active.records == records
+    assert active.records[0] is not reconciled.records[0]
+    object.__setattr__(reconciled.records[0], "commercial_title", "hostile-late-mutation")
+    assert core.active_dataset() == active
+    assert core.previous_dataset() is None
+
+
+def test_core_constructor_rejects_legacy_bootstrap_keywords() -> None:
+    adapters = Adapters()
+    with pytest.raises(TypeError, match="initial_source_cut_at"):
+        SyncCore(
+            expected_shop_domain=SHOP,
+            initial_reconciled_generation=_reconciled_generation(
+                _records(),
+                generated_at=BASE_TIME,
+            ),
+            initial_source_cut_at=BASE_TIME,  # type: ignore[call-arg]
+            validator=adapters.validate,
+            projector=adapters.project,
+            clock=MutableClock(),
+        )
+
+
+def test_core_constructor_rejects_reconciled_v2_forgery_and_mismatch() -> None:
+    adapters = Adapters()
+    reconciled = _reconciled_generation(_records(), generated_at=BASE_TIME)
     values: dict[str, Any] = {
         "expected_shop_domain": SHOP,
-        "initial_source_cut_at": BASE_TIME,
-        "initial_source_manifest": source,
-        "initial_source_manifest_bytes": source_bytes,
-        "initial_manifest": manifest,
-        "initial_records": records,
+        "initial_reconciled_generation": reconciled,
         "validator": adapters.validate,
         "projector": adapters.project,
         "clock": MutableClock(),
     }
-    invalid_overrides = (
-        {"initial_source_manifest": object()},
-        {"initial_source_manifest": replace(source, source=object())},
-        {"initial_source_manifest_bytes": bytearray(source_bytes)},
-        {"initial_source_manifest": replace(source, object_counts=object())},
-        {"initial_manifest": replace(manifest, generated_at=EVENT_TIME)},
+    invalid_candidates = (
+        object(),
+        replace(reconciled, source_manifest=object()),
+        replace(reconciled, source_manifest_bytes=bytearray(reconciled.source_manifest_bytes)),
+        replace(
+            reconciled,
+            source_manifest=replace(
+                reconciled.source_manifest,
+                source_identity_product_count=(
+                    reconciled.source_manifest.source_identity_product_count + 1
+                ),
+            ),
+        ),
+        replace(
+            reconciled,
+            dataset_manifest=replace(reconciled.dataset_manifest, generated_at=EVENT_TIME),
+        ),
+        _reconciled_generation(
+            _records(),
+            generated_at=BASE_TIME,
+            shop_domain="other.myshopify.com",
+        ),
     )
-    for override in invalid_overrides:
-        with pytest.raises(SyncContractError):
-            SyncCore(**(values | override))
-
-    foreign, foreign_bytes, foreign_manifest = _manifest_bundle(
-        records, shop_domain="other.myshopify.com"
-    )
-    with pytest.raises(SyncContractError, match="shop does not match"):
-        SyncCore(
-            **(
-                values
-                | {
-                    "initial_source_manifest": foreign,
-                    "initial_source_manifest_bytes": foreign_bytes,
-                    "initial_manifest": foreign_manifest,
-                }
-            )
-        )
+    for invalid in invalid_candidates:
+        with pytest.raises(SyncContractError) as caught:
+            SyncCore(**(values | {"initial_reconciled_generation": invalid}))
+        assert str(caught.value) == "initial reconciled generation is invalid"
 
 
-@pytest.mark.parametrize("field_name", ["shop_domain", "completed_at"])
-def test_core_normalizes_hostile_nested_source_comparisons(field_name: str) -> None:
+@pytest.mark.parametrize("field_name", ["snapshot_set_id", "capture_completed_at"])
+def test_core_normalizes_hostile_reconciled_source_comparisons(field_name: str) -> None:
     class EvilSourceField:
         def __eq__(self, _other: object) -> bool:
             raise RuntimeError("SECRET_NESTED_COMPARE")
@@ -2137,23 +2249,27 @@ def test_core_normalizes_hostile_nested_source_comparisons(field_name: str) -> N
             raise RuntimeError("SECRET_NESTED_STRING")
 
     adapters = Adapters()
-    records = _records()
-    source, source_bytes, manifest = _manifest_bundle(records)
-    hostile_evidence = replace(source.source, **{field_name: EvilSourceField()})
-    hostile_manifest = replace(source, source=hostile_evidence)
+    reconciled = _reconciled_generation(_records(), generated_at=BASE_TIME)
+    hostile_source = object.__new__(reconciliation.ReconciledSourceManifestV2)
+    for field in fields(reconciled.source_manifest):
+        value = (
+            EvilSourceField()
+            if field.name == field_name
+            else getattr(reconciled.source_manifest, field.name)
+        )
+        object.__setattr__(hostile_source, field.name, value)
     with pytest.raises(SyncContractError) as caught:
         SyncCore(
             expected_shop_domain=SHOP,
-            initial_source_cut_at=BASE_TIME,
-            initial_source_manifest=hostile_manifest,
-            initial_source_manifest_bytes=source_bytes,
-            initial_manifest=manifest,
-            initial_records=records,
+            initial_reconciled_generation=replace(
+                reconciled,
+                source_manifest=hostile_source,
+            ),
             validator=adapters.validate,
             projector=adapters.project,
             clock=MutableClock(),
         )
-    assert str(caught.value) == "source snapshot does not validate the runtime candidate"
+    assert str(caught.value) == "initial reconciled generation is invalid"
 
 
 def test_metrics_report_stale_fractional_and_offset_clock_deterministically() -> None:
@@ -2184,7 +2300,7 @@ def test_clock_contract_error_and_hostile_envelope_mutation_are_normalized() -> 
 
 def test_unknown_offset_record_is_rejected_initially_and_retryable_from_projector() -> None:
     invalid_target = _product("1", updated_at="2026-09-02T00:00:00-00:00")
-    with pytest.raises(SyncContractError, match="timestamp"):
+    with pytest.raises(SyncContractError, match="initial reconciled generation is invalid"):
         _core(records=(invalid_target, _records()[1]))
 
     adapters = Adapters()
@@ -2536,14 +2652,12 @@ def test_conflict_during_validation_wins_over_projection_and_failure() -> None:
         holder["core"].receive(_envelope(envelope.webhook_id, payload=b'{"conflicting":true}'))
         return _validated(envelope)
 
-    source_manifest, source_manifest_bytes, manifest = _manifest_bundle(records)
     core = SyncCore(
         expected_shop_domain=SHOP,
-        initial_source_cut_at=BASE_TIME,
-        initial_source_manifest=source_manifest,
-        initial_source_manifest_bytes=source_manifest_bytes,
-        initial_manifest=manifest,
-        initial_records=records,
+        initial_reconciled_generation=_reconciled_generation(
+            records,
+            generated_at=BASE_TIME,
+        ),
         validator=validator,
         projector=adapters.project,
         clock=MutableClock(),
@@ -2557,14 +2671,12 @@ def test_conflict_during_validation_wins_over_projection_and_failure() -> None:
         holder["core"].receive(_envelope(envelope.webhook_id, payload=b'{"another-conflict":true}'))
         raise ValueError("secret")
 
-    source_manifest, source_manifest_bytes, manifest = _manifest_bundle(records)
     other = SyncCore(
         expected_shop_domain=SHOP,
-        initial_source_cut_at=BASE_TIME,
-        initial_source_manifest=source_manifest,
-        initial_source_manifest_bytes=source_manifest_bytes,
-        initial_manifest=manifest,
-        initial_records=records,
+        initial_reconciled_generation=_reconciled_generation(
+            records,
+            generated_at=BASE_TIME,
+        ),
         validator=failing_validator,
         projector=adapters.project,
         clock=MutableClock(),

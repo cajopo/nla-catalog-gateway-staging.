@@ -40,9 +40,12 @@ projected -> reconcile_required (conflicting reuse of the same key)
 ```
 
 A successful, fully attested reconciliation is the only administrative resolution outside
-that per-event transition graph: entries at or before its fence are marked `projected` because
-the replacement snapshot covers them, and unresolved sets are cleared only in the same atomic
-generation swap.
+that per-event transition graph. Covered `received`, `validated`, or `failed` entries advance to
+`projected`; an already `projected` entry keeps its event projection history; and a covered
+`reconcile_required` entry remains at that highest-rank state for conflict audit. Every covered
+entry receives a separate `reconciliationGeneration` resolution marker, becomes terminal to
+`process`, and is removed from pending/dead-letter readiness accounting only in the same atomic
+generation swap. A later conflicting reuse clears that marker and reopens the pending decision.
 
 Ordinary adapter, clock, candidate, and activation exceptions become fixed failure codes and
 never render attacker-controlled exception text. `BaseException` is deliberately not
@@ -109,19 +112,20 @@ Generation views and readiness metrics expose the taxonomy rule version and exac
 Product count. A taxonomy rule-version change requires a full reconciliation rather than an
 incremental mixed-version generation.
 
-Bootstrap retains the exact canonical `SourceSnapshotManifest` boundary already used by the
-runtime contract. Every later full install accepts only the in-memory
-`ReconciledCatalogGenerationV1` produced by the split-snapshot reconciler; the legacy set of
-independent source/manifest/record arguments is not an installation route. The boundary requires
-the exact nested `ReconciledSourceManifestV2`, canonical bytes, taxonomy report, records, and
-runtime manifest. It canonically rebuilds both part manifests, verifies their shared capture
+Fresh bootstrap and every later full install accept only the in-memory
+`ReconciledCatalogGenerationV1` produced by the split-snapshot reconciler. There is no legacy
+`SourceSnapshotManifest`, independent source/manifest/record, `Path`, or raw-artifact bootstrap
+route. Both entry points reuse the same deep-copying boundary, which requires the exact nested
+`ReconciledSourceManifestV2`, canonical bytes, taxonomy report, records, and runtime manifest. It
+canonically rebuilds both part manifests, verifies their shared capture
 identity, distinct operations, overlapping bounded windows and approved query hashes, then
 rebuilds the source V2 evidence, taxonomy accounting, runtime manifest and generation digest.
 Every comparison is byte-exact. The adapter accepts no `Path` and reads no raw artifact; raw
 snapshot validation remains the responsibility of the reconciler that created this in-memory
-object. Hostile or mismatched values produce a fixed value-free operational failure without a
-partial swap. The reconciled `captureCompletedAt` is used only as the candidate freshness/source
-cut, never as evidence that an inbox delivery was covered. Each incremental generation binds its
+object. Hostile or mismatched values produce fixed value-free contract/operational failures
+without a partial initialization or swap. The reconciled `captureCompletedAt` is used only as the
+candidate freshness/source cut, never as evidence that an inbox delivery was covered. Each
+incremental generation binds its
 shop, monotonic source
 high-watermark, base and parent generations, canonical catalog-content hash, taxonomy version,
 event identity, cumulative event-lineage hash, and event count. Record/status/family/Variant/
@@ -141,7 +145,8 @@ commercial data. Reconciliation orchestration must first ask the core for a
 `ReconciliationFence`, before starting either Bulk capture. The opaque, core-bound fence records
 the active generation, monotonic delivery sequence, and issuance time. While it is active,
 ordinary processing may validate and freeze deliveries but cannot advance the active generation;
-readiness remains paused/stale.
+readiness remains paused/stale. Entropy-provider `Exception` failures become a fixed value-free
+operational error without replacing any registered fence; `BaseException` deliberately propagates.
 
 Installation proves that both capture windows began at or after the registered fence. Deliveries
 at or before the fence sequence are covered by that later full capture without consulting their
@@ -169,10 +174,10 @@ Focused author evidence:
 ```text
 pytest -o pythonpath=src tests/test_sync.py --cov=nla_catalog_gateway.sync \
   --cov-branch --cov-report=term-missing
-135 passed; 1079/1079 statements and 270/270 branches covered (100%)
-focused sync/reconciliation/bulk/runtime/taxonomy suite: 491 passed
-full suite (`nla_catalog_gateway` + `scripts`): 1342 passed;
-  6165/6165 statements and 2300/2300 branches covered (100%)
+145 passed; 1064/1064 statements and 266/266 branches covered (100%)
+focused sync/reconciliation/bulk/runtime/taxonomy suite: 501 passed
+full suite (`nla_catalog_gateway` + `scripts`): 1352 passed;
+  6150/6150 statements and 2296/2296 branches covered (100%)
 ruff check: passed; ruff format check: 48 files already formatted
 preflight: ok, 63 files scanned, 0 failures
 build without isolation: sdist and wheel built successfully from this worktree

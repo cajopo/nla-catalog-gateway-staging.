@@ -23,7 +23,6 @@ from types import MappingProxyType
 from typing import Any
 
 from nla_catalog_gateway import reconciliation
-from nla_catalog_gateway.bulk import SourceSnapshotEvidence, SourceSnapshotManifest
 from nla_catalog_gateway.runtime_contract import (
     CONTRACT_VERSION,
     CatalogProductRecordV1,
@@ -500,6 +499,7 @@ class EventStatus:
     category: EventCategory | None
     failure_code: FailureCode | None
     projected_generation: str | None
+    reconciliation_generation: str | None
     dead_letter: bool
 
 
@@ -552,6 +552,7 @@ class SyncEventReport:
     processing_attempts: int
     category: EventCategory | None
     failure_code: FailureCode | None
+    reconciliation_generation: str | None
     dead_letter: bool
 
 
@@ -564,6 +565,7 @@ class _InboxEntry:
     category: EventCategory | None
     failure_code: FailureCode | None
     projected_generation: str | None
+    reconciliation_generation: str | None
     last_received_at: str
     source_updated_at: str | None
     last_delivery_sequence: int
@@ -615,56 +617,6 @@ def _copy_manifest(manifest: DatasetManifestV1) -> DatasetManifestV1:
     return copied
 
 
-def _copy_source_manifest(
-    source_manifest: SourceSnapshotManifest,
-    source_manifest_bytes: bytes,
-) -> tuple[SourceSnapshotManifest, bytes]:
-    if (
-        type(source_manifest) is not SourceSnapshotManifest
-        or type(source_manifest.source) is not SourceSnapshotEvidence
-        or type(source_manifest_bytes) is not bytes
-    ):
-        raise _error("source snapshot evidence must be canonical")
-    try:
-        source = source_manifest.source
-        copied_source = SourceSnapshotEvidence(
-            shop_domain=source.shop_domain,
-            api_version=source.api_version,
-            operation_id=source.operation_id,
-            status=source.status,
-            partial_data_url_present=source.partial_data_url_present,
-            file_size=source.file_size,
-            object_count=source.object_count,
-            product_count=source.product_count,
-            expected_active_online_store_published_product_count=(
-                source.expected_active_online_store_published_product_count
-            ),
-            query_sha256=source.query_sha256,
-            online_store_publication_gid=source.online_store_publication_gid,
-            completed_at=source.completed_at,
-            source_code_sha=source.source_code_sha,
-        )
-        copied_manifest = SourceSnapshotManifest(
-            schema_version=source_manifest.schema_version,
-            source=copied_source,
-            snapshot_sha256=source_manifest.snapshot_sha256,
-            database_sha256=source_manifest.database_sha256,
-            snapshot_bytes=source_manifest.snapshot_bytes,
-            line_count=source_manifest.line_count,
-            object_counts=tuple((name, count) for name, count in source_manifest.object_counts),
-            product_status_counts=tuple(
-                (status, count) for status, count in source_manifest.product_status_counts
-            ),
-            verified_active_online_store_published_product_count=(
-                source_manifest.verified_active_online_store_published_product_count
-            ),
-            source_identity_products=source_manifest.source_identity_products,
-        )
-    except Exception:
-        raise _error("source snapshot evidence is invalid") from None
-    return copied_manifest, bytes(source_manifest_bytes)
-
-
 def _new_generation(**values: Any) -> _SyncGeneration:
     generation = object.__new__(_SyncGeneration)
     for field_name, field_value in values.items():
@@ -710,59 +662,6 @@ def _new_initial_generation(
         variant_count=variants,
         source_identity_product_count=identities,
         public_item_count=public,
-    )
-
-
-def _initial_generation(
-    manifest: DatasetManifestV1,
-    records: tuple[CatalogProductRecordV1, ...],
-    *,
-    source_manifest: SourceSnapshotManifest,
-    source_manifest_bytes: bytes,
-    shop_domain: str,
-    source_cut_at: str,
-) -> _SyncGeneration:
-    safe_shop = _text(shop_domain, _SHOP_RE, "dataset shop domain")
-    _timestamp_key(source_cut_at, "source cut timestamp")
-    safe_source_manifest, safe_source_manifest_bytes = _copy_source_manifest(
-        source_manifest, source_manifest_bytes
-    )
-    safe_manifest = _copy_manifest(manifest)
-    safe_records = _copy_records(records)
-    try:
-        rebuilt_manifest = DatasetManifestV1.build(
-            safe_records,
-            source_manifest=safe_source_manifest,
-            source_manifest_bytes=safe_source_manifest_bytes,
-            excluded_product_status_counts=safe_manifest.excluded_product_status_counts,
-            excluded_variant_count=safe_manifest.excluded_variant_count,
-            excluded_source_identity_product_count=(
-                safe_manifest.excluded_source_identity_product_count
-            ),
-            excluded_active_online_store_published_product_count=(
-                safe_manifest.excluded_active_online_store_published_product_count
-            ),
-        )
-    except Exception:
-        raise _error("source snapshot does not validate the runtime candidate") from None
-    source_shop = _text(
-        safe_source_manifest.source.shop_domain,
-        _SHOP_RE,
-        "source snapshot shop domain",
-    )
-    source_completed_at = safe_source_manifest.source.completed_at
-    _timestamp_key(source_completed_at, "source snapshot completion timestamp")
-    if source_shop != safe_shop:
-        raise _error("source snapshot shop does not match the dataset")
-    if source_cut_at != source_completed_at:
-        raise _error("source cut must match the source snapshot completion timestamp")
-    if rebuilt_manifest.to_json_bytes() != safe_manifest.to_json_bytes():
-        raise _error("runtime manifest is not bound to the source snapshot evidence")
-    return _new_initial_generation(
-        safe_manifest,
-        safe_records,
-        shop_domain=safe_shop,
-        source_cut_at=source_cut_at,
     )
 
 
@@ -1341,11 +1240,7 @@ class SyncCore:
         self,
         *,
         expected_shop_domain: str,
-        initial_source_cut_at: str,
-        initial_source_manifest: SourceSnapshotManifest,
-        initial_source_manifest_bytes: bytes,
-        initial_manifest: DatasetManifestV1,
-        initial_records: tuple[CatalogProductRecordV1, ...],
+        initial_reconciled_generation: reconciliation.ReconciledCatalogGenerationV1,
         validator: Callable[[RawWebhookEnvelope], ValidatedWebhookEvent],
         projector: Callable[
             [ProjectionContext, ValidatedWebhookEvent, RawWebhookEnvelope],
@@ -1371,14 +1266,13 @@ class SyncCore:
         self._max_processing_attempts = _positive_integer(
             max_processing_attempts, "processing attempt limit"
         )
-        initial = _initial_generation(
-            initial_manifest,
-            initial_records,
-            source_manifest=initial_source_manifest,
-            source_manifest_bytes=initial_source_manifest_bytes,
-            shop_domain=self._expected_shop_domain,
-            source_cut_at=initial_source_cut_at,
-        )
+        try:
+            initial, _ = _copy_reconciled_generation(
+                initial_reconciled_generation,
+                shop_domain=self._expected_shop_domain,
+            )
+        except Exception:
+            raise _error("initial reconciled generation is invalid") from None
         self._validator = validator
         self._projector = projector
         self._clock = clock
@@ -1443,6 +1337,7 @@ class SyncCore:
                     category=None,
                     failure_code=None,
                     projected_generation=None,
+                    reconciliation_generation=None,
                     last_received_at=safe.received_at,
                     source_updated_at=None,
                     last_delivery_sequence=delivery_sequence,
@@ -1478,6 +1373,7 @@ class SyncCore:
                 ),
                 InboxState.RECONCILE_REQUIRED,
                 failure_code=None,
+                reconciliation_generation=None,
             )
             self._entries[key] = entry
             self._conflicting_deliveries_total += 1
@@ -1495,6 +1391,8 @@ class SyncCore:
                 entry = self._entries.get(safe_key)
                 if entry is None:
                     raise SyncOperationError("The synchronization event does not exist.")
+                if entry.reconciliation_generation is not None:
+                    return self._status(entry)
                 if entry.state in {InboxState.PROJECTED, InboxState.RECONCILE_REQUIRED}:
                     return self._status(entry)
                 if (
@@ -1659,6 +1557,11 @@ class SyncCore:
         _text(expected_active_generation, _GENERATION_RE, "expected active generation")
         with self._process_lock:
             captured_at = self._safe_clock()
+            try:
+                token_sha256 = secrets.token_hex(32)
+                _text(token_sha256, _SHA256_RE, "reconciliation fence token")
+            except Exception:
+                raise SyncOperationError("Reconciliation fence creation failed.") from None
             with self._lock:
                 active_generation = self._pair.active.generation.dataset_generation
                 if active_generation != expected_active_generation:
@@ -1670,7 +1573,7 @@ class SyncCore:
                     active_generation=active_generation,
                     delivery_sequence=self._delivery_sequence,
                     captured_at=captured_at,
-                    token_sha256=secrets.token_hex(32),
+                    token_sha256=token_sha256,
                 )
                 self._active_reconciliation_fence = _copy_reconciliation_fence(fence)
                 self._post_fence_first_sequences = {}
@@ -1853,12 +1756,24 @@ class SyncCore:
                 updated_entries = dict(self._entries)
                 for covered_key, covered_entry in updated_entries.items():
                     if covered_entry.last_delivery_sequence <= safe_fence.delivery_sequence:
-                        updated_entries[covered_key] = replace(
-                            covered_entry,
-                            state=InboxState.PROJECTED,
-                            failure_code=None,
-                            projected_generation=replay_slot.generation.dataset_generation,
-                        )
+                        if _STATE_RANK[covered_entry.state] < _STATE_RANK[InboxState.PROJECTED]:
+                            covered_entry = self._transition_entry(
+                                covered_entry,
+                                InboxState.PROJECTED,
+                                failure_code=None,
+                                projected_generation=(replay_slot.generation.dataset_generation),
+                                reconciliation_generation=(
+                                    replay_slot.generation.dataset_generation
+                                ),
+                            )
+                        else:
+                            covered_entry = replace(
+                                covered_entry,
+                                reconciliation_generation=(
+                                    replay_slot.generation.dataset_generation
+                                ),
+                            )
+                        updated_entries[covered_key] = covered_entry
                 newly_projected = 0
                 for _, replay_key, replay_entry in replay_entries:
                     if replay_entry.state is not InboxState.PROJECTED:
@@ -1869,6 +1784,7 @@ class SyncCore:
                         state=InboxState.PROJECTED,
                         failure_code=None,
                         projected_generation=replayed_generations[replay_key],
+                        reconciliation_generation=None,
                     )
                 self._entries = updated_entries
                 self._pair = _GenerationPair(active=replay_slot, previous=pair.active)
@@ -2033,6 +1949,7 @@ class SyncCore:
                 category=event.category,
                 failure_code=None,
                 projected_generation=candidate.dataset_generation,
+                reconciliation_generation=None,
             )
             self._pair = _GenerationPair(active=new_slot, previous=expected_slot)
             self._max_source_cut_key = _timestamp_key(
@@ -2059,6 +1976,7 @@ class SyncCore:
                 InboxState.FAILED,
                 failure_code=failure_code,
                 projected_generation=None,
+                reconciliation_generation=None,
             )
             self._entries[key] = entry
             self._unresolved_failed.add(key)
@@ -2071,13 +1989,17 @@ class SyncCore:
 
     def _mark_reconcile_locked(self, key: _InboxKey, category: EventCategory | None) -> EventStatus:
         entry = self._entries[key]
-        if entry.state is not InboxState.RECONCILE_REQUIRED:
+        if (
+            entry.state is not InboxState.RECONCILE_REQUIRED
+            or entry.reconciliation_generation is not None
+        ):
             entry = self._transition_entry(
                 entry,
                 InboxState.RECONCILE_REQUIRED,
                 category=category,
                 failure_code=None,
                 projected_generation=entry.projected_generation,
+                reconciliation_generation=None,
             )
             self._entries[key] = entry
             self._reconciliation_decisions_total += 1
@@ -2093,6 +2015,7 @@ class SyncCore:
         category: EventCategory | object | None = ...,
         failure_code: FailureCode | object | None = ...,
         projected_generation: str | object | None = ...,
+        reconciliation_generation: str | object | None = ...,
         source_updated_at: str | object | None = ...,
     ) -> _InboxEntry:
         if type(state) is not InboxState or _STATE_RANK[state] < _STATE_RANK[entry.state]:
@@ -2104,6 +2027,11 @@ class SyncCore:
             failure_code=entry.failure_code if failure_code is ... else failure_code,
             projected_generation=(
                 entry.projected_generation if projected_generation is ... else projected_generation
+            ),
+            reconciliation_generation=(
+                entry.reconciliation_generation
+                if reconciliation_generation is ...
+                else reconciliation_generation
             ),
             source_updated_at=(
                 entry.source_updated_at if source_updated_at is ... else source_updated_at
@@ -2118,8 +2046,10 @@ class SyncCore:
             category=entry.category,
             failure_code=entry.failure_code,
             projected_generation=entry.projected_generation,
+            reconciliation_generation=entry.reconciliation_generation,
             dead_letter=(
-                entry.state is InboxState.FAILED
+                entry.reconciliation_generation is None
+                and entry.state is InboxState.FAILED
                 and entry.processing_attempts >= self._max_processing_attempts
             ),
         )
@@ -2134,6 +2064,7 @@ class SyncCore:
             processing_attempts=status.processing_attempts,
             category=status.category,
             failure_code=status.failure_code,
+            reconciliation_generation=status.reconciliation_generation,
             dead_letter=status.dead_letter,
         )
 
