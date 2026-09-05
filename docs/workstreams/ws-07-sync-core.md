@@ -28,7 +28,10 @@ built-in tuple `(shopDomain, webhookId)`; public `WebhookKey` values are separat
 tuple-backed values which cannot mutate dictionary/set hashing. An identical delivery is
 idempotent even when its receipt timestamp differs; a reused key with a different topic, API
 version, or payload hash is a conflict and requires reconciliation. Raw payloads are excluded
-from representations and safe operational reports, whose keys never alias internal keys.
+from representations and safe operational reports, whose keys never alias internal keys. Each
+logical key retains its immutable first-delivery sequence. Exact duplicates still advance the
+global delivery sequence for commit race detection, but never create a second catch-up
+obligation; a conflicting reuse does create one and clears any prior reconciliation resolution.
 
 Ordinary per-event inbox processing is monotonic:
 
@@ -45,7 +48,10 @@ that per-event transition graph. Covered `received`, `validated`, or `failed` en
 `reconcile_required` entry remains at that highest-rank state for conflict audit. Every covered
 entry receives a separate `reconciliationGeneration` resolution marker, becomes terminal to
 `process`, and is removed from pending/dead-letter readiness accounting only in the same atomic
-generation swap. A later conflicting reuse clears that marker and reopens the pending decision.
+generation swap. Snapshot coverage never fabricates an event `projectedGeneration`: covered
+lower-rank entries preserve its prior value (normally null), while an already projected event
+retains its exact event generation. A later conflicting reuse clears the resolution marker and
+reopens the pending decision.
 
 Ordinary adapter, clock, candidate, and activation exceptions become fixed failure codes and
 never render attacker-controlled exception text. `BaseException` is deliberately not
@@ -150,12 +156,17 @@ operational error without replacing any registered fence; `BaseException` delibe
 
 Installation proves that both capture windows began at or after the registered fence. Deliveries
 at or before the fence sequence are covered by that later full capture without consulting their
-receipt/source timestamps. Every delivery after the fence must already be a successfully frozen
-event; failed, conflicting, unsupported, or unprocessed deliveries reject the install and remain
-unresolved. The core replays post-fence events by each key's first delivery sequence after the
-fence, so a later duplicate cannot reorder two distinct events against the candidate. An event
-already reflected by the snapshot is accepted only when projection is a byte-identical no-op;
-newer events create validated incremental descendants. A final compare-and-swap checks the active
+receipt/source timestamps. Coverage uses the immutable first-delivery sequence, so a later exact
+duplicate cannot strand a pre-fence entry. Only a new logical key or conflict after the fence
+creates catch-up work, and every reachable replay entry must be exactly `validated`; failed,
+conflicting, unsupported, unprocessed, or forged-state entries reject the install and remain
+unresolved. The core replays obligations in first-delivery order, so a duplicate cannot reorder
+two distinct events. A stale event already subsumed by the snapshot is accepted only when its
+projection is byte-identical: it stays `validated`, keeps `projectedGeneration` null, receives the
+installed `reconciliationGeneration`, and becomes terminal without changing event lineage,
+applied order, source/build cut, `projectedEventsTotal`, or `lastProjectedAt`. Only a true newer
+advance becomes `projected`, receives its exact event generation, clears the reconciliation
+marker, and increments those event-projection metrics. A final compare-and-swap checks the active
 pair, registered fence, every replay entry, and the global delivery sequence. Any reception during
 candidate validation, catch-up, activation, or commit rejects the attempt with no partial swap.
 The displaced active generation remains available as rollback state, and rollback itself is
@@ -174,10 +185,10 @@ Focused author evidence:
 ```text
 pytest -o pythonpath=src tests/test_sync.py --cov=nla_catalog_gateway.sync \
   --cov-branch --cov-report=term-missing
-145 passed; 1064/1064 statements and 266/266 branches covered (100%)
-focused sync/reconciliation/bulk/runtime/taxonomy suite: 501 passed
-full suite (`nla_catalog_gateway` + `scripts`): 1352 passed;
-  6150/6150 statements and 2296/2296 branches covered (100%)
+152 passed; 1077/1077 statements and 268/268 branches covered (100%)
+focused sync/reconciliation/bulk/runtime/taxonomy suite: 508 passed
+full suite (`nla_catalog_gateway` + `scripts`): 1359 passed;
+  6163/6163 statements and 2298/2298 branches covered (100%)
 ruff check: passed; ruff format check: 48 files already formatted
 preflight: ok, 63 files scanned, 0 failures
 build without isolation: sdist and wheel built successfully from this worktree

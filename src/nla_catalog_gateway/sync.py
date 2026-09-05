@@ -568,6 +568,7 @@ class _InboxEntry:
     reconciliation_generation: str | None
     last_received_at: str
     source_updated_at: str | None
+    first_delivery_sequence: int
     last_delivery_sequence: int
     validated_event: ValidatedWebhookEvent | None
     event_identity_sha256: str | None
@@ -593,6 +594,17 @@ class _GenerationPair:
 
 class _ProjectionNeedsReconciliation(Exception):
     pass
+
+
+class _CatchUpDisposition(StrEnum):
+    ADVANCED = "advanced"
+    SUBSUMED_NOOP = "subsumed_noop"
+
+
+@dataclass(frozen=True, slots=True)
+class _CatchUpResult:
+    disposition: _CatchUpDisposition
+    projected_generation: str | None
 
 
 _InboxKey = tuple[str, str]
@@ -1324,8 +1336,6 @@ class SyncCore:
                 raise SyncOperationError("The synchronization inbox is at capacity.")
             self._delivery_sequence += 1
             delivery_sequence = self._delivery_sequence
-            if self._active_reconciliation_fence is not None:
-                self._post_fence_first_sequences.setdefault(key, delivery_sequence)
             self._deliveries_total += 1
             self._record_last_event_locked(safe.received_at)
             if existing is None:
@@ -1340,10 +1350,13 @@ class SyncCore:
                     reconciliation_generation=None,
                     last_received_at=safe.received_at,
                     source_updated_at=None,
+                    first_delivery_sequence=delivery_sequence,
                     last_delivery_sequence=delivery_sequence,
                     validated_event=None,
                     event_identity_sha256=None,
                 )
+                if self._active_reconciliation_fence is not None:
+                    self._post_fence_first_sequences[key] = delivery_sequence
                 self._entries[key] = entry
                 self._inbox_retained_bytes += retained_bytes
                 self._unique_events_total += 1
@@ -1364,6 +1377,8 @@ class SyncCore:
                 self._entries[key] = entry
                 self._duplicate_deliveries_total += 1
                 return DeliveryResult(WebhookKey(*key), self._status(entry), True, False)
+            if self._active_reconciliation_fence is not None:
+                self._post_fence_first_sequences.setdefault(key, delivery_sequence)
             entry = self._transition_entry(
                 replace(
                     existing,
@@ -1645,7 +1660,7 @@ class SyncCore:
                     )
                 )
                 if any(
-                    entry.state not in {InboxState.VALIDATED, InboxState.PROJECTED}
+                    entry.state is not InboxState.VALIDATED
                     or entry.validated_event is None
                     or entry.event_identity_sha256 is None
                     for _, _, entry in replay_entries
@@ -1676,7 +1691,7 @@ class SyncCore:
                     raise _error("reconciliation build timestamp must advance its high-watermark")
 
                 replay_slot = _GenerationSlot(candidate, MappingProxyType({}))
-                replayed_generations: dict[_InboxKey, str] = {}
+                replay_results: dict[_InboxKey, _CatchUpResult] = {}
                 for _, replay_key, replay_entry in replay_entries:
                     event = _clone_validated_event(replay_entry.validated_event)
                     envelope = _clone_envelope(replay_entry.envelope)
@@ -1717,11 +1732,19 @@ class SyncCore:
                             event_identity,
                         )
                         replay_slot = _GenerationSlot(replayed, MappingProxyType(orders))
-                    elif tuple(record.to_json_bytes() for record in projected_records) != tuple(
-                        record.to_json_bytes() for record in replay_slot.generation.records
-                    ):
-                        raise _ProjectionNeedsReconciliation
-                    replayed_generations[replay_key] = replay_slot.generation.dataset_generation
+                        replay_results[replay_key] = _CatchUpResult(
+                            _CatchUpDisposition.ADVANCED,
+                            replayed.dataset_generation,
+                        )
+                    else:
+                        if tuple(record.to_json_bytes() for record in projected_records) != tuple(
+                            record.to_json_bytes() for record in replay_slot.generation.records
+                        ):
+                            raise _ProjectionNeedsReconciliation
+                        replay_results[replay_key] = _CatchUpResult(
+                            _CatchUpDisposition.SUBSUMED_NOOP,
+                            None,
+                        )
 
                 candidate_built_key = _timestamp_key(
                     replay_slot.generation.built_at, "reconciliation build timestamp"
@@ -1748,20 +1771,23 @@ class SyncCore:
                         current_entry.last_delivery_sequence != replay_entry.last_delivery_sequence
                         or current_entry.validated_event != replay_entry.validated_event
                         or current_entry.event_identity_sha256 != replay_entry.event_identity_sha256
-                        or current_entry.state not in {InboxState.VALIDATED, InboxState.PROJECTED}
+                        or current_entry.state is not InboxState.VALIDATED
                     ):
                         raise SyncOperationError(
                             "Deliveries changed during reconciliation catch-up."
                         )
                 updated_entries = dict(self._entries)
                 for covered_key, covered_entry in updated_entries.items():
-                    if covered_entry.last_delivery_sequence <= safe_fence.delivery_sequence:
+                    if (
+                        covered_entry.first_delivery_sequence <= safe_fence.delivery_sequence
+                        and covered_key not in post_fence_sequences
+                    ):
                         if _STATE_RANK[covered_entry.state] < _STATE_RANK[InboxState.PROJECTED]:
                             covered_entry = self._transition_entry(
                                 covered_entry,
                                 InboxState.PROJECTED,
                                 failure_code=None,
-                                projected_generation=(replay_slot.generation.dataset_generation),
+                                projected_generation=covered_entry.projected_generation,
                                 reconciliation_generation=(
                                     replay_slot.generation.dataset_generation
                                 ),
@@ -1774,18 +1800,24 @@ class SyncCore:
                                 ),
                             )
                         updated_entries[covered_key] = covered_entry
-                newly_projected = 0
+                advanced_events = 0
                 for _, replay_key, replay_entry in replay_entries:
-                    if replay_entry.state is not InboxState.PROJECTED:
-                        newly_projected += 1
+                    replay_result = replay_results[replay_key]
+                    if replay_result.disposition is _CatchUpDisposition.ADVANCED:
+                        advanced_events += 1
                         self._record_last_projected_locked(replay_entry.envelope.received_at)
-                    updated_entries[replay_key] = replace(
-                        replay_entry,
-                        state=InboxState.PROJECTED,
-                        failure_code=None,
-                        projected_generation=replayed_generations[replay_key],
-                        reconciliation_generation=None,
-                    )
+                        updated_entries[replay_key] = self._transition_entry(
+                            replay_entry,
+                            InboxState.PROJECTED,
+                            failure_code=None,
+                            projected_generation=replay_result.projected_generation,
+                            reconciliation_generation=None,
+                        )
+                    else:
+                        updated_entries[replay_key] = replace(
+                            replay_entry,
+                            reconciliation_generation=(replay_slot.generation.dataset_generation),
+                        )
                 self._entries = updated_entries
                 self._pair = _GenerationPair(active=replay_slot, previous=pair.active)
                 self._max_source_cut_key = _timestamp_key(
@@ -1799,7 +1831,7 @@ class SyncCore:
                 self._rollback_reconciliation_pending = False
                 self._active_reconciliation_fence = None
                 self._post_fence_first_sequences = {}
-                self._projected_events_total += newly_projected
+                self._projected_events_total += advanced_events
                 self._reconciliation_installs_total += 1
                 return replay_slot.generation.dataset_generation
 

@@ -21,6 +21,7 @@ from nla_catalog_gateway.runtime_contract import (
 )
 from nla_catalog_gateway.sync import (
     ActivationKind,
+    DeliveryResult,
     EventCategory,
     FailureCode,
     InboxState,
@@ -328,6 +329,7 @@ def _envelope(
     *,
     shop_domain: str = SHOP,
     topic: str = "products/update",
+    api_version: str = "2026-07",
     received_at: str = EVENT_TIME,
     payload: bytes = b'{"synthetic":true}',
 ) -> RawWebhookEnvelope:
@@ -335,7 +337,7 @@ def _envelope(
         shop_domain=shop_domain,
         webhook_id=webhook_id,
         topic=topic,
-        api_version="2026-07",
+        api_version=api_version,
         received_at=received_at,
         payload=payload,
     )
@@ -1283,12 +1285,21 @@ def test_reconciliation_fence_replays_frozen_post_fence_event_before_commit() ->
     assert active.source_cut_at == "2026-09-02T00:03:00Z"
     assert active.records[0].variants[0].price_text == "9.9900"
     assert active.records[1] == _records()[1]
-    assert core.event_status(delivery.key).state is InboxState.PROJECTED
+    status = core.event_status(delivery.key)
+    assert status.state is InboxState.PROJECTED
+    assert status.projected_generation == installed
+    assert status.reconciliation_generation is None
     assert adapters.validator_calls == 1
-    assert not core.metrics().projection_paused
+    metrics = core.metrics()
+    assert metrics.projected_events_total == 1
+    assert metrics.last_projected_at == "2026-09-02T00:03:00Z"
+    assert not metrics.projection_paused
 
 
-@pytest.mark.parametrize("failure_mode", ["failed", "conflicting", "unprocessed"])
+@pytest.mark.parametrize(
+    "failure_mode",
+    ["failed", "conflicting", "unprocessed", "projected"],
+)
 def test_post_fence_unresolved_delivery_blocks_reconciliation_install(
     failure_mode: str,
 ) -> None:
@@ -1308,8 +1319,12 @@ def test_post_fence_unresolved_delivery_blocks_reconciliation_install(
         assert core.receive(
             _envelope("post-fence-unresolved", payload=b'{"different":true}')
         ).conflict
-    else:
+    elif failure_mode == "unprocessed":
         assert core.receive(envelope).status.state is InboxState.RECEIVED
+    else:
+        assert core.ingest(envelope).status.state is InboxState.VALIDATED
+        key = (SHOP, envelope.webhook_id)
+        core._entries[key] = replace(core._entries[key], state=InboxState.PROJECTED)
 
     with pytest.raises(SyncOperationError, match="catch-up is incomplete"):
         core.install_reconciliation(
@@ -1442,16 +1457,134 @@ def test_stale_post_fence_event_must_be_an_exact_noop_to_install() -> None:
     reconciled = _reconciled_generation(_records(), generated_at="2026-09-02T00:02:00Z")
     delivery = core.ingest(_envelope("stale-noop"))
     assert delivery.status.state is InboxState.VALIDATED
-    assert (
+    before_metrics = core.metrics()
+    installed = core.install_reconciliation(
+        shop_domain=SHOP,
+        fence=fence,
+        reconciled_generation=reconciled,
+        expected_active_generation=active.dataset_generation,
+    )
+    assert installed == reconciled.dataset_manifest.dataset_generation
+    status = core.event_status(delivery.key)
+    assert status.state is InboxState.VALIDATED
+    assert status.projected_generation is None
+    assert status.reconciliation_generation == installed
+    assert core.process(delivery.key) == status
+    active_after = core.active_dataset()
+    assert active_after.dataset_generation == reconciled.dataset_manifest.dataset_generation
+    assert active_after.source_cut_at == "2026-09-02T00:02:00Z"
+    assert active_after.built_at == "2026-09-02T00:02:00Z"
+    assert active_after.applied_event_count == 0
+    assert active_after.last_event_identity_sha256 is None
+    assert active_after.parent_dataset_generation is None
+    assert dict(core._pair.active.applied_orders) == {}
+    assert adapters.validator_calls == 1
+    assert adapters.projector_calls == 1
+    metrics = core.metrics()
+    assert metrics.projected_events_total == before_metrics.projected_events_total
+    assert metrics.last_projected_at == before_metrics.last_projected_at
+
+
+def test_order_safe_event_cannot_disguise_byte_identical_output_as_coverage() -> None:
+    adapters = Adapters()
+    adapters.source_updated_at = "2026-09-02T00:03:00Z"
+    adapters.projector_override = lambda context, _event: context.records
+    core, _, clock = _core(adapters)
+    active = core.active_dataset()
+    fence = core.capture_reconciliation_fence(expected_active_generation=active.dataset_generation)
+    reconciled = _reconciled_generation(
+        active.records,
+        generated_at="2026-09-02T00:02:00Z",
+    )
+    delivery = core.ingest(_envelope("unsafe-false-noop", received_at="2026-09-02T00:03:00Z"))
+    assert delivery.status.state is InboxState.VALIDATED
+    clock.value = "2026-09-02T00:04:00Z"
+    with pytest.raises(SyncOperationError, match="validation, catch-up"):
         core.install_reconciliation(
             shop_domain=SHOP,
             fence=fence,
             reconciled_generation=reconciled,
             expected_active_generation=active.dataset_generation,
         )
-        == reconciled.dataset_manifest.dataset_generation
+    status = core.event_status(delivery.key)
+    assert status.state is InboxState.VALIDATED
+    assert status.projected_generation is None
+    assert status.reconciliation_generation is None
+    assert core.active_dataset() == active
+    assert core.metrics().projected_events_total == 0
+
+
+@pytest.mark.parametrize("delivery_order", ["stale-first", "advance-first"])
+def test_mixed_catch_up_attributes_only_true_advance(
+    delivery_order: str,
+) -> None:
+    adapters = Adapters()
+
+    def mixed_projection(
+        context: ProjectionContext,
+        event: ValidatedWebhookEvent,
+    ) -> tuple[CatalogProductRecordV1, ...]:
+        if event.source_updated_at == "2026-09-02T00:01:00Z":
+            return context.records
+        target = context.records[0]
+        variant = replace(
+            target.variants[0],
+            price_text="7.7700",
+            updated_at=event.source_updated_at,
+        )
+        return (
+            replace(target, updated_at=event.source_updated_at, variants=(variant,)),
+            context.records[1],
+        )
+
+    adapters.projector_override = mixed_projection
+    core, _, clock = _core(adapters)
+    active = core.active_dataset()
+    fence = core.capture_reconciliation_fence(expected_active_generation=active.dataset_generation)
+    reconciled = _reconciled_generation(
+        active.records,
+        generated_at="2026-09-02T00:02:00Z",
     )
-    assert core.event_status(delivery.key).state is InboxState.PROJECTED
+    deliveries = {
+        "stale": (
+            "2026-09-02T00:01:00Z",
+            _envelope("mixed-stale", received_at="2026-09-02T00:04:00Z"),
+        ),
+        "advance": (
+            "2026-09-02T00:03:00Z",
+            _envelope("mixed-advance", received_at="2026-09-02T00:05:00Z"),
+        ),
+    }
+    order = ("stale", "advance") if delivery_order == "stale-first" else ("advance", "stale")
+    results: dict[str, DeliveryResult] = {}
+    for name in order:
+        adapters.source_updated_at, envelope = deliveries[name]
+        results[name] = core.ingest(envelope)
+        assert results[name].status.state is InboxState.VALIDATED
+
+    clock.value = "2026-09-02T00:06:00Z"
+    installed = core.install_reconciliation(
+        shop_domain=SHOP,
+        fence=fence,
+        reconciled_generation=reconciled,
+        expected_active_generation=active.dataset_generation,
+    )
+    stale_status = core.event_status(results["stale"].key)
+    assert stale_status.state is InboxState.VALIDATED
+    assert stale_status.projected_generation is None
+    assert stale_status.reconciliation_generation == installed
+    advanced_status = core.event_status(results["advance"].key)
+    assert advanced_status.state is InboxState.PROJECTED
+    assert advanced_status.projected_generation == installed
+    assert advanced_status.reconciliation_generation is None
+    active_after = core.active_dataset()
+    assert active_after.applied_event_count == 1
+    assert active_after.records[0].variants[0].price_text == "7.7700"
+    assert adapters.validator_calls == 2
+    assert adapters.projector_calls == 2
+    metrics = core.metrics()
+    assert metrics.projected_events_total == 1
+    assert metrics.last_projected_at == "2026-09-02T00:05:00Z"
 
 
 @pytest.mark.parametrize("tamper", ["topic", "digest", "state"])
@@ -1495,10 +1628,13 @@ def test_reconciliation_catch_up_revalidates_frozen_entry_at_both_boundaries(
     assert core.active_dataset() == active
 
 
-def test_projected_duplicate_after_fence_is_replayed_as_idempotent_noop() -> None:
+def test_projected_exact_duplicate_after_fence_is_covered_without_replay() -> None:
     core, adapters, _ = _core()
     envelope = _envelope("projected-before-fence")
-    assert core.ingest(envelope).status.state is InboxState.PROJECTED
+    projected = core.ingest(envelope).status
+    assert projected.state is InboxState.PROJECTED
+    event_generation = projected.projected_generation
+    assert event_generation is not None
     active = core.active_dataset()
     fence = core.capture_reconciliation_fence(expected_active_generation=active.dataset_generation)
     reconciled = _reconciled_generation(active.records, generated_at="2026-09-02T00:02:00Z")
@@ -1509,6 +1645,10 @@ def test_projected_duplicate_after_fence_is_replayed_as_idempotent_noop() -> Non
         )
     )
     assert duplicate.duplicate
+    key = (SHOP, envelope.webhook_id)
+    assert core._entries[key].first_delivery_sequence <= fence.delivery_sequence
+    assert key not in core._post_fence_first_sequences
+    before_metrics = core.metrics()
     installed = core.install_reconciliation(
         shop_domain=SHOP,
         fence=fence,
@@ -1516,7 +1656,15 @@ def test_projected_duplicate_after_fence_is_replayed_as_idempotent_noop() -> Non
         expected_active_generation=active.dataset_generation,
     )
     assert installed == reconciled.dataset_manifest.dataset_generation
+    status = core.event_status(envelope.key)
+    assert status.state is InboxState.PROJECTED
+    assert status.projected_generation == event_generation
+    assert status.reconciliation_generation == installed
     assert adapters.validator_calls == 1
+    assert adapters.projector_calls == 1
+    metrics = core.metrics()
+    assert metrics.projected_events_total == before_metrics.projected_events_total
+    assert metrics.last_projected_at == before_metrics.last_projected_at
 
 
 def test_post_fence_duplicate_cannot_reorder_distinct_events_for_one_product() -> None:
@@ -1550,7 +1698,10 @@ def test_post_fence_duplicate_cannot_reorder_distinct_events_for_one_product() -
         core.ingest(_envelope("second-after-fence", payload=b'{"event":2}')).status.state
         is InboxState.VALIDATED
     )
+    first_key = (SHOP, first_envelope.webhook_id)
+    first_sequence = core._post_fence_first_sequences[first_key]
     assert core.receive(first_envelope).duplicate
+    assert core._post_fence_first_sequences[first_key] == first_sequence
 
     clock.value = "2026-09-02T00:05:00Z"
     core.install_reconciliation(
@@ -1560,6 +1711,9 @@ def test_post_fence_duplicate_cannot_reorder_distinct_events_for_one_product() -
         expected_active_generation=active.dataset_generation,
     )
     assert core.active_dataset().records[0].variants[0].price_text == "4.0000"
+    assert adapters.validator_calls == 2
+    assert adapters.projector_calls == 2
+    assert core.metrics().projected_events_total == 2
 
 
 def test_reconciliation_and_rollback_probes_fail_without_a_partial_swap() -> None:
@@ -1712,7 +1866,7 @@ def test_reconciliation_cut_blocks_received_and_failed_event_replay() -> None:
     installed = core.active_dataset()
     received_status = core.process(received.key)
     assert received_status.state is InboxState.PROJECTED
-    assert received_status.projected_generation == installed.dataset_generation
+    assert received_status.projected_generation is None
     assert received_status.reconciliation_generation == installed.dataset_generation
     assert adapters.projector_calls == 0
     assert core.active_dataset() == installed
@@ -1735,7 +1889,7 @@ def test_reconciliation_cut_blocks_received_and_failed_event_replay() -> None:
     retry = other.process(failed.key)
     assert retry.state is InboxState.PROJECTED
     assert retry.failure_code is None
-    assert retry.projected_generation == reconciled.dataset_generation
+    assert retry.projected_generation is None
     assert retry.reconciliation_generation == reconciled.dataset_generation
     assert failing_adapters.projector_calls == calls
     assert other.active_dataset() == reconciled
@@ -1774,8 +1928,23 @@ def test_pre_fence_resolution_is_monotonic_terminal_and_auditable(
     assert before.state.value == starting_state
     before_rank = sync._STATE_RANK[before.state]
     calls = (adapters.validator_calls, adapters.projector_calls)
+    key = (SHOP, envelope.webhook_id)
+    first_sequence = core._entries[key].first_delivery_sequence
     active = core.active_dataset()
     fence = core.capture_reconciliation_fence(expected_active_generation=active.dataset_generation)
+    unresolved_duplicate = core.receive(
+        _envelope(
+            envelope.webhook_id,
+            topic=envelope.topic,
+            api_version=envelope.api_version,
+            received_at="2026-09-02T00:01:30Z",
+            payload=envelope.payload,
+        )
+    )
+    assert unresolved_duplicate.duplicate
+    assert not unresolved_duplicate.conflict
+    assert core._entries[key].first_delivery_sequence == first_sequence
+    assert key not in core._post_fence_first_sequences
     installed = core.install_reconciliation(
         shop_domain=SHOP,
         fence=fence,
@@ -1795,11 +1964,9 @@ def test_pre_fence_resolution_is_monotonic_terminal_and_auditable(
     assert after.state is expected_state
     assert sync._STATE_RANK[after.state] >= before_rank
     assert after.reconciliation_generation == installed
+    assert after.projected_generation == before.projected_generation
     if before_rank < sync._STATE_RANK[InboxState.PROJECTED]:
-        assert after.projected_generation == installed
         assert after.failure_code is None
-    else:
-        assert after.projected_generation == before.projected_generation
     assert core.process(delivery.key) == after
     assert (adapters.validator_calls, adapters.projector_calls) == calls
     assert core.pending_reconciliation() == ()
@@ -1810,8 +1977,49 @@ def test_pre_fence_resolution_is_monotonic_terminal_and_auditable(
     assert not metrics.projection_paused
     assert not metrics.stale
 
+    r2_active = core.active_dataset()
+    r2_fence = core.capture_reconciliation_fence(
+        expected_active_generation=r2_active.dataset_generation
+    )
+    duplicate = core.receive(
+        _envelope(
+            envelope.webhook_id,
+            topic=envelope.topic,
+            api_version=envelope.api_version,
+            received_at="2026-09-02T00:02:30Z",
+            payload=envelope.payload,
+        )
+    )
+    assert duplicate.duplicate
+    assert not duplicate.conflict
+    assert core._entries[key].first_delivery_sequence == first_sequence
+    assert key not in core._post_fence_first_sequences
+    before_r2_metrics = core.metrics()
+    installed_r2 = core.install_reconciliation(
+        shop_domain=SHOP,
+        fence=r2_fence,
+        reconciled_generation=_reconciled_generation(
+            r2_active.records,
+            generated_at="2026-09-02T00:03:00Z",
+        ),
+        expected_active_generation=r2_active.dataset_generation,
+    )
+    after_r2 = core.event_status(delivery.key)
+    assert after_r2.state is after.state
+    assert after_r2.projected_generation == after.projected_generation
+    assert after_r2.reconciliation_generation == installed_r2
+    assert core.process(delivery.key) == after_r2
+    assert (adapters.validator_calls, adapters.projector_calls) == calls
+    after_r2_metrics = core.metrics()
+    assert after_r2_metrics.projected_events_total == before_r2_metrics.projected_events_total
+    assert after_r2_metrics.last_projected_at == before_r2_metrics.last_projected_at
+    assert core.pending_reconciliation() == ()
 
-def test_conflict_after_reconciliation_resolution_preserves_audit_and_reopens_pending() -> None:
+
+@pytest.mark.parametrize("conflict_kind", ["payload", "topic", "api-version"])
+def test_conflict_after_resolution_blocks_current_cycle_until_later_capture(
+    conflict_kind: str,
+) -> None:
     core, _, _ = _core()
     envelope = _envelope("resolved-conflict", topic="products/unknown")
     delivery = core.ingest(envelope)
@@ -1832,20 +2040,59 @@ def test_conflict_after_reconciliation_resolution_preserves_audit_and_reopens_pe
     assert resolved.reconciliation_generation == installed
     assert core.pending_reconciliation() == ()
 
-    conflict = core.receive(
-        _envelope(
-            "resolved-conflict",
-            topic="products/unknown",
-            payload=b'{"conflict":true}',
-        )
+    r2_active = core.active_dataset()
+    r2_fence = core.capture_reconciliation_fence(
+        expected_active_generation=r2_active.dataset_generation
     )
+    conflict_values: dict[str, Any] = {
+        "topic": envelope.topic,
+        "api_version": envelope.api_version,
+        "payload": envelope.payload,
+    }
+    if conflict_kind == "payload":
+        conflict_values["payload"] = b'{"conflict":true}'
+    elif conflict_kind == "topic":
+        conflict_values["topic"] = "products/delete"
+    else:
+        conflict_values["api_version"] = "2026-04"
+    conflict = core.receive(_envelope("resolved-conflict", **conflict_values))
     assert conflict.conflict
     assert conflict.status.state is InboxState.RECONCILE_REQUIRED
     assert conflict.status.reconciliation_generation is None
+    key = (SHOP, envelope.webhook_id)
+    assert core._post_fence_first_sequences[key] > r2_fence.delivery_sequence
     pending = core.pending_reconciliation()
     assert len(pending) == 1
     assert pending[0].state is InboxState.RECONCILE_REQUIRED
     assert pending[0].reconciliation_generation is None
+    with pytest.raises(SyncOperationError, match="catch-up is incomplete"):
+        core.install_reconciliation(
+            shop_domain=SHOP,
+            fence=r2_fence,
+            reconciled_generation=_reconciled_generation(
+                r2_active.records,
+                generated_at="2026-09-02T00:03:00Z",
+            ),
+            expected_active_generation=r2_active.dataset_generation,
+        )
+    assert core.active_dataset() == r2_active
+
+    r3_fence = core.capture_reconciliation_fence(
+        expected_active_generation=r2_active.dataset_generation
+    )
+    installed_r3 = core.install_reconciliation(
+        shop_domain=SHOP,
+        fence=r3_fence,
+        reconciled_generation=_reconciled_generation(
+            r2_active.records,
+            generated_at="2026-09-02T00:04:00Z",
+        ),
+        expected_active_generation=r2_active.dataset_generation,
+    )
+    final = core.event_status(delivery.key)
+    assert final.state is InboxState.RECONCILE_REQUIRED
+    assert final.reconciliation_generation == installed_r3
+    assert core.pending_reconciliation() == ()
 
 
 def test_rollback_does_not_lower_reconciliation_high_watermarks() -> None:
@@ -1917,6 +2164,66 @@ def test_reconciliation_preserves_conflict_arriving_after_captured_watermark(
     assert metrics.unresolved_reconciliation_events == 1
     assert metrics.projection_paused
     assert metrics.stale
+
+
+def test_exact_duplicate_during_build_aborts_cas_then_same_fence_can_retry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    core, adapters, _ = _core()
+    envelope = _envelope("duplicate-during-build")
+    projected = core.ingest(envelope).status
+    event_generation = projected.projected_generation
+    assert event_generation is not None
+    active = core.active_dataset()
+    candidate = _candidate_args(
+        core,
+        active.records,
+        generated_at="2026-09-02T00:02:00Z",
+    )
+    original_copy = sync._copy_reconciled_generation
+    injected = False
+
+    def copy_with_duplicate(*args: Any, **kwargs: Any) -> Any:
+        nonlocal injected
+        result = original_copy(*args, **kwargs)
+        if not injected:
+            injected = True
+            duplicate = core.receive(
+                _envelope(
+                    envelope.webhook_id,
+                    received_at="2026-09-02T00:02:30Z",
+                    payload=envelope.payload,
+                )
+            )
+            assert duplicate.duplicate
+        return result
+
+    monkeypatch.setattr(sync, "_copy_reconciled_generation", copy_with_duplicate)
+    with pytest.raises(SyncOperationError, match="Deliveries changed"):
+        core.install_reconciliation(
+            shop_domain=SHOP,
+            **candidate,
+            expected_active_generation=active.dataset_generation,
+        )
+    assert core.active_dataset() == active
+    assert (SHOP, envelope.webhook_id) not in core._post_fence_first_sequences
+
+    monkeypatch.setattr(sync, "_copy_reconciled_generation", original_copy)
+    before_metrics = core.metrics()
+    installed = core.install_reconciliation(
+        shop_domain=SHOP,
+        **candidate,
+        expected_active_generation=active.dataset_generation,
+    )
+    status = core.event_status(envelope.key)
+    assert status.state is InboxState.PROJECTED
+    assert status.projected_generation == event_generation
+    assert status.reconciliation_generation == installed
+    assert adapters.validator_calls == 1
+    assert adapters.projector_calls == 1
+    metrics = core.metrics()
+    assert metrics.projected_events_total == before_metrics.projected_events_total
+    assert metrics.last_projected_at == before_metrics.last_projected_at
 
 
 def test_reconciliation_coverage_uses_fence_sequence_not_event_timestamp() -> None:
