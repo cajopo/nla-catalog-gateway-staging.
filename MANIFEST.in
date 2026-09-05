@@ -3,3 +3,4 @@ include graphql/catalog_variants_snapshot.graphql
 include scripts/reconcile_split_snapshot.py
 include tests/fixtures/synthetic_magic_display_taxonomy.json
 include tests/fixtures/runtime_contract_v1_golden.json
+include tests/fixtures/canonical_search_v1.json
