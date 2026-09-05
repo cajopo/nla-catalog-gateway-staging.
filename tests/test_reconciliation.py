@@ -49,7 +49,10 @@ def _product(
     product_type: str = "Magic Display",
     variants: int = 1,
 ) -> dict[str, object]:
-    source = None if source_id is None else {"type": "number_integer", "value": source_id}
+    sync_source = None if source_id is None else {"type": "number_integer", "value": source_id}
+    powertools_source = (
+        None if source_id is None else {"type": "single_line_text_field", "value": source_id}
+    )
     return {
         "__typename": "Product",
         "id": _gid("Product", number),
@@ -67,8 +70,8 @@ def _product(
         "tracksInventory": True,
         "variantsCount": {"count": variants},
         "featuredMedia": None,
-        "syncProductId": source,
-        "powertoolsId": source,
+        "syncProductId": sync_source,
+        "powertoolsId": powertools_source,
     }
 
 
@@ -481,7 +484,10 @@ def test_reconciliation_rejects_identity_and_accounting_failures(
         products[3]["syncProductId"] = products[1]["syncProductId"]
         products[3]["powertoolsId"] = products[1]["powertoolsId"]
     elif mutation == "conflicting_source":
-        products[1]["powertoolsId"] = {"type": "number_integer", "value": "999"}
+        products[1]["powertoolsId"] = {
+            "type": "single_line_text_field",
+            "value": "999",
+        }
     elif mutation == "missing_child":
         variants[3]["product"] = {"__typename": "Product", "id": _gid("Product", PRODUCT_ONE)}
     elif mutation == "orphan_variant":
@@ -1000,6 +1006,42 @@ def test_ordered_inputs_normalize_path_resolution_failure(
         reconcile_snapshot_parts(
             inputs, expectation=_expectation(), taxonomy_config=load_taxonomy()
         )
+
+
+def test_pinned_input_handles_must_be_complete_and_distinct(tmp_path: Path) -> None:
+    first, second = _inputs(tmp_path)
+    with first.snapshot_path.open("rb") as handle:
+        incomplete = replace(first, snapshot_handle=handle)
+        with pytest.raises(ReconciliationContractError, match="all four handles"):
+            reconcile_snapshot_parts(
+                (incomplete, second),
+                expectation=_expectation(),
+                taxonomy_config=load_taxonomy(),
+            )
+
+        duplicate_first = replace(first, snapshot_handle=handle, query_handle=handle)
+        duplicate_second = replace(second, snapshot_handle=handle, query_handle=handle)
+        with pytest.raises(ReconciliationContractError, match="must be distinct"):
+            reconcile_snapshot_parts(
+                (duplicate_first, duplicate_second),
+                expectation=_expectation(),
+                taxonomy_config=load_taxonomy(),
+            )
+
+
+def test_pinned_handle_must_match_the_live_regular_path(tmp_path: Path) -> None:
+    expected = tmp_path / "expected"
+    other = tmp_path / "other"
+    expected.write_bytes(b"expected")
+    other.write_bytes(b"other")
+    with expected.open("rb") as expected_handle, other.open("rb") as other_handle:
+        reconciliation._verify_pinned_handle(expected, expected_handle, "input")
+        with pytest.raises(ReconciliationDataError, match="does not match"):
+            reconciliation._verify_pinned_handle(expected, other_handle, "input")
+        with pytest.raises(ReconciliationDataError, match="does not match"):
+            reconciliation._verify_pinned_handle(tmp_path, expected_handle, "input")
+    with pytest.raises(ReconciliationDataError, match="cannot be verified"):
+        reconciliation._verify_pinned_handle(expected, expected_handle, "input")
 
 
 def test_identical_query_hashes_are_rejected(tmp_path: Path) -> None:

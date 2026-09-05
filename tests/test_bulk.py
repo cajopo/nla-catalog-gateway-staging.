@@ -70,7 +70,9 @@ def _product(
             None if source_id is None else {"type": "number_integer", "value": source_id}
         ),
         "powertoolsId": (
-            None if powertools_id is None else {"type": "number_integer", "value": powertools_id}
+            None
+            if powertools_id is None
+            else {"type": "single_line_text_field", "value": powertools_id}
         ),
     }
 
@@ -512,7 +514,11 @@ def test_bounded_pathological_json_is_a_contract_error_without_artifacts(
         ),
         (
             lambda row: row["syncProductId"].update(type="text"),
-            "type must be number_integer",
+            "type does not match its contract",
+        ),
+        (
+            lambda row: row["powertoolsId"].update(type="number_integer"),
+            "type does not match its contract",
         ),
         (
             lambda row: row["syncProductId"].update(value="abc"),
@@ -1264,6 +1270,7 @@ def test_candidate_output_safety_and_failure_cleanup(tmp_path: Path) -> None:
     snapshot, query, evidence = _paths(tmp_path, _minimal_rows())
     repository = tmp_path / "repository"
     repository.mkdir()
+    assert bulk_module._inside(tmp_path / "external", repository) is False
     with pytest.raises(BulkContractError, match="outside the repository"):
         build_source_candidate(
             snapshot,

@@ -9,10 +9,12 @@ import json
 import os
 import stat
 import sys
+import tempfile
 from collections.abc import Sequence
+from contextlib import ExitStack
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, NoReturn
+from typing import Any, BinaryIO, NoReturn
 
 from nla_catalog_gateway import bulk
 from nla_catalog_gateway import reconciliation as reconciliation_model
@@ -34,6 +36,7 @@ TAXONOMY_REPORT_SCHEMA_VERSION = 1
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 _CONCRETE_PATH_TYPE = type(Path())
+_REPARSE_POINT_ATTRIBUTE = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
 _OUTPUT_FILENAMES = frozenset(
     {
         "catalog-records.v1.jsonl",
@@ -90,6 +93,27 @@ class _FileIdentity:
 
 
 @dataclass(frozen=True, slots=True)
+class _InputFileState:
+    identity: _FileIdentity
+    byte_count: int
+    modified_ns: int
+
+
+@dataclass(frozen=True, slots=True)
+class _PinnedInputFile:
+    path: Path
+    state: _InputFileState
+    handle: BinaryIO
+    context: str
+
+
+@dataclass(frozen=True, slots=True)
+class _CreatedArtifact:
+    path: Path
+    identity: _FileIdentity
+
+
+@dataclass(frozen=True, slots=True)
 class _ArtifactEvidence:
     filename: str
     sha256: str
@@ -138,8 +162,16 @@ def _path_has_alias(path: Path) -> bool:
     current = path
     while True:
         try:
-            if current.is_symlink() or current.is_junction():
+            facts = current.lstat()
+            attributes = getattr(facts, "st_file_attributes", 0)
+            if (
+                attributes & _REPARSE_POINT_ATTRIBUTE
+                or current.is_symlink()
+                or current.is_junction()
+            ):
                 return True
+        except FileNotFoundError:
+            pass
         except OSError as exc:
             raise ReconciliationCliError("filesystem alias state cannot be verified") from exc
         if current.parent == current:
@@ -149,6 +181,13 @@ def _path_has_alias(path: Path) -> bool:
 
 def _contains_parent_reference(path: Path) -> bool:
     return any(part == ".." for part in path.parts)
+
+
+def _has_unsafe_path_component(path: Path) -> bool:
+    return any(
+        part != path.anchor and (":" in part or (part and part.rstrip(" .") != part))
+        for part in path.parts
+    )
 
 
 def _is_within(path: Path, parent: Path) -> bool:
@@ -166,32 +205,111 @@ def _regular_file(
     context: str,
     *,
     external: bool,
-) -> tuple[Path, _FileIdentity]:
+) -> tuple[Path, _InputFileState]:
     if type(value) is not _CONCRETE_PATH_TYPE:
         raise ReconciliationCliError(f"{context} must be a concrete filesystem path")
     path = value
-    if not path.is_absolute() or _contains_parent_reference(path):
+    if (
+        not path.is_absolute()
+        or _contains_parent_reference(path)
+        or _has_unsafe_path_component(path)
+    ):
         raise ReconciliationCliError(f"{context} must be an absolute normalized path")
     if _path_has_alias(path):
         raise ReconciliationCliError(f"{context} must not use filesystem aliases")
     try:
         resolved = path.resolve(strict=True)
-        facts = resolved.stat()
+        facts = resolved.lstat()
     except (OSError, RuntimeError) as exc:
         raise ReconciliationCliError(f"{context} is unavailable") from exc
     if not stat.S_ISREG(facts.st_mode) or facts.st_nlink != 1:
         raise ReconciliationCliError(f"{context} must be one regular, unaliased file")
     if external and _is_within(resolved, REPOSITORY_ROOT):
         raise ReconciliationCliError(f"{context} must be external to the repository")
-    return resolved, _FileIdentity(facts.st_dev, facts.st_ino)
+    return resolved, _InputFileState(
+        identity=_FileIdentity(facts.st_dev, facts.st_ino),
+        byte_count=facts.st_size,
+        modified_ns=facts.st_mtime_ns,
+    )
 
 
-def _load_control_document(path: Path, context: str) -> dict[str, Any]:
+def _input_state(path: Path, context: str) -> _InputFileState:
+    if _path_has_alias(path):
+        raise ReconciliationCliError(f"{context} must not use filesystem aliases")
     try:
-        with path.open("rb") as handle:
-            raw = handle.read(CONTROL_DOCUMENT_MAX_BYTES + 1)
+        facts = path.lstat()
     except OSError as exc:
-        raise ReconciliationCliError(f"{context} cannot be read") from exc
+        raise ReconciliationCliError(f"{context} identity cannot be verified") from exc
+    if not stat.S_ISREG(facts.st_mode) or facts.st_nlink != 1:
+        raise ReconciliationCliError(f"{context} must be one regular, unaliased file")
+    return _InputFileState(
+        identity=_FileIdentity(facts.st_dev, facts.st_ino),
+        byte_count=facts.st_size,
+        modified_ns=facts.st_mtime_ns,
+    )
+
+
+def _handle_input_state(handle: BinaryIO, context: str) -> _InputFileState:
+    try:
+        facts = os.fstat(handle.fileno())
+    except (OSError, ValueError) as exc:
+        raise ReconciliationCliError(f"{context} handle identity cannot be verified") from exc
+    if not stat.S_ISREG(facts.st_mode) or facts.st_nlink != 1:
+        raise ReconciliationCliError(f"{context} handle must remain a single regular file")
+    return _InputFileState(
+        identity=_FileIdentity(facts.st_dev, facts.st_ino),
+        byte_count=facts.st_size,
+        modified_ns=facts.st_mtime_ns,
+    )
+
+
+def _verify_pinned_input(pinned: _PinnedInputFile) -> None:
+    if (
+        _handle_input_state(pinned.handle, pinned.context) != pinned.state
+        or _input_state(pinned.path, pinned.context) != pinned.state
+    ):
+        raise ReconciliationCliError(f"{pinned.context} identity changed")
+
+
+def _pin_regular_file(
+    path: Path,
+    state: _InputFileState,
+    context: str,
+    stack: ExitStack,
+) -> _PinnedInputFile:
+    try:
+        handle = stack.enter_context(path.open("rb"))
+    except OSError as exc:
+        raise ReconciliationCliError(f"{context} cannot be opened safely") from exc
+    pinned = _PinnedInputFile(path=path, state=state, handle=handle, context=context)
+    _verify_pinned_input(pinned)
+    return pinned
+
+
+def _read_pinned_bytes(
+    pinned: _PinnedInputFile,
+    *,
+    maximum: int,
+) -> bytes:
+    _verify_pinned_input(pinned)
+    try:
+        pinned.handle.seek(0)
+        raw = pinned.handle.read(maximum + 1)
+    except (OSError, ValueError) as exc:
+        raise ReconciliationCliError(f"{pinned.context} cannot be read") from exc
+    _verify_pinned_input(pinned)
+    return raw
+
+
+def _load_control_document(source: Path | _PinnedInputFile, context: str) -> dict[str, Any]:
+    if type(source) is _PinnedInputFile:
+        raw = _read_pinned_bytes(source, maximum=CONTROL_DOCUMENT_MAX_BYTES)
+    else:
+        try:
+            with source.open("rb") as handle:
+                raw = handle.read(CONTROL_DOCUMENT_MAX_BYTES + 1)
+        except OSError as exc:
+            raise ReconciliationCliError(f"{context} cannot be read") from exc
     if not raw or len(raw) > CONTROL_DOCUMENT_MAX_BYTES:
         raise ReconciliationCliError(f"{context} violates the byte bound")
     try:
@@ -208,8 +326,8 @@ def _require_schema_version(payload: dict[str, Any], context: str) -> None:
         raise ReconciliationCliError(f"{context} schemaVersion must be integer 1")
 
 
-def _load_expectation(path: Path) -> ReconciliationExpectationV1:
-    payload = _load_control_document(path, "reconciliation expectation")
+def _load_expectation(source: Path | _PinnedInputFile) -> ReconciliationExpectationV1:
+    payload = _load_control_document(source, "reconciliation expectation")
     try:
         bulk._exact_keys(payload, _EXPECTATION_KEYS, "reconciliation expectation")
     except bulk.BulkContractError as exc:
@@ -229,8 +347,10 @@ def _load_expectation(path: Path) -> ReconciliationExpectationV1:
     )
 
 
-def _load_terminal_evidence(path: Path, context: str) -> BulkOperationTerminalEvidenceV1:
-    payload = _load_control_document(path, context)
+def _load_terminal_evidence(
+    source: Path | _PinnedInputFile, context: str
+) -> BulkOperationTerminalEvidenceV1:
+    payload = _load_control_document(source, context)
     try:
         bulk._exact_keys(payload, _TERMINAL_KEYS, context)
     except bulk.BulkContractError as exc:
@@ -256,9 +376,11 @@ def _terminal_query_audit(
     *,
     part: SnapshotPart,
     terminal: BulkOperationTerminalEvidenceV1,
-    query_path: Path,
+    query: _PinnedInputFile,
 ) -> _TerminalQueryAuditEvidence:
-    canonical_query = reconciliation_model._read_query_bytes(query_path)
+    _verify_pinned_input(query)
+    canonical_query = reconciliation_model._read_query_bytes(query.path, handle=query.handle)
+    _verify_pinned_input(query)
     transport = reconciliation_model._terminal_query_transport_mode(terminal.query, canonical_query)
     return _TerminalQueryAuditEvidence(
         part=part,
@@ -274,11 +396,8 @@ def _validated_output_directory(value: object) -> Path:
     path = value
     if not path.is_absolute() or _contains_parent_reference(path):
         raise ReconciliationCliError("output directory must be an absolute normalized path")
-    for part in path.parts:
-        if part == path.anchor:
-            continue
-        if ":" in part or (part and part.rstrip(" .") != part):
-            raise ReconciliationCliError("output directory contains an unsafe path component")
+    if _has_unsafe_path_component(path):
+        raise ReconciliationCliError("output directory contains an unsafe path component")
     parent = path.parent
     if _path_has_alias(parent):
         raise ReconciliationCliError("output directory parent must not use filesystem aliases")
@@ -298,11 +417,13 @@ def _validated_output_directory(value: object) -> Path:
 
 
 def _directory_identity(path: Path) -> _FileIdentity:
+    if _path_has_alias(path):
+        raise ReconciliationCliError("output directory is not a safe directory")
     try:
-        facts = path.stat()
+        facts = path.lstat()
     except OSError as exc:
         raise ReconciliationCliError("output directory identity cannot be verified") from exc
-    if not stat.S_ISDIR(facts.st_mode) or _path_has_alias(path):
+    if not stat.S_ISDIR(facts.st_mode):
         raise ReconciliationCliError("output directory is not a safe directory")
     return _FileIdentity(facts.st_dev, facts.st_ino)
 
@@ -312,12 +433,29 @@ def _require_directory_identity(path: Path, expected: _FileIdentity) -> None:
         raise ReconciliationCliError("output directory identity changed")
 
 
+def _artifact_identity(path: Path) -> _FileIdentity:
+    if _path_has_alias(path):
+        raise ReconciliationCliError("output artifact uses a filesystem alias")
+    try:
+        facts = path.lstat()
+    except OSError as exc:
+        raise ReconciliationCliError("output artifact identity cannot be verified") from exc
+    if not stat.S_ISREG(facts.st_mode) or facts.st_nlink != 1:
+        raise ReconciliationCliError("output artifact is not a regular unaliased file")
+    return _FileIdentity(facts.st_dev, facts.st_ino)
+
+
+def _require_artifact_identity(artifact: _CreatedArtifact) -> None:
+    if _artifact_identity(artifact.path) != artifact.identity:
+        raise ReconciliationCliError("output artifact identity changed")
+
+
 def _open_output_file(
     directory: Path,
     identity: _FileIdentity,
     filename: str,
-    created: list[Path],
-) -> tuple[Path, Any]:
+    created: list[_CreatedArtifact],
+) -> tuple[Path, Any, _CreatedArtifact]:
     if filename not in _OUTPUT_FILENAMES or Path(filename).name != filename:
         raise ReconciliationCliError("output filename is not approved")
     _require_directory_identity(directory, identity)
@@ -326,15 +464,21 @@ def _open_output_file(
         handle = path.open("xb")
     except OSError as exc:
         raise ReconciliationCliError("output artifact cannot be created exclusively") from exc
-    created.append(path)
     try:
         facts = os.fstat(handle.fileno())
         if not stat.S_ISREG(facts.st_mode) or facts.st_nlink != 1:
             raise ReconciliationCliError("output artifact is not a regular unaliased file")
+        artifact = _CreatedArtifact(
+            path=path,
+            identity=_FileIdentity(facts.st_dev, facts.st_ino),
+        )
+        created.append(artifact)
+        _require_directory_identity(directory, identity)
+        _require_artifact_identity(artifact)
     except BaseException:
         handle.close()
         raise
-    return path, handle
+    return path, handle, artifact
 
 
 def _write_bytes(
@@ -342,11 +486,11 @@ def _write_bytes(
     identity: _FileIdentity,
     filename: str,
     raw: bytes,
-    created: list[Path],
+    created: list[_CreatedArtifact],
     *,
     record_count: int = 1,
 ) -> _ArtifactEvidence:
-    _path, handle = _open_output_file(directory, identity, filename, created)
+    _path, handle, artifact = _open_output_file(directory, identity, filename, created)
     try:
         with handle:
             written = handle.write(raw)
@@ -356,6 +500,8 @@ def _write_bytes(
             os.fsync(handle.fileno())
     except OSError as exc:
         raise ReconciliationCliError("output artifact cannot be written safely") from exc
+    _require_directory_identity(directory, identity)
+    _require_artifact_identity(artifact)
     return _ArtifactEvidence(filename, hashlib.sha256(raw).hexdigest(), len(raw), record_count)
 
 
@@ -363,10 +509,10 @@ def _write_records(
     directory: Path,
     identity: _FileIdentity,
     generation: ReconciledCatalogGenerationV1,
-    created: list[Path],
+    created: list[_CreatedArtifact],
 ) -> _ArtifactEvidence:
     filename = "catalog-records.v1.jsonl"
-    _path, handle = _open_output_file(directory, identity, filename, created)
+    _path, handle, artifact = _open_output_file(directory, identity, filename, created)
     digest = hashlib.sha256()
     byte_count = 0
     record_count = 0
@@ -384,6 +530,8 @@ def _write_records(
             os.fsync(handle.fileno())
     except OSError as exc:
         raise ReconciliationCliError("catalog records cannot be written safely") from exc
+    _require_directory_identity(directory, identity)
+    _require_artifact_identity(artifact)
     if record_count != generation.dataset_manifest.included_product_count:
         raise ReconciliationCliError("catalog record output count is inconsistent")
     return _ArtifactEvidence(filename, digest.hexdigest(), byte_count, record_count)
@@ -392,18 +540,30 @@ def _write_records(
 def _cleanup_created_output(
     directory: Path,
     identity: _FileIdentity,
-    created: list[Path],
+    created: list[_CreatedArtifact],
 ) -> None:
+    unsafe = False
     try:
-        _require_directory_identity(directory, identity)
-        for path in reversed(created):
-            if path.parent != directory or not os.path.lexists(path):
+        for artifact in reversed(created):
+            if artifact.path.parent != directory or not os.path.lexists(artifact.path):
                 continue
-            facts = path.lstat()
-            if not stat.S_ISREG(facts.st_mode) or facts.st_nlink != 1:
-                raise ReconciliationCliError("unsafe output artifact cannot be cleaned")
-            path.unlink()
-        directory.rmdir()
+            try:
+                if _artifact_identity(artifact.path) != artifact.identity:
+                    unsafe = True
+                    continue
+                artifact.path.unlink()
+            except (OSError, ReconciliationCliError):
+                unsafe = True
+        if os.path.lexists(directory):
+            try:
+                if _directory_identity(directory) == identity:
+                    directory.rmdir()
+                else:
+                    unsafe = True
+            except (OSError, ReconciliationCliError):
+                unsafe = True
+        if unsafe:
+            raise ReconciliationCliError("incomplete output could not be cleaned safely")
     except (OSError, ReconciliationCliError) as exc:
         raise ReconciliationCliError("incomplete output could not be cleaned safely") from exc
 
@@ -411,11 +571,66 @@ def _cleanup_created_output(
 def _cleanup_empty_output_directory(directory: Path) -> None:
     try:
         facts = directory.lstat()
-        if not stat.S_ISDIR(facts.st_mode) or directory.is_symlink() or directory.is_junction():
+        if not stat.S_ISDIR(facts.st_mode) or _path_has_alias(directory):
             raise ReconciliationCliError("created output path is no longer a safe directory")
         directory.rmdir()
     except (OSError, ReconciliationCliError) as exc:
         raise ReconciliationCliError("empty output directory could not be cleaned safely") from exc
+
+
+def _create_staging_directory(target: Path) -> tuple[Path, _FileIdentity, _FileIdentity]:
+    parent = target.parent
+    parent_identity = _directory_identity(parent)
+    try:
+        staging = Path(tempfile.mkdtemp(prefix=".nla-reconcile-staging-", dir=parent))
+    except OSError as exc:
+        raise ReconciliationCliError("output staging directory cannot be created safely") from exc
+    try:
+        if staging.parent != parent or _has_unsafe_path_component(staging):
+            raise ReconciliationCliError("output staging directory is unsafe")
+        identity = _directory_identity(staging)
+        _require_directory_identity(parent, parent_identity)
+    except ReconciliationCliError as exc:
+        try:
+            _cleanup_empty_output_directory(staging)
+        except ReconciliationCliError as cleanup_error:
+            raise cleanup_error from exc
+        raise
+    return staging, identity, parent_identity
+
+
+def _publish_staging_directory(
+    staging: Path,
+    target: Path,
+    staging_identity: _FileIdentity,
+    parent_identity: _FileIdentity,
+    created: list[_CreatedArtifact],
+) -> None:
+    _require_directory_identity(staging, staging_identity)
+    _require_directory_identity(target.parent, parent_identity)
+    for artifact in created:
+        _require_artifact_identity(artifact)
+    if os.path.lexists(target):
+        raise ReconciliationCliError("output directory must not already exist")
+    try:
+        staging.rename(target)
+    except OSError as exc:
+        raise ReconciliationCliError("output directory cannot be published safely") from exc
+    published = [
+        _CreatedArtifact(path=target / artifact.path.name, identity=artifact.identity)
+        for artifact in created
+    ]
+    try:
+        _require_directory_identity(target.parent, parent_identity)
+        _require_directory_identity(target, staging_identity)
+        for artifact in published:
+            _require_artifact_identity(artifact)
+    except ReconciliationCliError as exc:
+        try:
+            _cleanup_created_output(target, staging_identity, published)
+        except ReconciliationCliError as cleanup_error:
+            raise cleanup_error from exc
+        raise ReconciliationCliError("published output identity cannot be verified") from exc
 
 
 def _write_generation_output(
@@ -438,20 +653,9 @@ def _write_generation_output(
         ("taxonomy-report.v1.json", taxonomy_bytes),
         ("variants-part-manifest.v1.json", variants_manifest.to_json_bytes()),
     )
-    directory = _validated_output_directory(output_directory)
-    created: list[Path] = []
-    try:
-        directory.mkdir(mode=0o700, parents=False, exist_ok=False)
-    except OSError as exc:
-        raise ReconciliationCliError("output directory cannot be created safely") from exc
-    try:
-        identity = _directory_identity(directory)
-    except ReconciliationCliError as exc:
-        try:
-            _cleanup_empty_output_directory(directory)
-        except ReconciliationCliError as cleanup_error:
-            raise cleanup_error from exc
-        raise ReconciliationCliError("output directory cannot be created safely") from exc
+    target = _validated_output_directory(output_directory)
+    directory, identity, parent_identity = _create_staging_directory(target)
+    created: list[_CreatedArtifact] = []
     try:
         artifacts = [
             _write_bytes(directory, identity, filename, raw, created)
@@ -484,6 +688,15 @@ def _write_generation_output(
             created,
         )
         _require_directory_identity(directory, identity)
+        for artifact in created:
+            _require_artifact_identity(artifact)
+        _publish_staging_directory(
+            directory,
+            target,
+            identity,
+            parent_identity,
+            created,
+        )
         return summary
     except BaseException as exc:
         try:
@@ -516,79 +729,147 @@ def run_reconciliation(
     resolved_external = [
         _regular_file(path, context, external=True) for path, context in external_values
     ]
-    products_query_path, products_query_identity = _regular_file(
+    products_query_path, products_query_state = _regular_file(
         products_query, "products query", external=False
     )
-    variants_query_path, variants_query_identity = _regular_file(
+    variants_query_path, variants_query_state = _regular_file(
         variants_query, "variants query", external=False
     )
-    identities = [identity for _path, identity in resolved_external]
-    identities.extend((products_query_identity, variants_query_identity))
+    identities = [state.identity for _path, state in resolved_external]
+    identities.extend((products_query_state.identity, variants_query_state.identity))
     if len(set(identities)) != len(identities):
         raise ReconciliationCliError("input files must have distinct identities")
     (
-        (products_snapshot_path, _products_snapshot_identity),
-        (variants_snapshot_path, _variants_snapshot_identity),
-        (products_terminal_path, _products_terminal_identity),
-        (variants_terminal_path, _variants_terminal_identity),
-        (resolved_expectation_path, _expectation_identity),
+        (products_snapshot_path, products_snapshot_state),
+        (variants_snapshot_path, variants_snapshot_state),
+        (products_terminal_path, products_terminal_state),
+        (variants_terminal_path, variants_terminal_state),
+        (resolved_expectation_path, expectation_state),
     ) = resolved_external
-    expectation = _load_expectation(resolved_expectation_path)
-    products_terminal_evidence = _load_terminal_evidence(
-        products_terminal_path, "products terminal evidence"
-    )
-    variants_terminal_evidence = _load_terminal_evidence(
-        variants_terminal_path, "variants terminal evidence"
-    )
-    terminal_query_audits = (
-        _terminal_query_audit(
-            part=SnapshotPart.PRODUCTS,
-            terminal=products_terminal_evidence,
+    with ExitStack() as stack:
+        products_snapshot_input = _pin_regular_file(
+            products_snapshot_path,
+            products_snapshot_state,
+            "products snapshot",
+            stack,
+        )
+        variants_snapshot_input = _pin_regular_file(
+            variants_snapshot_path,
+            variants_snapshot_state,
+            "variants snapshot",
+            stack,
+        )
+        products_terminal_input = _pin_regular_file(
+            products_terminal_path,
+            products_terminal_state,
+            "products terminal evidence",
+            stack,
+        )
+        variants_terminal_input = _pin_regular_file(
+            variants_terminal_path,
+            variants_terminal_state,
+            "variants terminal evidence",
+            stack,
+        )
+        expectation_input = _pin_regular_file(
+            resolved_expectation_path,
+            expectation_state,
+            "reconciliation expectation",
+            stack,
+        )
+        products_query_input = _pin_regular_file(
+            products_query_path,
+            products_query_state,
+            "products query",
+            stack,
+        )
+        variants_query_input = _pin_regular_file(
+            variants_query_path,
+            variants_query_state,
+            "variants query",
+            stack,
+        )
+        pinned_inputs = (
+            products_snapshot_input,
+            variants_snapshot_input,
+            products_terminal_input,
+            variants_terminal_input,
+            expectation_input,
+            products_query_input,
+            variants_query_input,
+        )
+        expectation = _load_expectation(expectation_input)
+        products_terminal_evidence = _load_terminal_evidence(
+            products_terminal_input, "products terminal evidence"
+        )
+        variants_terminal_evidence = _load_terminal_evidence(
+            variants_terminal_input, "variants terminal evidence"
+        )
+        terminal_query_audits = (
+            _terminal_query_audit(
+                part=SnapshotPart.PRODUCTS,
+                terminal=products_terminal_evidence,
+                query=products_query_input,
+            ),
+            _terminal_query_audit(
+                part=SnapshotPart.VARIANTS,
+                terminal=variants_terminal_evidence,
+                query=variants_query_input,
+            ),
+        )
+        for pinned in pinned_inputs:
+            _verify_pinned_input(pinned)
+        products_manifest = create_snapshot_part_manifest(
+            products_snapshot_path,
             query_path=products_query_path,
-        ),
-        _terminal_query_audit(
-            part=SnapshotPart.VARIANTS,
-            terminal=variants_terminal_evidence,
+            part=SnapshotPart.PRODUCTS,
+            expectation=expectation,
+            terminal_evidence=products_terminal_evidence,
+            snapshot_handle=products_snapshot_input.handle,
+            query_handle=products_query_input.handle,
+        )
+        _verify_pinned_input(products_snapshot_input)
+        _verify_pinned_input(products_query_input)
+        variants_manifest = create_snapshot_part_manifest(
+            variants_snapshot_path,
             query_path=variants_query_path,
-        ),
-    )
-    products_manifest = create_snapshot_part_manifest(
-        products_snapshot_path,
-        query_path=products_query_path,
-        part=SnapshotPart.PRODUCTS,
-        expectation=expectation,
-        terminal_evidence=products_terminal_evidence,
-    )
-    variants_manifest = create_snapshot_part_manifest(
-        variants_snapshot_path,
-        query_path=variants_query_path,
-        part=SnapshotPart.VARIANTS,
-        expectation=expectation,
-        terminal_evidence=variants_terminal_evidence,
-    )
-    generation = reconcile_snapshot_parts(
-        (
-            SnapshotPartInputV1(
-                manifest=products_manifest,
-                snapshot_path=products_snapshot_path,
-                query_path=products_query_path,
+            part=SnapshotPart.VARIANTS,
+            expectation=expectation,
+            terminal_evidence=variants_terminal_evidence,
+            snapshot_handle=variants_snapshot_input.handle,
+            query_handle=variants_query_input.handle,
+        )
+        _verify_pinned_input(variants_snapshot_input)
+        _verify_pinned_input(variants_query_input)
+        generation = reconcile_snapshot_parts(
+            (
+                SnapshotPartInputV1(
+                    manifest=products_manifest,
+                    snapshot_path=products_snapshot_path,
+                    query_path=products_query_path,
+                    snapshot_handle=products_snapshot_input.handle,
+                    query_handle=products_query_input.handle,
+                ),
+                SnapshotPartInputV1(
+                    manifest=variants_manifest,
+                    snapshot_path=variants_snapshot_path,
+                    query_path=variants_query_path,
+                    snapshot_handle=variants_snapshot_input.handle,
+                    query_handle=variants_query_input.handle,
+                ),
             ),
-            SnapshotPartInputV1(
-                manifest=variants_manifest,
-                snapshot_path=variants_snapshot_path,
-                query_path=variants_query_path,
-            ),
-        ),
-        expectation=expectation,
-        taxonomy_config=load_taxonomy(),
-    )
-    return _write_generation_output(
-        output_directory,
-        products_manifest,
-        variants_manifest,
-        generation,
-        terminal_query_audits,
-    )
+            expectation=expectation,
+            taxonomy_config=load_taxonomy(),
+        )
+        for pinned in pinned_inputs:
+            _verify_pinned_input(pinned)
+        return _write_generation_output(
+            output_directory,
+            products_manifest,
+            variants_manifest,
+            generation,
+            terminal_query_audits,
+        )
 
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:

@@ -460,14 +460,14 @@ def _money(
     return value
 
 
-def _source_metafield(value: Any, context: str) -> str | None:
+def _source_metafield(value: Any, context: str, *, expected_type: str) -> str | None:
     if value is None:
         return None
     if not isinstance(value, dict):
         raise BulkContractError(f"{context}: source metafield must be an object or null")
     _exact_keys(value, {"type", "value"}, context)
-    if _text(value, "type", context) != "number_integer":
-        raise BulkContractError(f"{context}: source metafield type must be number_integer")
+    if _text(value, "type", context) != expected_type:
+        raise BulkContractError(f"{context}: source metafield type does not match its contract")
     source_id = _text(value, "value", context)
     if not POSITIVE_DECIMAL_PATTERN.fullmatch(source_id):
         raise BulkContractError(
@@ -734,8 +734,16 @@ def _insert_product(connection: sqlite3.Connection, row: dict[str, Any], line: i
             _integer(row, "totalInventory", context),
             int(_boolean(row, "tracksInventory", context)),
             expected_variants,
-            _source_metafield(row.get("syncProductId"), f"{context}.syncProductId"),
-            _source_metafield(row.get("powertoolsId"), f"{context}.powertoolsId"),
+            _source_metafield(
+                row.get("syncProductId"),
+                f"{context}.syncProductId",
+                expected_type="number_integer",
+            ),
+            _source_metafield(
+                row.get("powertoolsId"),
+                f"{context}.powertoolsId",
+                expected_type="single_line_text_field",
+            ),
             *media,
         ),
     )

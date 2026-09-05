@@ -8,6 +8,10 @@ model. It does not call Shopify, start a Bulk operation, download a result, reta
 write a repository snapshot/database, activate a dataset, promote a capability, mutate Shopify or
 PowerTools, or change a theme.
 
+Issue #43 is the separate real-baseline gate and runner-hardening follow-up. It preserves the
+issue-#32 evidence model while adding pinned input handles, hostile NTFS path rejection and
+identity-safe staged output publication required before a current capture can be accepted.
+
 `NLA_DATA_ROOT` is missing on this host. All executable evidence described here is conspicuously
 synthetic. Real-baseline acceptance, distributions and capability promotion remain blocked on a
 separate independently reviewed run with the external data root.
@@ -100,6 +104,13 @@ used as joins. Secondary source identity is only an independently accounted cons
 Input part order cannot affect the canonical source manifest, taxonomy result, catalog record
 bytes or dataset-manifest bytes.
 
+The two reviewed source-identity aliases have distinct exact Shopify types. `syncProductId` must
+be `number_integer`; `powertoolsId` must be `single_line_text_field`. Both values must still be
+canonical positive decimal digits. The runner does not accept either type interchangeably. Issue
+#43's redacted full-Product diagnostic observed those two types, valid digits and equality between
+the aliases for every Product in the current capture; this corrects the earlier synthetic-only
+assumption without weakening the identity fence.
+
 ## Projection and accounting
 
 Only a fully reconciled generation is converted into `ProductFacts`, classified by the existing
@@ -129,10 +140,14 @@ state.
 All paths must be absolute and normalized. The two JSONL parts and all three control documents
 must be regular, single-link files outside this repository. The two query files may be the tracked
 reviewed documents or byte-identical external copies; their approved part-specific SHA-256 values
-remain enforced by the reconciliation model. The output parent must already exist without
-symlinks or junctions. The requested output directory must be new and outside this repository:
-existing targets, traversal, filesystem aliases, Windows alternate-data-stream syntax and unsafe
-trailing-dot/space components fail closed.
+remain enforced by the reconciliation model. Every input rejects alternate-data-stream syntax,
+unsafe trailing-dot/space components and every filesystem reparse-point ancestor, not only
+symlinks and junctions. The runner opens each validated input once, verifies the device/inode,
+size and modification-time state on the live handle and path, consumes that same pinned handle for
+both scans, and verifies every input again before publication. An atomic path replacement or
+in-place state change therefore fails closed. The output parent must already exist without any
+filesystem alias. The requested output directory must be new and outside this repository:
+existing targets, traversal and every unsafe path component fail closed.
 
 The expectation document is strict JSON, at most 64 KiB, with exactly these fields:
 
@@ -190,10 +205,16 @@ It is not a raw snapshot or a public-serving index, but it is still a generated 
 the CLI therefore permits it only outside the repository. The summary explicitly records
 `reconciled-provisional`, `datasetActivation: not-performed` and
 `capabilityPromotion: not-performed`. No output file contains a signed Bulk URL, control-document
-path or raw JSONL row. Files are created exclusively, flushed and fsynced; any ordinary failure
-after directory creation removes only the fixed regular files created during that attempt and
-then removes the empty directory, never using recursive deletion.
+path or raw JSONL row. Files are created exclusively, flushed and fsynced in an unpredictable
+sibling staging directory, then published to the requested absent target with one rename only
+after the complete set and all identities have been reverified. Cleanup tracks the exact
+device/inode identity of every created file: it unlinks only an exact match, refuses to delete a
+replacement owned by another actor, and never uses recursive deletion.
 
-The CLI's executable evidence remains synthetic on this host. It has not been run against the
-frozen historical database or a current Shopify-derived capture, so it does not change the
-real-baseline, distribution, staging or capability status above.
+The first issue-#43 invocation against the current Shopify-derived capture failed closed before
+publishing an output directory. Redacted diagnostics proved both immutable part manifests valid,
+then isolated the first failure to the initial Product insertion: the earlier runner required
+`number_integer` for both source aliases even though the PowerTools alias is uniformly the exact
+`single_line_text_field` described above. No final real reconciliation has been run after the
+correction. Independent re-review and a fresh frozen invocation remain required, so this evidence
+does not yet change the real-baseline, distribution, staging or capability status above.

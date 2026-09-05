@@ -10,15 +10,17 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import sqlite3
+import stat
 import tempfile
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 from pathlib import Path
-from typing import Any, ClassVar, Final
+from typing import Any, BinaryIO, ClassVar, Final
 
 from nla_catalog_gateway import bulk
 from nla_catalog_gateway import runtime_contract as runtime
@@ -567,6 +569,8 @@ class SnapshotPartInputV1:
     manifest: SnapshotPartManifestV1
     snapshot_path: Path
     query_path: Path
+    snapshot_handle: BinaryIO | None = field(default=None, repr=False, compare=False)
+    query_handle: BinaryIO | None = field(default=None, repr=False, compare=False)
 
 
 def _validated_path(value: object, context: str) -> Path:
@@ -583,38 +587,65 @@ class _PartScan:
     object_counts: tuple[tuple[str, int], ...]
 
 
+def _verify_pinned_handle(path: Path, handle: BinaryIO, context: str) -> None:
+    try:
+        path_facts = path.stat()
+        handle_facts = os.fstat(handle.fileno())
+    except (OSError, ValueError) as exc:
+        raise ReconciliationDataError(f"{context} pinned identity cannot be verified") from exc
+    if (
+        not stat.S_ISREG(path_facts.st_mode)
+        or not stat.S_ISREG(handle_facts.st_mode)
+        or path_facts.st_nlink != 1
+        or handle_facts.st_nlink != 1
+        or (path_facts.st_dev, path_facts.st_ino) != (handle_facts.st_dev, handle_facts.st_ino)
+    ):
+        raise ReconciliationDataError(f"{context} pinned identity does not match its path")
+
+
 def _read_part(
     path: Path,
     part: SnapshotPart,
     consumer: Callable[[dict[str, Any], int, bytes], None] | None = None,
+    *,
+    handle: BinaryIO | None = None,
 ) -> _PartScan:
     counts = dict.fromkeys(_PART_TYPES[part], 0)
     digest = hashlib.sha256()
     byte_count = 0
     line_count = 0
+
+    def scan(stream: BinaryIO) -> None:
+        nonlocal byte_count, line_count
+        while raw := bulk._next_line(stream):
+            line_count += 1
+            byte_count += len(raw)
+            digest.update(raw)
+            if not raw.strip():
+                raise ReconciliationDataError("snapshot part contains a blank JSONL record")
+            payload = bulk._strict_json(raw, "snapshot part record")
+            if type(payload) is not dict:
+                raise ReconciliationDataError("snapshot part record must be an object")
+            typename = payload.get("__typename")
+            if typename not in counts:
+                raise ReconciliationDataError("snapshot part contains an unexpected object type")
+            if consumer is not None:
+                consumer(payload, line_count, raw)
+            counts[typename] += 1
+
     try:
-        handle = path.open("rb")
-    except OSError as exc:
-        raise ReconciliationDataError("cannot read snapshot part") from exc
-    try:
-        with handle:
-            while raw := bulk._next_line(handle):
-                line_count += 1
-                byte_count += len(raw)
-                digest.update(raw)
-                if not raw.strip():
-                    raise ReconciliationDataError("snapshot part contains a blank JSONL record")
-                payload = bulk._strict_json(raw, "snapshot part record")
-                if type(payload) is not dict:
-                    raise ReconciliationDataError("snapshot part record must be an object")
-                typename = payload.get("__typename")
-                if typename not in counts:
-                    raise ReconciliationDataError(
-                        "snapshot part contains an unexpected object type"
-                    )
-                if consumer is not None:
-                    consumer(payload, line_count, raw)
-                counts[typename] += 1
+        if handle is None:
+            try:
+                opened = path.open("rb")
+            except OSError as exc:
+                raise ReconciliationDataError("cannot read snapshot part") from exc
+            with opened:
+                scan(opened)
+        else:
+            _verify_pinned_handle(path, handle, "snapshot part")
+            handle.seek(0)
+            scan(handle)
+            _verify_pinned_handle(path, handle, "snapshot part")
     except ReconciliationDataError:
         raise
     except (OSError, bulk.BulkContractError) as exc:
@@ -636,11 +667,17 @@ def _file_sha256(path: Path, context: str) -> str:
         raise ReconciliationDataError(f"cannot read {context}") from exc
 
 
-def _read_query_bytes(path: Path) -> bytes:
+def _read_query_bytes(path: Path, *, handle: BinaryIO | None = None) -> bytes:
     try:
-        with path.open("rb") as handle:
+        if handle is None:
+            with path.open("rb") as opened:
+                raw = opened.read(MAX_BULK_QUERY_BYTES + 1)
+        else:
+            _verify_pinned_handle(path, handle, "snapshot query")
+            handle.seek(0)
             raw = handle.read(MAX_BULK_QUERY_BYTES + 1)
-    except OSError as exc:
+            _verify_pinned_handle(path, handle, "snapshot query")
+    except (OSError, ValueError) as exc:
         raise ReconciliationDataError("cannot read snapshot query") from exc
     if not raw or len(raw) > MAX_BULK_QUERY_BYTES:
         raise ReconciliationDataError("snapshot query bytes are invalid")
@@ -677,6 +714,8 @@ def create_snapshot_part_manifest(
     part: SnapshotPart,
     expectation: ReconciliationExpectationV1,
     terminal_evidence: BulkOperationTerminalEvidenceV1,
+    snapshot_handle: BinaryIO | None = None,
+    query_handle: BinaryIO | None = None,
 ) -> SnapshotPartManifestV1:
     """Create canonical evidence after checking exact terminal BulkOperation metadata."""
 
@@ -686,12 +725,12 @@ def create_snapshot_part_manifest(
         raise ReconciliationContractError("part must be SnapshotPart")
     snapshot_path = _validated_path(snapshot_path, "snapshot path")
     query_path = _validated_path(query_path, "query path")
-    query_bytes = _read_query_bytes(query_path)
+    query_bytes = _read_query_bytes(query_path, handle=query_handle)
     query_sha256 = hashlib.sha256(query_bytes).hexdigest()
     if query_sha256 != _APPROVED_QUERY_SHA256[part]:
         raise ReconciliationDataError("snapshot query is not the approved query for its part")
     _terminal_query_transport_mode(terminal.query, query_bytes)
-    scan = _read_part(snapshot_path, part)
+    scan = _read_part(snapshot_path, part, handle=snapshot_handle)
     if scan.snapshot_bytes != terminal.file_size:
         raise ReconciliationDataError("snapshot byte count does not match terminal evidence")
     if scan.object_count != terminal.object_count:
@@ -784,8 +823,20 @@ def _ordered_inputs(
             manifest=manifest,
             snapshot_path=snapshot_path,
             query_path=query_path,
+            snapshot_handle=value.snapshot_handle,
+            query_handle=value.query_handle,
         )
     ordered = (by_part[SnapshotPart.PRODUCTS], by_part[SnapshotPart.VARIANTS])
+    handles = tuple(
+        handle
+        for item in ordered
+        for handle in (item.snapshot_handle, item.query_handle)
+        if handle is not None
+    )
+    if handles and len(handles) != 4:
+        raise ReconciliationContractError("pinned snapshot inputs must include all four handles")
+    if len(handles) == 4 and len({id(handle) for handle in handles}) != 4:
+        raise ReconciliationContractError("pinned snapshot input handles must be distinct")
     if ordered[0].manifest.operation_id == ordered[1].manifest.operation_id:
         raise ReconciliationDataError("snapshot parts must use distinct Bulk operations")
     try:
@@ -1464,7 +1515,13 @@ def reconcile_snapshot_parts(
     ordered = _ordered_inputs(inputs, expected)
     scans: dict[SnapshotPart, _PartScan] = {}
     for item in ordered:
-        if _file_sha256(item.query_path, "snapshot query") != item.manifest.query_sha256:
+        if item.query_handle is None:
+            query_sha256 = _file_sha256(item.query_path, "snapshot query")
+        else:
+            query_sha256 = hashlib.sha256(
+                _read_query_bytes(item.query_path, handle=item.query_handle)
+            ).hexdigest()
+        if query_sha256 != item.manifest.query_sha256:
             raise ReconciliationDataError("snapshot query does not match its immutable manifest")
     try:
         with tempfile.TemporaryDirectory(prefix="nla-reconcile-") as directory:
@@ -1481,6 +1538,7 @@ def reconcile_snapshot_parts(
                         lambda payload, line, _raw, part=item.manifest.part: _insert_source_row(
                             connection, part, payload, line
                         ),
+                        handle=item.snapshot_handle,
                     )
                     _validate_scan(scan, item.manifest)
                     scans[item.manifest.part] = scan
