@@ -30,7 +30,7 @@ idempotent even when its receipt timestamp differs; a reused key with a differen
 version, or payload hash is a conflict and requires reconciliation. Raw payloads are excluded
 from representations and safe operational reports, whose keys never alias internal keys.
 
-Inbox state is monotonic:
+Ordinary per-event inbox processing is monotonic:
 
 ```text
 received -> validated -> projected
@@ -39,10 +39,19 @@ any non-terminal state -> reconcile_required
 projected -> reconcile_required (conflicting reuse of the same key)
 ```
 
+A successful, fully attested reconciliation is the only administrative resolution outside
+that per-event transition graph: entries at or before its fence are marked `projected` because
+the replacement snapshot covers them, and unresolved sets are cleared only in the same atomic
+generation swap.
+
 Ordinary adapter, clock, candidate, and activation exceptions become fixed failure codes and
 never render attacker-controlled exception text. `BaseException` is deliberately not
 normalized. Retry attempts are bounded; exhausted failures appear in a payload-free dead-letter
-report. The reference inbox is bounded by both unique event count and total retained envelope
+report. Once validation succeeds, the inbox freezes a detached canonical
+`ValidatedWebhookEvent` and its event-identity digest. Every later processing attempt and
+reconciliation catch-up reuses those exact values; a stateful validator cannot redirect a retry
+to a different Product, category, or source timestamp. The reference inbox is bounded by both
+unique event count and total retained envelope
 bytes. The retained-byte measure includes the encoded shop, webhook ID, topic, API version,
 receipt timestamp and payload hash as well as the raw payload. Topic, timestamp, Product GID and
 taxonomy-version fields have independent limits; a bounded Product GID remains exact decimal
@@ -77,7 +86,9 @@ Every projector result is a non-empty tuple of canonical `CatalogProductRecordV1
 Product GIDs, handles, Variant GIDs, InventoryItem GIDs, paired PowerTools/sync source IDs, and
 the taxonomy version are checked across the whole generation. Non-null paired source IDs are
 globally unique, matching the Bulk contract. Create adds exactly its target, delete removes
-exactly its target, and update/unpublish/inventory events retain the Product identity set. Every
+exactly its target, and update/unpublish/inventory events retain the Product identity set and the
+target Product's byte-identical `powerToolsSourceId` and `syncSourceId`. Source-identity repair is
+therefore possible only through a fully attested reconciliation generation. Every
 non-target Product must be byte-for-byte unchanged; unpublish must explicitly remove Online Store
 publication. An inventory event may change inventory/tracking and timestamps but cannot overwrite
 price or any other non-inventory material.
@@ -98,15 +109,20 @@ Generation views and readiness metrics expose the taxonomy rule version and exac
 Product count. A taxonomy rule-version change requires a full reconciliation rather than an
 incremental mixed-version generation.
 
-The initial generation and every full-reconciliation candidate require the exact canonical
-`SourceSnapshotManifest` object and bytes. The runtime manifest is rebuilt from those bytes and
-the candidate records, then compared byte-for-byte: its source-manifest hash, snapshot/query
-hashes, Bulk operation metadata, source shop and completion timestamp therefore cannot be forged
-through caller-supplied runtime fields. Every nested evidence value is canonically validated
-before shop/time comparison, and hostile comparison or rendering behavior is normalized to a
-fixed value-free contract error. The explicit source cut must exactly match the attested source
-completion timestamp, cover every retained record timestamp, and never be later than the
-generation build time. Each incremental generation binds its shop, monotonic source
+Bootstrap retains the exact canonical `SourceSnapshotManifest` boundary already used by the
+runtime contract. Every later full install accepts only the in-memory
+`ReconciledCatalogGenerationV1` produced by the split-snapshot reconciler; the legacy set of
+independent source/manifest/record arguments is not an installation route. The boundary requires
+the exact nested `ReconciledSourceManifestV2`, canonical bytes, taxonomy report, records, and
+runtime manifest. It canonically rebuilds both part manifests, verifies their shared capture
+identity, distinct operations, overlapping bounded windows and approved query hashes, then
+rebuilds the source V2 evidence, taxonomy accounting, runtime manifest and generation digest.
+Every comparison is byte-exact. The adapter accepts no `Path` and reads no raw artifact; raw
+snapshot validation remains the responsibility of the reconciler that created this in-memory
+object. Hostile or mismatched values produce a fixed value-free operational failure without a
+partial swap. The reconciled `captureCompletedAt` is used only as the candidate freshness/source
+cut, never as evidence that an inbox delivery was covered. Each incremental generation binds its
+shop, monotonic source
 high-watermark, base and parent generations, canonical catalog-content hash, taxonomy version,
 event identity, cumulative event-lineage hash, and event count. Record/status/family/Variant/
 source-ID and public-item counts are recomputed. Build time cannot move backwards. This
@@ -121,12 +137,24 @@ unchanged. The pair retains exactly the prior active generation. Rollback swaps 
 pauses incremental projection, marks readiness stale, and requires a full reconciliation before
 projection resumes. A separate maximum-observed source/build watermark survives pointer rollback;
 recovery must advance both, so rolling back cannot authorize an older snapshot to displace newer
-commercial data. Installing a validated reconciliation generation also uses compare-and-swap.
-Before candidate build it captures a monotonic delivery-sequence watermark. Commit clears only
-unresolved events both present at that watermark and covered by the candidate cut; a conflict
-arriving during candidate build or activation remains pending, keeps readiness stale/paused, and
-cannot be erased by the swap. The displaced active generation remains available as rollback
-state.
+commercial data. Reconciliation orchestration must first ask the core for a
+`ReconciliationFence`, before starting either Bulk capture. The opaque, core-bound fence records
+the active generation, monotonic delivery sequence, and issuance time. While it is active,
+ordinary processing may validate and freeze deliveries but cannot advance the active generation;
+readiness remains paused/stale.
+
+Installation proves that both capture windows began at or after the registered fence. Deliveries
+at or before the fence sequence are covered by that later full capture without consulting their
+receipt/source timestamps. Every delivery after the fence must already be a successfully frozen
+event; failed, conflicting, unsupported, or unprocessed deliveries reject the install and remain
+unresolved. The core replays post-fence events by each key's first delivery sequence after the
+fence, so a later duplicate cannot reorder two distinct events against the candidate. An event
+already reflected by the snapshot is accepted only when projection is a byte-identical no-op;
+newer events create validated incremental descendants. A final compare-and-swap checks the active
+pair, registered fence, every replay entry, and the global delivery sequence. Any reception during
+candidate validation, catch-up, activation, or commit rejects the attempt with no partial swap.
+The displaced active generation remains available as rollback state, and rollback itself is
+blocked while a reconciliation fence is active.
 
 Metrics expose bound shop, dataset version/build time, source cut, taxonomy version, unclassified
 count, latest received and projected times, source-cut lag/staleness, pause state,
@@ -141,11 +169,12 @@ Focused author evidence:
 ```text
 pytest -o pythonpath=src tests/test_sync.py --cov=nla_catalog_gateway.sync \
   --cov-branch --cov-report=term-missing
-107 passed; 875/875 statements and 188/188 branches covered (100%)
-full suite (`nla_catalog_gateway` + `scripts`): 947 passed; 0 skipped; 0 xfailed;
-  3835/3835 statements and 1486/1486 branches covered (100%)
-ruff check: passed; ruff format check: 33 files already formatted
-preflight: ok, 45 files scanned, 0 failures
+135 passed; 1079/1079 statements and 270/270 branches covered (100%)
+focused sync/reconciliation/bulk/runtime/taxonomy suite: 491 passed
+full suite (`nla_catalog_gateway` + `scripts`): 1342 passed;
+  6165/6165 statements and 2300/2300 branches covered (100%)
+ruff check: passed; ruff format check: 48 files already formatted
+preflight: ok, 63 files scanned, 0 failures
 build without isolation: sdist and wheel built successfully from this worktree
 ```
 

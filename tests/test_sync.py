@@ -1,13 +1,17 @@
 from __future__ import annotations
 
 import json
+from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import fields, replace
+from pathlib import Path
+from types import MappingProxyType, SimpleNamespace
 from typing import Any
 
 import pytest
 
 import nla_catalog_gateway.sync as sync
+from nla_catalog_gateway import reconciliation
 from nla_catalog_gateway.bulk import (
     ALLOWED_TYPES,
     PRODUCT_STATUSES,
@@ -29,13 +33,14 @@ from nla_catalog_gateway.sync import (
     InboxState,
     ProjectionContext,
     RawWebhookEnvelope,
+    ReconciliationFence,
     SyncContractError,
     SyncCore,
     SyncOperationError,
     ValidatedWebhookEvent,
     WebhookKey,
 )
-from nla_catalog_gateway.taxonomy import Game, ProductFamily
+from nla_catalog_gateway.taxonomy import ClassificationReport, Game, ProductFamily
 
 BASE_TIME = "2026-09-02T00:00:00Z"
 EVENT_TIME = "2026-09-02T00:01:00Z"
@@ -210,21 +215,190 @@ def _manifest(
     )[2]
 
 
+def _reconciled_part_manifest(
+    records: tuple[CatalogProductRecordV1, ...],
+    *,
+    part: reconciliation.SnapshotPart,
+    generated_at: str,
+    shop_domain: str = SHOP,
+) -> reconciliation.SnapshotPartManifestV1:
+    product_count = len(records)
+    variant_count = sum(len(record.variants) for record in records)
+    if part is reconciliation.SnapshotPart.PRODUCTS:
+        object_counts = (
+            ("Metafield", 0),
+            ("Product", product_count),
+            ("ResourcePublicationV2", product_count),
+        )
+        root_count = product_count
+        operation_id = "gid://shopify/BulkOperation/11"
+        content_sha256 = "e" * 64
+    else:
+        object_counts = (
+            ("InventoryLevel", variant_count),
+            ("Metafield", 0),
+            ("ProductVariant", variant_count),
+        )
+        root_count = variant_count
+        operation_id = "gid://shopify/BulkOperation/12"
+        content_sha256 = "f" * 64
+    values: dict[str, Any] = {
+        "schema_version": 1,
+        "part": part,
+        "snapshot_set_id": "sha256:" + "1" * 64,
+        "shop_domain": shop_domain,
+        "api_version": "2026-07",
+        "operation_id": operation_id,
+        "operation_type": "QUERY",
+        "status": "COMPLETED",
+        "error_code": None,
+        "url_present": True,
+        "partial_data_url_present": False,
+        "created_at": generated_at,
+        "completed_at": generated_at,
+        "online_store_publication_gid": "gid://shopify/Publication/1",
+        "source_code_sha": "b" * 40,
+        "query_sha256": sync._RECONCILED_QUERY_SHA256[part],
+        "content_sha256": content_sha256,
+        "snapshot_bytes": 1234,
+        "object_count": sum(count for _, count in object_counts),
+        "root_object_count": root_count,
+        "object_counts": object_counts,
+        "capture_fence_max_seconds": 24 * 60 * 60,
+    }
+    draft = object.__new__(reconciliation.SnapshotPartManifestV1)
+    for name, value in values.items():
+        object.__setattr__(draft, name, value)
+    object.__setattr__(draft, "part_generation", "sha256:" + "0" * 64)
+    values["part_generation"] = draft.expected_part_generation()
+    return reconciliation.SnapshotPartManifestV1(**values)
+
+
+def _replace_reconciled_part(
+    part: reconciliation.SnapshotPartManifestV1,
+    **changes: Any,
+) -> reconciliation.SnapshotPartManifestV1:
+    values = {field.name: getattr(part, field.name) for field in fields(part)}
+    values.update(changes)
+    draft = object.__new__(reconciliation.SnapshotPartManifestV1)
+    for name, value in values.items():
+        object.__setattr__(draft, name, value)
+    object.__setattr__(draft, "part_generation", "sha256:" + "0" * 64)
+    values["part_generation"] = draft.expected_part_generation()
+    return reconciliation.SnapshotPartManifestV1(**values)
+
+
+def _reconciled_report(
+    records: tuple[CatalogProductRecordV1, ...],
+) -> ClassificationReport:
+    classified = sum(record.product_family is not ProductFamily.UNCLASSIFIED for record in records)
+    return ClassificationReport(
+        rule_version=records[0].classification_rule_version,
+        total=len(records),
+        classified=classified,
+        unclassified=len(records) - classified,
+        counts=MappingProxyType(
+            dict(
+                Counter(
+                    f"{record.game.value if record.game else 'unknown'}/"
+                    f"{record.product_family.value}"
+                    for record in records
+                )
+            )
+        ),
+        rule_counts=MappingProxyType(
+            dict(
+                Counter(
+                    record.classification_rule_id
+                    for record in records
+                    if record.classification_rule_id is not None
+                )
+            )
+        ),
+        unclassified_reasons=MappingProxyType(
+            dict(
+                Counter(
+                    record.unclassified_reason
+                    for record in records
+                    if record.unclassified_reason is not None
+                )
+            )
+        ),
+        subtype_reasons=MappingProxyType(
+            dict(
+                Counter(
+                    record.subtype_reason for record in records if record.subtype_reason is not None
+                )
+            )
+        ),
+    )
+
+
+def _reconciled_generation(
+    records: tuple[CatalogProductRecordV1, ...],
+    *,
+    generated_at: str,
+    shop_domain: str = SHOP,
+) -> reconciliation.ReconciledCatalogGenerationV1:
+    parts = tuple(
+        _reconciled_part_manifest(
+            records,
+            part=part,
+            generated_at=generated_at,
+            shop_domain=shop_domain,
+        )
+        for part in (
+            reconciliation.SnapshotPart.PRODUCTS,
+            reconciliation.SnapshotPart.VARIANTS,
+        )
+    )
+    status_counts = tuple(
+        (status.value, sum(record.shopify_status is status for record in records))
+        for status in ProductStatus
+    )
+    counts = reconciliation._SourceCounts(
+        product_count=len(records),
+        variant_count=sum(len(record.variants) for record in records),
+        inventory_item_count=sum(len(record.variants) for record in records),
+        inventory_level_count=sum(len(record.variants) for record in records),
+        publication_count=len(records),
+        metafield_count=0,
+        product_status_counts=status_counts,
+        active_published_product_count=sum(record.publishable for record in records),
+        source_identity_product_count=sum(
+            record.powertools_source_id is not None for record in records
+        ),
+    )
+    source = reconciliation._build_source_manifest(
+        tuple(SimpleNamespace(manifest=part) for part in parts),  # type: ignore[arg-type]
+        counts,
+    )
+    report = _reconciled_report(records)
+    manifest = reconciliation._runtime_manifest(source, records, report)
+    return reconciliation.ReconciledCatalogGenerationV1(
+        source_manifest=source,
+        source_manifest_bytes=source.to_json_bytes(),
+        taxonomy_report=report,
+        records=records,
+        dataset_manifest=manifest,
+    )
+
+
 def _candidate_args(
+    core: SyncCore,
     records: tuple[CatalogProductRecordV1, ...],
     *,
     generated_at: str,
     shop_domain: str = SHOP,
 ) -> dict[str, Any]:
-    source, source_bytes, manifest = _manifest_bundle(
-        records,
-        generated_at=generated_at,
-        shop_domain=shop_domain,
-    )
+    active = core.active_dataset().dataset_generation
     return {
-        "source_manifest": source,
-        "source_manifest_bytes": source_bytes,
-        "manifest": manifest,
+        "fence": core.capture_reconciliation_fence(expected_active_generation=active),
+        "reconciled_generation": _reconciled_generation(
+            records,
+            generated_at=generated_at,
+            shop_domain=shop_domain,
+        ),
     }
 
 
@@ -543,6 +717,58 @@ def test_inventory_event_cannot_overwrite_price() -> None:
     assert core.active_dataset() == before
 
 
+@pytest.mark.parametrize(
+    ("topic", "category"),
+    [
+        ("products/update", EventCategory.PRODUCT_UPDATE),
+        ("products/update", EventCategory.PRODUCT_UNPUBLISH),
+        ("inventory_levels/update", EventCategory.INVENTORY_CHANGE),
+    ],
+)
+@pytest.mark.parametrize("replacement_identity", ["999", None])
+def test_non_create_delete_event_cannot_rewrite_source_identity(
+    topic: str,
+    category: EventCategory,
+    replacement_identity: str | None,
+) -> None:
+    adapters = Adapters()
+    adapters.category = category
+
+    def rewrite_identity(
+        context: ProjectionContext, event: ValidatedWebhookEvent
+    ) -> tuple[CatalogProductRecordV1, ...]:
+        target = context.records[0]
+        variant = replace(target.variants[0], updated_at=event.source_updated_at)
+        return (
+            replace(
+                target,
+                powertools_source_id=replacement_identity,
+                sync_source_id=replacement_identity,
+                online_store_published=(
+                    False
+                    if event.category is EventCategory.PRODUCT_UNPUBLISH
+                    else target.online_store_published
+                ),
+                total_inventory=(
+                    22
+                    if event.category is EventCategory.INVENTORY_CHANGE
+                    else target.total_inventory
+                ),
+                updated_at=event.source_updated_at,
+                variants=(variant,),
+            ),
+            context.records[1],
+        )
+
+    adapters.projector_override = rewrite_identity
+    core, _, _ = _core(adapters)
+    before = core.active_dataset()
+    suffix = replacement_identity or "none"
+    result = core.ingest(_envelope(f"identity-{category.value}-{suffix}", topic=topic))
+    assert result.status.state is InboxState.RECONCILE_REQUIRED
+    assert core.active_dataset() == before
+
+
 def test_delete_category_removes_only_the_target_and_can_rollback() -> None:
     adapters = Adapters()
     adapters.category = EventCategory.PRODUCT_DELETE
@@ -691,9 +917,7 @@ def test_core_rejects_cross_shop_delivery_and_reconciliation() -> None:
     with pytest.raises(SyncOperationError, match="shop does not match"):
         core.install_reconciliation(
             shop_domain="other.myshopify.com",
-            source_cut_at="2026-09-02T00:02:00Z",
-            **_candidate_args(_records(), generated_at="2026-09-02T00:02:00Z"),
-            records=_records(),
+            **_candidate_args(core, _records(), generated_at="2026-09-02T00:02:00Z"),
             expected_active_generation=original.dataset_generation,
         )
     assert core.active_dataset() == original
@@ -704,12 +928,12 @@ def test_shop_domain_is_exactly_one_canonical_label() -> None:
         WebhookKey("a.b.myshopify.com", "event")
     with pytest.raises(SyncContractError):
         _envelope(shop_domain="a.b.myshopify.com")
+    core, _, _ = _core()
+    candidate = _candidate_args(core, _records(), generated_at="2026-09-02T00:02:00Z")
     with pytest.raises(SyncContractError):
-        _core()[0].install_reconciliation(
+        core.install_reconciliation(
             shop_domain="a.b.myshopify.com",
-            source_cut_at="2026-09-02T00:02:00Z",
-            **_candidate_args(_records(), generated_at="2026-09-02T00:02:00Z"),
-            records=_records(),
+            **candidate,
             expected_active_generation=_manifest(_records()).dataset_generation,
         )
 
@@ -805,6 +1029,78 @@ def test_clock_and_activation_failures_leave_active_generation_unchanged_then_re
     assert adapters.projector_calls == 2
 
 
+def test_retry_reuses_the_first_validated_event_and_digest_without_semantic_drift() -> None:
+    adapters = Adapters()
+    adapters.projector_failure = HostileError("first-attempt-only")
+    core, _, _ = _core(adapters)
+    envelope = _envelope("frozen-retry")
+
+    first = core.ingest(envelope)
+    assert first.status.state is InboxState.FAILED
+    assert first.status.failure_code is FailureCode.PROJECTION_ADAPTER_FAILED
+    frozen_entry = core._entries[(SHOP, envelope.webhook_id)]
+    assert frozen_entry.validated_event == _validated(envelope)
+    assert frozen_entry.event_identity_sha256 == sync._event_identity_sha256(
+        envelope, _validated(envelope)
+    )
+
+    adapters.projector_failure = None
+    adapters.product_id = "2"
+    adapters.category = EventCategory.PRODUCT_UNPUBLISH
+    adapters.source_updated_at = "2026-09-02T00:04:00Z"
+    retried = core.ingest(envelope)
+
+    assert retried.status.state is InboxState.PROJECTED
+    assert retried.status.category is EventCategory.PRODUCT_UPDATE
+    assert adapters.validator_calls == 1
+    active = core.active_dataset()
+    assert active.source_cut_at == EVENT_TIME
+    assert active.records[0].variants[0].price_text == "9.9900"
+    assert active.records[1] == _records()[1]
+
+
+def test_frozen_event_digest_tamper_and_validation_race_fail_closed() -> None:
+    adapters = Adapters()
+    adapters.projector_failure = HostileError("freeze-event")
+    core, _, _ = _core(adapters)
+    envelope = _envelope("tampered-frozen")
+    assert core.ingest(envelope).status.state is InboxState.FAILED
+    entry = core._entries[(SHOP, envelope.webhook_id)]
+    assert entry.validated_event is not None
+    object.__setattr__(entry.validated_event, "product_gid", "gid://shopify/Product/2")
+    assert core.process(envelope.key).state is InboxState.RECONCILE_REQUIRED
+
+    holder: dict[str, SyncCore] = {}
+
+    def racing_validator(value: RawWebhookEnvelope) -> ValidatedWebhookEvent:
+        current = holder["core"]._entries[(SHOP, value.webhook_id)]
+        other = _validated(value, product_id="2")
+        holder["core"]._entries[(SHOP, value.webhook_id)] = replace(
+            current,
+            validated_event=other,
+            event_identity_sha256=sync._event_identity_sha256(value, other),
+        )
+        return _validated(value)
+
+    records = _records()
+    source, source_bytes, manifest = _manifest_bundle(records)
+    other_core = SyncCore(
+        expected_shop_domain=SHOP,
+        initial_source_cut_at=BASE_TIME,
+        initial_source_manifest=source,
+        initial_source_manifest_bytes=source_bytes,
+        initial_manifest=manifest,
+        initial_records=records,
+        validator=racing_validator,
+        projector=Adapters().project,
+        clock=MutableClock(),
+    )
+    holder["core"] = other_core
+    assert other_core.ingest(_envelope("validation-race")).status.state is (
+        InboxState.RECONCILE_REQUIRED
+    )
+
+
 @pytest.mark.parametrize("stage", ["validator", "projector", "activation"])
 def test_base_exceptions_are_not_swallowed_and_cannot_activate(stage: str) -> None:
     adapters = Adapters()
@@ -876,19 +1172,13 @@ def test_rollback_pause_and_full_reconciliation_recovery() -> None:
     paused = core.ingest(_envelope("paused", received_at="2026-09-02T00:02:00Z"))
     assert paused.status.state is InboxState.RECONCILE_REQUIRED
     base_records = _records()
-    source_manifest, source_manifest_bytes, reconciled_manifest = _manifest_bundle(
-        base_records, generated_at="2026-09-02T00:02:00Z"
-    )
+    candidate = _candidate_args(core, base_records, generated_at="2026-09-02T00:02:00Z")
     installed = core.install_reconciliation(
         shop_domain=SHOP,
-        source_cut_at="2026-09-02T00:02:00Z",
-        source_manifest=source_manifest,
-        source_manifest_bytes=source_manifest_bytes,
-        manifest=reconciled_manifest,
-        records=base_records,
+        **candidate,
         expected_active_generation=base_generation,
     )
-    assert installed == reconciled_manifest.dataset_generation
+    assert installed == candidate["reconciled_generation"].dataset_manifest.dataset_generation
     metrics = core.metrics()
     assert not metrics.projection_paused
     assert metrics.unresolved_reconciliation_events == 0
@@ -899,6 +1189,422 @@ def test_rollback_pause_and_full_reconciliation_recovery() -> None:
     clock.value = "2026-09-02T00:03:01Z"
     resumed = core.ingest(_envelope("resumed", received_at="2026-09-02T00:03:00Z"))
     assert resumed.status.state is InboxState.PROJECTED
+
+
+def test_reconciled_v2_boundary_installs_from_memory_without_opening_paths(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    core, _, _ = _core()
+    active = core.active_dataset()
+    fence = core.capture_reconciliation_fence(expected_active_generation=active.dataset_generation)
+    reconciled = _reconciled_generation(_records(), generated_at="2026-09-02T00:02:00Z")
+
+    def forbid_path_open(*_args: Any, **_kwargs: Any) -> None:
+        raise AssertionError("the in-memory sync boundary must not read a Path")
+
+    monkeypatch.setattr(Path, "open", forbid_path_open)
+    installed = core.install_reconciliation(
+        shop_domain=SHOP,
+        fence=fence,
+        reconciled_generation=reconciled,
+        expected_active_generation=active.dataset_generation,
+    )
+    assert installed == reconciled.dataset_manifest.dataset_generation
+    assert core.active_dataset().records == reconciled.records
+
+
+def test_reconciled_v2_boundary_rejects_wrong_types_report_and_part_order() -> None:
+    core, _, _ = _core()
+    active = core.active_dataset()
+    fence = core.capture_reconciliation_fence(expected_active_generation=active.dataset_generation)
+    with pytest.raises(SyncOperationError, match="validation, catch-up"):
+        core.install_reconciliation(
+            shop_domain=SHOP,
+            fence=fence,
+            reconciled_generation=object(),  # type: ignore[arg-type]
+            expected_active_generation=active.dataset_generation,
+        )
+    with pytest.raises(SyncContractError, match="fence must be canonical"):
+        core.install_reconciliation(
+            shop_domain=SHOP,
+            fence=object(),  # type: ignore[arg-type]
+            reconciled_generation=_reconciled_generation(
+                _records(), generated_at="2026-09-02T00:02:00Z"
+            ),
+            expected_active_generation=active.dataset_generation,
+        )
+
+    reconciled = _reconciled_generation(_records(), generated_at="2026-09-02T00:02:00Z")
+    with pytest.raises(SyncOperationError, match="validation, catch-up"):
+        core.install_reconciliation(
+            shop_domain=SHOP,
+            fence=fence,
+            reconciled_generation=replace(reconciled, source_manifest=object()),
+            expected_active_generation=active.dataset_generation,
+        )
+    malformed_source = replace(
+        reconciled.source_manifest,
+        parts=(object(), reconciled.source_manifest.parts[1]),
+    )
+    with pytest.raises(SyncOperationError, match="validation, catch-up"):
+        core.install_reconciliation(
+            shop_domain=SHOP,
+            fence=fence,
+            reconciled_generation=replace(reconciled, source_manifest=malformed_source),
+            expected_active_generation=active.dataset_generation,
+        )
+    forged_report = replace(reconciled.taxonomy_report, total=3)
+    with pytest.raises(SyncOperationError, match="validation, catch-up"):
+        core.install_reconciliation(
+            shop_domain=SHOP,
+            fence=fence,
+            reconciled_generation=replace(reconciled, taxonomy_report=forged_report),
+            expected_active_generation=active.dataset_generation,
+        )
+
+    forged_source = replace(
+        reconciled.source_manifest,
+        parts=tuple(reversed(reconciled.source_manifest.parts)),
+    )
+    with pytest.raises(SyncOperationError, match="validation, catch-up"):
+        core.install_reconciliation(
+            shop_domain=SHOP,
+            fence=fence,
+            reconciled_generation=replace(
+                reconciled,
+                source_manifest=forged_source,
+                source_manifest_bytes=forged_source.to_json_bytes(),
+            ),
+            expected_active_generation=active.dataset_generation,
+        )
+    assert core.active_dataset() == active
+
+
+@pytest.mark.parametrize(
+    "forgery",
+    ["mixed-capture", "same-operation", "query", "no-overlap", "oversized-window"],
+)
+def test_reconciled_v2_boundary_rejects_self_consistent_part_forgeries(
+    forgery: str,
+) -> None:
+    core, _, _ = _core()
+    active = core.active_dataset()
+    fence = core.capture_reconciliation_fence(expected_active_generation=active.dataset_generation)
+    reconciled = _reconciled_generation(_records(), generated_at="2026-09-02T00:02:00Z")
+    products, variants = reconciled.source_manifest.parts
+    if forgery == "mixed-capture":
+        variants = _replace_reconciled_part(variants, snapshot_set_id="sha256:" + "2" * 64)
+    elif forgery == "same-operation":
+        variants = _replace_reconciled_part(variants, operation_id=products.operation_id)
+    elif forgery == "query":
+        variants = _replace_reconciled_part(variants, query_sha256="0" * 64)
+    elif forgery == "no-overlap":
+        products = _replace_reconciled_part(
+            products,
+            created_at="2026-09-02T00:02:00Z",
+            completed_at="2026-09-02T00:03:00Z",
+        )
+        variants = _replace_reconciled_part(
+            variants,
+            created_at="2026-09-02T00:04:00Z",
+            completed_at="2026-09-02T00:05:00Z",
+        )
+    else:
+        products = _replace_reconciled_part(
+            products,
+            created_at="2026-09-02T00:00:00Z",
+            completed_at="2026-09-03T00:00:00Z",
+        )
+        variants = _replace_reconciled_part(
+            variants,
+            created_at="2026-09-02T23:59:00Z",
+            completed_at="2026-09-03T23:59:00Z",
+        )
+    forged_source = replace(reconciled.source_manifest, parts=(products, variants))
+    forged = replace(
+        reconciled,
+        source_manifest=forged_source,
+        source_manifest_bytes=forged_source.to_json_bytes(),
+    )
+    with pytest.raises(SyncOperationError, match="validation, catch-up"):
+        core.install_reconciliation(
+            shop_domain=SHOP,
+            fence=fence,
+            reconciled_generation=forged,
+            expected_active_generation=active.dataset_generation,
+        )
+    assert core.active_dataset() == active
+
+
+def test_reconciliation_fence_replays_frozen_post_fence_event_before_commit() -> None:
+    adapters = Adapters()
+    core, _, clock = _core(adapters)
+    original = core.active_dataset()
+    fence = core.capture_reconciliation_fence(
+        expected_active_generation=original.dataset_generation
+    )
+    reconciled = _reconciled_generation(_records(), generated_at="2026-09-02T00:02:00Z")
+
+    adapters.source_updated_at = "2026-09-02T00:03:00Z"
+    delivery = core.ingest(_envelope("post-fence", received_at="2026-09-02T00:03:00Z"))
+    assert delivery.status.state is InboxState.VALIDATED
+    assert core.active_dataset() == original
+    assert core.metrics().projection_paused
+
+    adapters.product_id = "2"
+    adapters.category = EventCategory.PRODUCT_UNPUBLISH
+    adapters.source_updated_at = "2026-09-02T00:04:00Z"
+    clock.value = "2026-09-02T00:04:01Z"
+    installed = core.install_reconciliation(
+        shop_domain=SHOP,
+        fence=fence,
+        reconciled_generation=reconciled,
+        expected_active_generation=original.dataset_generation,
+    )
+
+    active = core.active_dataset()
+    assert installed == active.dataset_generation
+    assert active.dataset_generation != reconciled.dataset_manifest.dataset_generation
+    assert active.source_cut_at == "2026-09-02T00:03:00Z"
+    assert active.records[0].variants[0].price_text == "9.9900"
+    assert active.records[1] == _records()[1]
+    assert core.event_status(delivery.key).state is InboxState.PROJECTED
+    assert adapters.validator_calls == 1
+    assert not core.metrics().projection_paused
+
+
+@pytest.mark.parametrize("failure_mode", ["failed", "conflicting", "unprocessed"])
+def test_post_fence_unresolved_delivery_blocks_reconciliation_install(
+    failure_mode: str,
+) -> None:
+    adapters = Adapters()
+    core, _, _ = _core(adapters)
+    original = core.active_dataset()
+    fence = core.capture_reconciliation_fence(
+        expected_active_generation=original.dataset_generation
+    )
+    reconciled = _reconciled_generation(_records(), generated_at="2026-09-02T00:02:00Z")
+    envelope = _envelope("post-fence-unresolved")
+    if failure_mode == "failed":
+        adapters.validator_failure = HostileError("redacted")
+        assert core.ingest(envelope).status.state is InboxState.FAILED
+    elif failure_mode == "conflicting":
+        assert core.ingest(envelope).status.state is InboxState.VALIDATED
+        assert core.receive(
+            _envelope("post-fence-unresolved", payload=b'{"different":true}')
+        ).conflict
+    else:
+        assert core.receive(envelope).status.state is InboxState.RECEIVED
+
+    with pytest.raises(SyncOperationError, match="catch-up is incomplete"):
+        core.install_reconciliation(
+            shop_domain=SHOP,
+            fence=fence,
+            reconciled_generation=reconciled,
+            expected_active_generation=original.dataset_generation,
+        )
+    assert core.active_dataset() == original
+    metrics = core.metrics()
+    assert metrics.projection_paused
+    assert metrics.stale
+
+
+def test_reconciliation_fence_is_core_bound_and_tamper_evident() -> None:
+    core, _, _ = _core()
+    active = core.active_dataset()
+    fence = core.capture_reconciliation_fence(expected_active_generation=active.dataset_generation)
+    reconciled = _reconciled_generation(_records(), generated_at="2026-09-02T00:02:00Z")
+    forged = replace(fence, delivery_sequence=fence.delivery_sequence + 1)
+    assert type(forged) is ReconciliationFence
+    with pytest.raises(SyncOperationError, match="fence is not active"):
+        core.install_reconciliation(
+            shop_domain=SHOP,
+            fence=forged,
+            reconciled_generation=reconciled,
+            expected_active_generation=active.dataset_generation,
+        )
+    with pytest.raises(SyncOperationError, match="active reconciliation fence"):
+        core.rollback(expected_active_generation=active.dataset_generation)
+
+
+def test_reconciliation_fence_rejects_wrong_generation_and_changed_active_pair() -> None:
+    core, _, _ = _core()
+    active = core.active_dataset()
+    with pytest.raises(SyncOperationError, match="changed before the reconciliation fence"):
+        core.capture_reconciliation_fence(expected_active_generation="sha256:" + "f" * 64)
+
+    fence = core.capture_reconciliation_fence(expected_active_generation=active.dataset_generation)
+    reconciled = _reconciled_generation(_records(), generated_at="2026-09-02T00:02:00Z")
+    object.__setattr__(core._pair.active.generation, "dataset_generation", "sha256:" + "e" * 64)
+    with pytest.raises(SyncOperationError, match="changed before reconciliation"):
+        core.install_reconciliation(
+            shop_domain=SHOP,
+            fence=fence,
+            reconciled_generation=reconciled,
+            expected_active_generation=active.dataset_generation,
+        )
+
+
+def test_reconciliation_rejects_build_time_behind_generation_high_watermark() -> None:
+    clock = MutableClock("2026-09-02T00:05:00Z")
+    core, _, _ = _core(clock=clock)
+    assert core.ingest(_envelope("future-build")).status.state is InboxState.PROJECTED
+    active = core.active_dataset()
+    clock.value = "2026-09-02T00:01:30Z"
+    fence = core.capture_reconciliation_fence(expected_active_generation=active.dataset_generation)
+    reconciled = _reconciled_generation(active.records, generated_at="2026-09-02T00:02:00Z")
+    with pytest.raises(SyncOperationError, match="validation, catch-up"):
+        core.install_reconciliation(
+            shop_domain=SHOP,
+            fence=fence,
+            reconciled_generation=reconciled,
+            expected_active_generation=active.dataset_generation,
+        )
+    assert core.active_dataset() == active
+
+
+def test_stale_post_fence_event_must_be_an_exact_noop_to_install() -> None:
+    adapters = Adapters()
+    core, _, _ = _core(adapters)
+    active = core.active_dataset()
+    fence = core.capture_reconciliation_fence(expected_active_generation=active.dataset_generation)
+    reconciled = _reconciled_generation(_records(), generated_at="2026-09-02T00:02:00Z")
+    assert core.ingest(_envelope("stale-post-fence")).status.state is InboxState.VALIDATED
+    with pytest.raises(SyncOperationError, match="validation, catch-up"):
+        core.install_reconciliation(
+            shop_domain=SHOP,
+            fence=fence,
+            reconciled_generation=reconciled,
+            expected_active_generation=active.dataset_generation,
+        )
+    assert core.active_dataset() == active
+
+    adapters = Adapters()
+    adapters.projector_override = lambda context, _event: context.records
+    core, _, _ = _core(adapters)
+    active = core.active_dataset()
+    fence = core.capture_reconciliation_fence(expected_active_generation=active.dataset_generation)
+    reconciled = _reconciled_generation(_records(), generated_at="2026-09-02T00:02:00Z")
+    delivery = core.ingest(_envelope("stale-noop"))
+    assert delivery.status.state is InboxState.VALIDATED
+    assert (
+        core.install_reconciliation(
+            shop_domain=SHOP,
+            fence=fence,
+            reconciled_generation=reconciled,
+            expected_active_generation=active.dataset_generation,
+        )
+        == reconciled.dataset_manifest.dataset_generation
+    )
+    assert core.event_status(delivery.key).state is InboxState.PROJECTED
+
+
+@pytest.mark.parametrize("tamper", ["topic", "digest", "state"])
+def test_reconciliation_catch_up_revalidates_frozen_entry_at_both_boundaries(
+    tamper: str,
+) -> None:
+    holder: dict[str, SyncCore] = {}
+
+    def probe(kind: ActivationKind) -> None:
+        if tamper == "state" and kind is ActivationKind.RECONCILIATION:
+            core = holder["core"]
+            key = (SHOP, "tampered-catch-up")
+            core._entries[key] = replace(core._entries[key], state=InboxState.FAILED)
+
+    core, adapters, clock = _core(probe=probe)
+    holder["core"] = core
+    active = core.active_dataset()
+    fence = core.capture_reconciliation_fence(expected_active_generation=active.dataset_generation)
+    reconciled = _reconciled_generation(_records(), generated_at="2026-09-02T00:02:00Z")
+    adapters.source_updated_at = "2026-09-02T00:03:00Z"
+    envelope = _envelope(
+        "tampered-catch-up",
+        received_at="2026-09-02T00:03:00Z",
+    )
+    adapters_entry = core.ingest(envelope)
+    assert adapters_entry.status.state is InboxState.VALIDATED
+    key = (SHOP, envelope.webhook_id)
+    if tamper == "topic":
+        object.__setattr__(core._entries[key].envelope, "topic", "products/unknown")
+    elif tamper == "digest":
+        core._entries[key] = replace(core._entries[key], event_identity_sha256="f" * 64)
+    clock.value = "2026-09-02T00:04:00Z"
+    message = "Deliveries changed" if tamper == "state" else "validation, catch-up"
+    with pytest.raises(SyncOperationError, match=message):
+        core.install_reconciliation(
+            shop_domain=SHOP,
+            fence=fence,
+            reconciled_generation=reconciled,
+            expected_active_generation=active.dataset_generation,
+        )
+    assert core.active_dataset() == active
+
+
+def test_projected_duplicate_after_fence_is_replayed_as_idempotent_noop() -> None:
+    core, adapters, _ = _core()
+    envelope = _envelope("projected-before-fence")
+    assert core.ingest(envelope).status.state is InboxState.PROJECTED
+    active = core.active_dataset()
+    fence = core.capture_reconciliation_fence(expected_active_generation=active.dataset_generation)
+    reconciled = _reconciled_generation(active.records, generated_at="2026-09-02T00:02:00Z")
+    duplicate = core.receive(
+        _envelope(
+            "projected-before-fence",
+            received_at="2026-09-02T00:03:00Z",
+        )
+    )
+    assert duplicate.duplicate
+    installed = core.install_reconciliation(
+        shop_domain=SHOP,
+        fence=fence,
+        reconciled_generation=reconciled,
+        expected_active_generation=active.dataset_generation,
+    )
+    assert installed == reconciled.dataset_manifest.dataset_generation
+    assert adapters.validator_calls == 1
+
+
+def test_post_fence_duplicate_cannot_reorder_distinct_events_for_one_product() -> None:
+    adapters = Adapters()
+
+    def deterministic_projection(
+        context: ProjectionContext, event: ValidatedWebhookEvent
+    ) -> tuple[CatalogProductRecordV1, ...]:
+        target = context.records[0]
+        price = "3.0000" if event.source_updated_at.endswith("03:00Z") else "4.0000"
+        variant = replace(
+            target.variants[0],
+            price_text=price,
+            updated_at=event.source_updated_at,
+        )
+        return (
+            replace(target, updated_at=event.source_updated_at, variants=(variant,)),
+            context.records[1],
+        )
+
+    adapters.projector_override = deterministic_projection
+    core, _, clock = _core(adapters)
+    active = core.active_dataset()
+    fence = core.capture_reconciliation_fence(expected_active_generation=active.dataset_generation)
+    reconciled = _reconciled_generation(_records(), generated_at="2026-09-02T00:02:00Z")
+    first_envelope = _envelope("first-after-fence", payload=b'{"event":1}')
+    adapters.source_updated_at = "2026-09-02T00:03:00Z"
+    assert core.ingest(first_envelope).status.state is InboxState.VALIDATED
+    adapters.source_updated_at = "2026-09-02T00:04:00Z"
+    assert (
+        core.ingest(_envelope("second-after-fence", payload=b'{"event":2}')).status.state
+        is InboxState.VALIDATED
+    )
+    assert core.receive(first_envelope).duplicate
+
+    clock.value = "2026-09-02T00:05:00Z"
+    core.install_reconciliation(
+        shop_domain=SHOP,
+        fence=fence,
+        reconciled_generation=reconciled,
+        expected_active_generation=active.dataset_generation,
+    )
+    assert core.active_dataset().records[0].variants[0].price_text == "4.0000"
 
 
 def test_reconciliation_and_rollback_probes_fail_without_a_partial_swap() -> None:
@@ -915,12 +1621,10 @@ def test_reconciliation_and_rollback_probes_fail_without_a_partial_swap() -> Non
     with pytest.raises(SyncOperationError, match="Rollback validation"):
         core.rollback(expected_active_generation=projected.status.projected_generation or "")
     assert core.active_dataset().dataset_generation == generation
-    with pytest.raises(SyncOperationError, match="Reconciliation validation"):
+    with pytest.raises(SyncOperationError, match="activation"):
         core.install_reconciliation(
             shop_domain=SHOP,
-            source_cut_at="2026-09-02T00:02:00Z",
-            **_candidate_args(_records(), generated_at="2026-09-02T00:02:00Z"),
-            records=_records(),
+            **_candidate_args(core, _records(), generated_at="2026-09-02T00:02:00Z"),
             expected_active_generation=generation,
         )
     assert core.active_dataset().dataset_generation == generation
@@ -930,53 +1634,50 @@ def test_reconciliation_and_rollback_probes_fail_without_a_partial_swap() -> Non
 def test_reconciliation_rejects_generation_race_and_invalid_input() -> None:
     core, _, _ = _core()
     current = core.active_dataset().dataset_generation
-    with pytest.raises(SyncOperationError, match="changed before reconciliation"):
+    with pytest.raises(SyncOperationError, match="fence does not match"):
         core.install_reconciliation(
             shop_domain=SHOP,
-            source_cut_at="2026-09-02T00:02:00Z",
-            **_candidate_args(_records(), generated_at="2026-09-02T00:02:00Z"),
-            records=_records(),
+            **_candidate_args(core, _records(), generated_at="2026-09-02T00:02:00Z"),
             expected_active_generation="sha256:" + "f" * 64,
         )
-    with pytest.raises(SyncOperationError, match="validation or activation"):
+    candidate = _candidate_args(core, _records(), generated_at="2026-09-02T00:02:00Z")
+    forged = replace(
+        candidate["reconciled_generation"],
+        records=(_records()[0],),
+    )
+    with pytest.raises(SyncOperationError, match="validation, catch-up"):
         core.install_reconciliation(
             shop_domain=SHOP,
-            source_cut_at="2026-09-02T00:02:00Z",
-            **_candidate_args(_records(), generated_at="2026-09-02T00:02:00Z"),
-            records=(_records()[0],),
+            fence=candidate["fence"],
+            reconciled_generation=forged,
             expected_active_generation=current,
         )
 
 
 def test_reconciliation_rejects_stale_source_cut_manifest_and_build_time() -> None:
-    core, _, _ = _core()
+    core, _, clock = _core()
     projected = core.ingest(_envelope())
     active = core.active_dataset()
     assert active.records[0].variants[0].price_text == "9.9900"
     assert active.source_cut_at == EVENT_TIME
 
-    with pytest.raises(SyncOperationError, match="validation or activation"):
+    with pytest.raises(SyncOperationError, match="validation, catch-up"):
         core.install_reconciliation(
             shop_domain=SHOP,
-            source_cut_at="2026-09-02T00:01:30Z",
-            **_candidate_args(_records(), generated_at=BASE_TIME),
-            records=_records(),
+            **_candidate_args(core, _records(), generated_at=BASE_TIME),
             expected_active_generation=projected.status.projected_generation or "",
         )
-    with pytest.raises(SyncOperationError, match="validation or activation"):
+    with pytest.raises(SyncOperationError, match="validation, catch-up"):
         core.install_reconciliation(
             shop_domain=SHOP,
-            source_cut_at="2026-09-02T00:01:00.5Z",
-            **_candidate_args(_records(), generated_at="2026-09-02T00:01:00.5Z"),
-            records=_records(),
+            **_candidate_args(core, _records(), generated_at="2026-09-02T00:01:00.500000Z"),
             expected_active_generation=active.dataset_generation,
         )
-    with pytest.raises(SyncOperationError, match="source cut is not newer"):
+    clock.value = "2026-09-02T00:00:30Z"
+    with pytest.raises(SyncOperationError, match="validation, catch-up"):
         core.install_reconciliation(
             shop_domain=SHOP,
-            source_cut_at=EVENT_TIME,
-            **_candidate_args(_records(), generated_at="2026-09-02T00:02:00Z"),
-            records=_records(),
+            **_candidate_args(core, _records(), generated_at=EVENT_TIME),
             expected_active_generation=active.dataset_generation,
         )
     assert core.active_dataset() == active
@@ -988,60 +1689,57 @@ def test_reconciliation_rejects_forged_or_foreign_source_evidence() -> None:
     active = core.active_dataset()
     assert active.records[0].variants[0].price_text == "9.9900"
 
-    old_source, old_source_bytes, old_manifest = _manifest_bundle(_records())
-    forged_time = replace(old_manifest, generated_at="2026-09-02T00:02:00Z")
-    assert old_manifest.dataset_generation == forged_time.dataset_generation
-    assert (
-        old_manifest.source_snapshot_manifest_sha256 == forged_time.source_snapshot_manifest_sha256
+    candidate = _candidate_args(core, _records(), generated_at="2026-09-02T00:02:00Z")
+    generation = candidate["reconciled_generation"]
+    forged_manifest = replace(
+        generation.dataset_manifest,
+        generated_at="2026-09-02T00:02:30Z",
     )
-    with pytest.raises(SyncOperationError, match="validation or activation"):
+    with pytest.raises(SyncOperationError, match="validation, catch-up"):
         core.install_reconciliation(
             shop_domain=SHOP,
-            source_cut_at=forged_time.generated_at,
-            source_manifest=old_source,
-            source_manifest_bytes=old_source_bytes,
-            manifest=forged_time,
-            records=_records(),
+            fence=candidate["fence"],
+            reconciled_generation=replace(generation, dataset_manifest=forged_manifest),
             expected_active_generation=projected.status.projected_generation or "",
         )
 
-    source, source_bytes, manifest = _manifest_bundle(
-        _records(), generated_at="2026-09-02T00:02:00Z"
-    )
-    with pytest.raises(SyncOperationError, match="validation or activation"):
+    candidate = _candidate_args(core, _records(), generated_at="2026-09-02T00:02:00Z")
+    generation = candidate["reconciled_generation"]
+    with pytest.raises(SyncOperationError, match="validation, catch-up"):
         core.install_reconciliation(
             shop_domain=SHOP,
-            source_cut_at=source.source.completed_at,
-            source_manifest=source,
-            source_manifest_bytes=source_bytes,
-            manifest=replace(manifest, generated_at="2026-09-02T00:02:30Z"),
-            records=_records(),
-            expected_active_generation=active.dataset_generation,
-        )
-    with pytest.raises(SyncOperationError, match="validation or activation"):
-        core.install_reconciliation(
-            shop_domain=SHOP,
-            source_cut_at=source.source.completed_at,
-            source_manifest=source,
-            source_manifest_bytes=source_bytes + b" ",
-            manifest=manifest,
-            records=_records(),
+            fence=candidate["fence"],
+            reconciled_generation=replace(
+                generation,
+                source_manifest_bytes=generation.source_manifest_bytes + b" ",
+            ),
             expected_active_generation=active.dataset_generation,
         )
 
-    foreign_source, foreign_bytes, foreign_manifest = _manifest_bundle(
+    candidate = _candidate_args(core, _records(), generated_at="2026-09-02T00:02:00Z")
+    generation = candidate["reconciled_generation"]
+    forged_source = replace(
+        generation.source_manifest,
+        source_identity_product_count=generation.source_manifest.source_identity_product_count + 1,
+    )
+    with pytest.raises(SyncOperationError, match="validation, catch-up"):
+        core.install_reconciliation(
+            shop_domain=SHOP,
+            fence=candidate["fence"],
+            reconciled_generation=replace(generation, source_manifest=forged_source),
+            expected_active_generation=active.dataset_generation,
+        )
+
+    foreign = _candidate_args(
+        core,
         _records(),
         generated_at="2026-09-02T00:02:00Z",
         shop_domain="other.myshopify.com",
     )
-    with pytest.raises(SyncOperationError, match="validation or activation"):
+    with pytest.raises(SyncOperationError, match="validation, catch-up"):
         core.install_reconciliation(
             shop_domain=SHOP,
-            source_cut_at=foreign_source.source.completed_at,
-            source_manifest=foreign_source,
-            source_manifest_bytes=foreign_bytes,
-            manifest=foreign_manifest,
-            records=_records(),
+            **foreign,
             expected_active_generation=active.dataset_generation,
         )
     assert core.active_dataset() == active
@@ -1053,14 +1751,12 @@ def test_reconciliation_cut_blocks_received_and_failed_event_replay() -> None:
     current = core.active_dataset().dataset_generation
     core.install_reconciliation(
         shop_domain=SHOP,
-        source_cut_at="2026-09-02T00:02:00Z",
-        **_candidate_args(_records(), generated_at="2026-09-02T00:02:00Z"),
-        records=_records(),
+        **_candidate_args(core, _records(), generated_at="2026-09-02T00:02:00Z"),
         expected_active_generation=current,
     )
     installed = core.active_dataset()
     received_status = core.process(received.key)
-    assert received_status.state is InboxState.RECONCILE_REQUIRED
+    assert received_status.state is InboxState.PROJECTED
     assert adapters.projector_calls == 0
     assert core.active_dataset() == installed
     assert installed.records[0].variants[0].price_text == "1.2300"
@@ -1073,15 +1769,13 @@ def test_reconciliation_cut_blocks_received_and_failed_event_replay() -> None:
     assert failed.status.state is InboxState.FAILED
     other.install_reconciliation(
         shop_domain=SHOP,
-        source_cut_at="2026-09-02T00:02:00Z",
-        **_candidate_args(_records(), generated_at="2026-09-02T00:02:00Z"),
-        records=_records(),
+        **_candidate_args(other, _records(), generated_at="2026-09-02T00:02:00Z"),
         expected_active_generation=other.active_dataset().dataset_generation,
     )
     reconciled = other.active_dataset()
     failing_adapters.projector_failure = None
     retry = other.process(failed.key)
-    assert retry.state is InboxState.RECONCILE_REQUIRED
+    assert retry.state is InboxState.PROJECTED
     assert failing_adapters.projector_calls == 1
     assert other.active_dataset() == reconciled
 
@@ -1095,12 +1789,10 @@ def test_rollback_does_not_lower_reconciliation_high_watermarks() -> None:
     rolled_back = core.active_dataset()
     assert rolled_back.source_cut_at == BASE_TIME
 
-    with pytest.raises(SyncOperationError, match="source cut is not newer"):
+    with pytest.raises(SyncOperationError, match="validation, catch-up"):
         core.install_reconciliation(
             shop_domain=SHOP,
-            source_cut_at="2026-09-02T00:00:30Z",
-            **_candidate_args(_records(), generated_at="2026-09-02T00:00:30Z"),
-            records=_records(),
+            **_candidate_args(core, _records(), generated_at="2026-09-02T00:00:30Z"),
             expected_active_generation=base_generation,
         )
     assert core.active_dataset() == rolled_back
@@ -1130,29 +1822,25 @@ def test_reconciliation_preserves_conflict_arriving_after_captured_watermark(
     holder["core"] = core
     core.ingest(_envelope())
     active = core.active_dataset()
-    source_manifest, source_manifest_bytes, manifest = _manifest_bundle(
-        active.records, generated_at="2026-09-02T00:02:00Z"
-    )
+    candidate = _candidate_args(core, active.records, generated_at="2026-09-02T00:02:00Z")
 
     if arrival_phase == "build":
-        original = sync._initial_generation
+        original = sync._copy_reconciled_generation
 
         def build_with_conflict(*args: Any, **kwargs: Any) -> Any:
             candidate = original(*args, **kwargs)
             inject_conflict()
             return candidate
 
-        monkeypatch.setattr(sync, "_initial_generation", build_with_conflict)
+        monkeypatch.setattr(sync, "_copy_reconciled_generation", build_with_conflict)
 
-    core.install_reconciliation(
-        shop_domain=SHOP,
-        source_cut_at="2026-09-02T00:02:00Z",
-        source_manifest=source_manifest,
-        source_manifest_bytes=source_manifest_bytes,
-        manifest=manifest,
-        records=active.records,
-        expected_active_generation=active.dataset_generation,
-    )
+    with pytest.raises(SyncOperationError, match="Deliveries changed"):
+        core.install_reconciliation(
+            shop_domain=SHOP,
+            **candidate,
+            expected_active_generation=active.dataset_generation,
+        )
+    assert core.active_dataset() == active
     pending = core.pending_reconciliation()
     assert len(pending) == 1
     assert pending[0].key == WebhookKey(SHOP, "event-1")
@@ -1163,7 +1851,7 @@ def test_reconciliation_preserves_conflict_arriving_after_captured_watermark(
     assert metrics.stale
 
 
-def test_reconciliation_clears_only_preexisting_events_covered_by_source_cut() -> None:
+def test_reconciliation_coverage_uses_fence_sequence_not_event_timestamp() -> None:
     core, _, _ = _core()
     core.ingest(
         _envelope(
@@ -1175,13 +1863,11 @@ def test_reconciliation_clears_only_preexisting_events_covered_by_source_cut() -
     current = core.active_dataset().dataset_generation
     core.install_reconciliation(
         shop_domain=SHOP,
-        source_cut_at="2026-09-02T00:02:00Z",
-        **_candidate_args(_records(), generated_at="2026-09-02T00:02:00Z"),
-        records=_records(),
+        **_candidate_args(core, _records(), generated_at="2026-09-02T00:02:00Z"),
         expected_active_generation=current,
     )
-    assert [report.key.webhook_id for report in core.pending_reconciliation()] == ["future-unknown"]
-    assert core.metrics().projection_paused
+    assert core.pending_reconciliation() == ()
+    assert not core.metrics().projection_paused
 
 
 def test_reconciliation_clears_covered_validated_event_watermark() -> None:
@@ -1193,9 +1879,7 @@ def test_reconciliation_clears_covered_validated_event_watermark() -> None:
     current = core.active_dataset().dataset_generation
     core.install_reconciliation(
         shop_domain=SHOP,
-        source_cut_at="2026-09-02T00:02:00Z",
-        **_candidate_args(_records(), generated_at="2026-09-02T00:02:00Z"),
-        records=_records(),
+        **_candidate_args(core, _records(), generated_at="2026-09-02T00:02:00Z"),
         expected_active_generation=current,
     )
     assert core.pending_reconciliation() == ()
@@ -1418,6 +2102,7 @@ def test_core_constructor_rejects_noncanonical_source_snapshot_boundary() -> Non
         {"initial_source_manifest": replace(source, source=object())},
         {"initial_source_manifest_bytes": bytearray(source_bytes)},
         {"initial_source_manifest": replace(source, object_counts=object())},
+        {"initial_manifest": replace(manifest, generated_at=EVENT_TIME)},
     )
     for override in invalid_overrides:
         with pytest.raises(SyncContractError):
@@ -1938,9 +2623,7 @@ def test_admin_operations_recheck_generation_pair_after_probe(operation: str) ->
         with pytest.raises(SyncOperationError, match="changed before reconciliation"):
             core.install_reconciliation(
                 shop_domain=SHOP,
-                source_cut_at="2026-09-02T00:02:00Z",
-                **_candidate_args(_records(), generated_at="2026-09-02T00:02:00Z"),
-                records=_records(),
+                **_candidate_args(core, _records(), generated_at="2026-09-02T00:02:00Z"),
                 expected_active_generation=current,
             )
     assert core.active_dataset().dataset_generation == current

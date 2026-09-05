@@ -12,14 +12,17 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import secrets
+from collections import Counter
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, fields, replace
 from datetime import UTC, datetime
 from enum import StrEnum
 from threading import Lock, RLock
 from types import MappingProxyType
 from typing import Any
 
+from nla_catalog_gateway import reconciliation
 from nla_catalog_gateway.bulk import SourceSnapshotEvidence, SourceSnapshotManifest
 from nla_catalog_gateway.runtime_contract import (
     CONTRACT_VERSION,
@@ -27,7 +30,7 @@ from nla_catalog_gateway.runtime_contract import (
     DatasetManifestV1,
     ProductStatus,
 )
-from nla_catalog_gateway.taxonomy import ProductFamily
+from nla_catalog_gateway.taxonomy import ClassificationReport, ProductFamily
 
 SYNC_CONTRACT_VERSION = 1
 MAX_WEBHOOK_PAYLOAD_BYTES = 16 * 1024 * 1024
@@ -38,6 +41,8 @@ MAX_TOPIC_BYTES = 255
 MAX_TIMESTAMP_BYTES = 64
 MAX_GID_BYTES = 512
 MAX_TAXONOMY_RULE_VERSION_BYTES = 128
+_RECONCILED_CAPTURE_FENCE_MAX_SECONDS = 24 * 60 * 60
+_RECONCILED_MANIFEST_SCHEMA_VERSION = 2
 
 _SHOP_RE = re.compile(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.myshopify\.com\Z")
 _WEBHOOK_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}\Z")
@@ -52,6 +57,16 @@ _RFC3339_RE = re.compile(
     r"(?P<date>[0-9]{4}-[0-9]{2}-[0-9]{2})T"
     r"(?P<clock>[0-9]{2}:[0-9]{2}:[0-9]{2})"
     r"(?:\.(?P<fraction>[0-9]+))?(?P<zone>Z|[+-][0-9]{2}:[0-9]{2})\Z"
+)
+_RECONCILED_QUERY_SHA256: Mapping[reconciliation.SnapshotPart, str] = MappingProxyType(
+    {
+        reconciliation.SnapshotPart.PRODUCTS: (
+            "950e1bb757c01d40591437a8b0e5ddbed4476ad8eea39520d0d824b4bfba903a"
+        ),
+        reconciliation.SnapshotPart.VARIANTS: (
+            "b90f9bf4a691df66a1df8ef0e59aa21f7c23664a09d85d474b30099451f3fda4"
+        ),
+    }
 )
 
 
@@ -459,6 +474,24 @@ class GenerationView:
     records: tuple[CatalogProductRecordV1, ...]
 
 
+@dataclass(frozen=True, slots=True, repr=False)
+class ReconciliationFence:
+    """Opaque in-memory proof that delivery ordering was captured before a snapshot."""
+
+    shop_domain: str
+    active_generation: str
+    delivery_sequence: int
+    captured_at: str
+    token_sha256: str
+
+    def __post_init__(self) -> None:
+        _text(self.shop_domain, _SHOP_RE, "reconciliation fence shop domain")
+        _text(self.active_generation, _GENERATION_RE, "reconciliation fence generation")
+        _nonnegative_integer(self.delivery_sequence, "reconciliation fence sequence")
+        _timestamp_key(self.captured_at, "reconciliation fence timestamp")
+        _text(self.token_sha256, _SHA256_RE, "reconciliation fence token")
+
+
 @dataclass(frozen=True, slots=True)
 class EventStatus:
     state: InboxState
@@ -534,6 +567,8 @@ class _InboxEntry:
     last_received_at: str
     source_updated_at: str | None
     last_delivery_sequence: int
+    validated_event: ValidatedWebhookEvent | None
+    event_identity_sha256: str | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -638,6 +673,46 @@ def _new_generation(**values: Any) -> _SyncGeneration:
     return generation
 
 
+def _new_initial_generation(
+    manifest: DatasetManifestV1,
+    records: tuple[CatalogProductRecordV1, ...],
+    *,
+    shop_domain: str,
+    source_cut_at: str,
+) -> _SyncGeneration:
+    status_counts, family_counts, variants, identities, public = _record_counts(records)
+    seed = hashlib.sha256(
+        _canonical_json_bytes(
+            {
+                "baseDatasetGeneration": manifest.dataset_generation,
+                "domain": "nla-catalog-sync-event-lineage-v1",
+                "syncContractVersion": SYNC_CONTRACT_VERSION,
+            }
+        )
+    ).hexdigest()
+    return _new_generation(
+        base_manifest=manifest,
+        records=records,
+        shop_domain=shop_domain,
+        source_cut_at=source_cut_at,
+        dataset_generation=manifest.dataset_generation,
+        base_dataset_generation=manifest.dataset_generation,
+        parent_dataset_generation=None,
+        catalog_content_sha256=manifest.catalog_content_sha256,
+        taxonomy_rule_version=manifest.taxonomy_rule_version,
+        built_at=manifest.generated_at,
+        event_lineage_sha256=seed,
+        last_event_identity_sha256=None,
+        applied_event_count=0,
+        product_status_counts=status_counts,
+        product_family_counts=family_counts,
+        product_count=len(records),
+        variant_count=variants,
+        source_identity_product_count=identities,
+        public_item_count=public,
+    )
+
+
 def _initial_generation(
     manifest: DatasetManifestV1,
     records: tuple[CatalogProductRecordV1, ...],
@@ -683,36 +758,284 @@ def _initial_generation(
         raise _error("source cut must match the source snapshot completion timestamp")
     if rebuilt_manifest.to_json_bytes() != safe_manifest.to_json_bytes():
         raise _error("runtime manifest is not bound to the source snapshot evidence")
-    status_counts, family_counts, variants, identities, public = _record_counts(safe_records)
-    seed = hashlib.sha256(
-        _canonical_json_bytes(
-            {
-                "baseDatasetGeneration": safe_manifest.dataset_generation,
-                "domain": "nla-catalog-sync-event-lineage-v1",
-                "syncContractVersion": SYNC_CONTRACT_VERSION,
-            }
-        )
-    ).hexdigest()
-    return _new_generation(
-        base_manifest=safe_manifest,
-        records=safe_records,
+    return _new_initial_generation(
+        safe_manifest,
+        safe_records,
         shop_domain=safe_shop,
         source_cut_at=source_cut_at,
-        dataset_generation=safe_manifest.dataset_generation,
-        base_dataset_generation=safe_manifest.dataset_generation,
-        parent_dataset_generation=None,
-        catalog_content_sha256=safe_manifest.catalog_content_sha256,
-        taxonomy_rule_version=safe_manifest.taxonomy_rule_version,
-        built_at=safe_manifest.generated_at,
-        event_lineage_sha256=seed,
-        last_event_identity_sha256=None,
-        applied_event_count=0,
-        product_status_counts=status_counts,
+    )
+
+
+def _copy_reconciliation_fence(value: ReconciliationFence) -> ReconciliationFence:
+    if type(value) is not ReconciliationFence:
+        raise _error("reconciliation fence must be canonical")
+    return ReconciliationFence(
+        shop_domain=value.shop_domain,
+        active_generation=value.active_generation,
+        delivery_sequence=value.delivery_sequence,
+        captured_at=value.captured_at,
+        token_sha256=value.token_sha256,
+    )
+
+
+def _reconciled_digest(value: Any, *, domain: str) -> str:
+    return hashlib.sha256(_canonical_json_bytes({"domain": domain, "value": value})).hexdigest()
+
+
+def _copy_reconciled_part(
+    value: reconciliation.SnapshotPartManifestV1,
+) -> reconciliation.SnapshotPartManifestV1:
+    if type(value) is not reconciliation.SnapshotPartManifestV1:
+        raise _error("reconciled snapshot part must be canonical")
+    return reconciliation.SnapshotPartManifestV1.from_json_bytes(value.to_json_bytes())
+
+
+def _classification_report_for_records(
+    records: tuple[CatalogProductRecordV1, ...],
+) -> ClassificationReport:
+    counts = Counter(
+        f"{record.game.value if record.game else 'unknown'}/{record.product_family.value}"
+        for record in records
+    )
+    rule_counts = Counter(
+        record.classification_rule_id
+        for record in records
+        if record.classification_rule_id is not None
+    )
+    unclassified_reasons = Counter(
+        record.unclassified_reason for record in records if record.unclassified_reason is not None
+    )
+    subtype_reasons = Counter(
+        record.subtype_reason for record in records if record.subtype_reason is not None
+    )
+    classified = sum(record.product_family is not ProductFamily.UNCLASSIFIED for record in records)
+    return ClassificationReport(
+        rule_version=records[0].classification_rule_version,
+        total=len(records),
+        classified=classified,
+        unclassified=len(records) - classified,
+        counts=MappingProxyType(dict(counts)),
+        rule_counts=MappingProxyType(dict(rule_counts)),
+        unclassified_reasons=MappingProxyType(dict(unclassified_reasons)),
+        subtype_reasons=MappingProxyType(dict(subtype_reasons)),
+    )
+
+
+def _reconciled_runtime_manifest(
+    source: reconciliation.ReconciledSourceManifestV2,
+    records: tuple[CatalogProductRecordV1, ...],
+    report: ClassificationReport,
+) -> DatasetManifestV1:
+    source_bytes = source.to_json_bytes()
+    source_manifest_sha = hashlib.sha256(source_bytes).hexdigest()
+    content_sha = _catalog_content_sha256(records)
+    descriptor = {
+        "catalogContentSha256": content_sha,
+        "contractVersion": CONTRACT_VERSION,
+        "domain": "nla-catalog-dataset-generation-v1",
+        "sourceQuerySha256": source.source_query_sha256,
+        "sourceSnapshotManifestSchemaVersion": source.schema_version,
+        "sourceSnapshotManifestSha256": source_manifest_sha,
+        "sourceSnapshotSha256": source.source_snapshot_sha256,
+        "taxonomyRuleVersion": report.rule_version,
+    }
+    generation = f"sha256:{hashlib.sha256(_canonical_json_bytes(descriptor)).hexdigest()}"
+    family_counts = tuple(
+        (family.value, sum(record.product_family is family for record in records))
+        for family in ProductFamily
+    )
+    classified = len(records) - dict(family_counts)[ProductFamily.UNCLASSIFIED.value]
+    public_items = sum(
+        record.publishable and record.product_family is not ProductFamily.UNCLASSIFIED
+        for record in records
+    )
+    manifest = DatasetManifestV1(
+        source_snapshot_manifest_schema_version=source.schema_version,
+        source_snapshot_manifest_sha256=source_manifest_sha,
+        source_snapshot_sha256=source.source_snapshot_sha256,
+        source_query_sha256=source.source_query_sha256,
+        taxonomy_rule_version=report.rule_version,
+        catalog_content_sha256=content_sha,
+        dataset_generation=generation,
+        generated_at=source.capture_completed_at,
+        source_product_count=source.product_count,
+        included_product_count=source.product_count,
+        excluded_product_count=0,
+        source_product_status_counts=source.product_status_counts,
+        included_product_status_counts=source.product_status_counts,
+        excluded_product_status_counts=tuple((status.value, 0) for status in ProductStatus),
+        classified_product_count=classified,
+        unclassified_product_count=len(records) - classified,
         product_family_counts=family_counts,
-        product_count=len(safe_records),
-        variant_count=variants,
-        source_identity_product_count=identities,
-        public_item_count=public,
+        source_variant_count=source.variant_count,
+        included_variant_count=source.variant_count,
+        excluded_variant_count=0,
+        source_identity_product_count=source.source_identity_product_count,
+        included_source_identity_product_count=source.source_identity_product_count,
+        excluded_source_identity_product_count=0,
+        source_active_online_store_published_product_count=(source.active_published_product_count),
+        included_active_online_store_published_product_count=(
+            source.active_published_product_count
+        ),
+        excluded_active_online_store_published_product_count=0,
+        public_item_count=public_items,
+    )
+    manifest.validate_records(records)
+    return manifest
+
+
+def _copy_reconciled_generation(
+    value: reconciliation.ReconciledCatalogGenerationV1,
+    *,
+    shop_domain: str,
+) -> tuple[_SyncGeneration, str]:
+    if type(value) is not reconciliation.ReconciledCatalogGenerationV1:
+        raise _error("reconciliation candidate must be canonical")
+    source = value.source_manifest
+    if (
+        type(source) is not reconciliation.ReconciledSourceManifestV2
+        or type(value.source_manifest_bytes) is not bytes
+        or type(value.taxonomy_report) is not ClassificationReport
+        or type(value.records) is not tuple
+        or type(value.dataset_manifest) is not DatasetManifestV1
+        or type(source.parts) is not tuple
+        or len(source.parts) != 2
+    ):
+        raise _error("reconciliation candidate evidence must use exact contract types")
+    safe_parts = tuple(_copy_reconciled_part(part) for part in source.parts)
+    products, variants = safe_parts
+    if tuple(part.part for part in safe_parts) != (
+        reconciliation.SnapshotPart.PRODUCTS,
+        reconciliation.SnapshotPart.VARIANTS,
+    ):
+        raise _error("reconciled snapshot parts are not in canonical order")
+    shared_fields = (
+        "snapshot_set_id",
+        "shop_domain",
+        "api_version",
+        "online_store_publication_gid",
+        "source_code_sha",
+    )
+    if any(getattr(products, field) != getattr(variants, field) for field in shared_fields):
+        raise _error("reconciled snapshot parts belong to different captures")
+    if products.operation_id == variants.operation_id:
+        raise _error("reconciled snapshot parts must use distinct operations")
+    if any(part.query_sha256 != _RECONCILED_QUERY_SHA256[part.part] for part in safe_parts):
+        raise _error("reconciled snapshot part does not use its approved query")
+    if products.shop_domain != shop_domain:
+        raise _error("reconciled snapshot shop does not match the dataset")
+
+    created = [
+        datetime.fromisoformat(part.created_at.replace("Z", "+00:00")) for part in safe_parts
+    ]
+    completed = [
+        datetime.fromisoformat(part.completed_at.replace("Z", "+00:00")) for part in safe_parts
+    ]
+    if max(created) > min(completed):
+        raise _error("reconciled snapshot capture windows do not overlap")
+    capture_started = min(created)
+    capture_completed = max(completed)
+    capture_window_seconds = int((capture_completed - capture_started).total_seconds())
+    if capture_window_seconds > _RECONCILED_CAPTURE_FENCE_MAX_SECONDS:
+        raise _error("reconciled snapshot capture exceeds its fence")
+    capture_started_at = capture_started.isoformat(timespec="microseconds").replace(
+        ".000000+00:00", "Z"
+    )
+    capture_completed_at = capture_completed.isoformat(timespec="microseconds").replace(
+        ".000000+00:00", "Z"
+    )
+    if capture_started_at.endswith("+00:00"):
+        capture_started_at = capture_started_at.removesuffix("+00:00") + "Z"
+    if capture_completed_at.endswith("+00:00"):
+        capture_completed_at = capture_completed_at.removesuffix("+00:00") + "Z"
+
+    safe_records = _copy_records(value.records)
+    product_count = len(safe_records)
+    variant_count = sum(len(record.variants) for record in safe_records)
+    if products.root_object_count != product_count or variants.root_object_count != variant_count:
+        raise _error("reconciled snapshot root counts do not match records")
+    product_counts = dict(products.object_counts)
+    variant_counts = dict(variants.object_counts)
+    status_counts, _, _, identity_count, _ = _record_counts(safe_records)
+    query_sha = _reconciled_digest(
+        [{"part": part.part.value, "querySha256": part.query_sha256} for part in safe_parts],
+        domain="nla-split-query-set-v1",
+    )
+    snapshot_sha = _reconciled_digest(
+        [
+            {
+                "contentSha256": part.content_sha256,
+                "objectCounts": dict(part.object_counts),
+                "part": part.part.value,
+                "snapshotBytes": part.snapshot_bytes,
+            }
+            for part in safe_parts
+        ],
+        domain="nla-split-snapshot-set-v1",
+    )
+    generation_descriptor = {
+        "apiVersion": products.api_version,
+        "captureCompletedAt": capture_completed_at,
+        "captureFenceMaxSeconds": _RECONCILED_CAPTURE_FENCE_MAX_SECONDS,
+        "captureStartedAt": capture_started_at,
+        "captureWindowSeconds": capture_window_seconds,
+        "partGenerations": [part.part_generation for part in safe_parts],
+        "shopDomain": products.shop_domain,
+        "snapshotSetId": products.snapshot_set_id,
+        "sourceCodeSha": products.source_code_sha,
+        "sourceQuerySha256": query_sha,
+        "sourceSnapshotSha256": snapshot_sha,
+    }
+    source_generation = (
+        f"sha256:{_reconciled_digest(generation_descriptor, domain='nla-reconciled-source-v2')}"
+    )
+    expected_source = reconciliation.ReconciledSourceManifestV2(
+        schema_version=_RECONCILED_MANIFEST_SCHEMA_VERSION,
+        snapshot_set_id=products.snapshot_set_id,
+        parts=(products, variants),
+        capture_started_at=capture_started_at,
+        capture_completed_at=capture_completed_at,
+        capture_window_seconds=capture_window_seconds,
+        capture_fence_max_seconds=_RECONCILED_CAPTURE_FENCE_MAX_SECONDS,
+        source_query_sha256=query_sha,
+        source_snapshot_sha256=snapshot_sha,
+        source_generation=source_generation,
+        product_count=product_count,
+        variant_count=variant_count,
+        inventory_item_count=variant_count,
+        inventory_level_count=variant_counts["InventoryLevel"],
+        publication_count=product_counts["ResourcePublicationV2"],
+        metafield_count=product_counts["Metafield"] + variant_counts["Metafield"],
+        product_status_counts=status_counts,
+        active_published_product_count=sum(record.publishable for record in safe_records),
+        source_identity_product_count=identity_count,
+    )
+    expected_source_bytes = expected_source.to_json_bytes()
+    if any(
+        getattr(source, field.name) != getattr(expected_source, field.name)
+        for field in fields(expected_source)
+    ):
+        raise _error("reconciled source manifest is forged or mismatched")
+    if (
+        source.to_json_bytes() != expected_source_bytes
+        or value.source_manifest_bytes != expected_source_bytes
+    ):
+        raise _error("reconciled source manifest is forged or mismatched")
+    expected_report = _classification_report_for_records(safe_records)
+    if value.taxonomy_report.as_dict() != expected_report.as_dict():
+        raise _error("reconciled taxonomy report does not match records")
+    expected_manifest = _reconciled_runtime_manifest(expected_source, safe_records, expected_report)
+    safe_manifest = _copy_manifest(value.dataset_manifest)
+    if safe_manifest.to_json_bytes() != expected_manifest.to_json_bytes():
+        raise _error("reconciled runtime manifest does not match source and records")
+    return (
+        _new_initial_generation(
+            expected_manifest,
+            safe_records,
+            shop_domain=shop_domain,
+            source_cut_at=capture_completed_at,
+        ),
+        capture_started_at,
     )
 
 
@@ -847,6 +1170,14 @@ def _validate_projection_delta(
         valid_shape = target in before_keys and target in after_keys and before_keys == after_keys
     if not valid_shape:
         raise _ProjectionNeedsReconciliation
+    if event.category not in {EventCategory.PRODUCT_CREATE, EventCategory.PRODUCT_DELETE}:
+        before_target = before_by_gid[target]
+        after_target = after_by_gid[target]
+        if (
+            before_target.powertools_source_id != after_target.powertools_source_id
+            or before_target.sync_source_id != after_target.sync_source_id
+        ):
+            raise _ProjectionNeedsReconciliation
     common = before_keys & after_keys
     for product_gid in common - {target}:
         if before_by_gid[product_gid].to_json_bytes() != after_by_gid[product_gid].to_json_bytes():
@@ -1058,6 +1389,8 @@ class SyncCore:
             active=_GenerationSlot(initial, MappingProxyType({})),
             previous=None,
         )
+        self._active_reconciliation_fence: ReconciliationFence | None = None
+        self._post_fence_first_sequences: dict[_InboxKey, int] = {}
         self._max_source_cut_key = _timestamp_key(
             initial.source_cut_at, "initial source high-watermark"
         )
@@ -1097,6 +1430,8 @@ class SyncCore:
                 raise SyncOperationError("The synchronization inbox is at capacity.")
             self._delivery_sequence += 1
             delivery_sequence = self._delivery_sequence
+            if self._active_reconciliation_fence is not None:
+                self._post_fence_first_sequences.setdefault(key, delivery_sequence)
             self._deliveries_total += 1
             self._record_last_event_locked(safe.received_at)
             if existing is None:
@@ -1111,6 +1446,8 @@ class SyncCore:
                     last_received_at=safe.received_at,
                     source_updated_at=None,
                     last_delivery_sequence=delivery_sequence,
+                    validated_event=None,
+                    event_identity_sha256=None,
                 )
                 self._entries[key] = entry
                 self._inbox_retained_bytes += retained_bytes
@@ -1168,25 +1505,42 @@ class SyncCore:
                 entry = replace(entry, processing_attempts=entry.processing_attempts + 1)
                 self._entries[safe_key] = entry
                 stored_envelope = entry.envelope
-                if self._projection_paused:
+                frozen_event = entry.validated_event
+                frozen_identity = entry.event_identity_sha256
+                if self._projection_paused and self._active_reconciliation_fence is None:
                     return self._mark_reconcile_locked(safe_key, entry.category)
             allowed_categories = SUPPORTED_TOPIC_CATEGORIES.get(stored_envelope.topic)
             if allowed_categories is None:
                 return self._mark_reconcile(safe_key, None)
-            callback_envelope = _clone_envelope(stored_envelope)
-            try:
-                raw_event = self._validator(callback_envelope)
-            except Exception:
-                return self._mark_failed(safe_key, FailureCode.VALIDATION_ADAPTER_FAILED)
-            try:
-                event = _clone_validated_event(raw_event)
-                self._validate_event_binding(stored_envelope, event, allowed_categories)
-            except Exception:
-                return self._mark_failed(safe_key, FailureCode.VALIDATED_EVENT_INVALID)
+            if frozen_event is None:
+                callback_envelope = _clone_envelope(stored_envelope)
+                try:
+                    raw_event = self._validator(callback_envelope)
+                except Exception:
+                    return self._mark_failed(safe_key, FailureCode.VALIDATION_ADAPTER_FAILED)
+                try:
+                    event = _clone_validated_event(raw_event)
+                    self._validate_event_binding(stored_envelope, event, allowed_categories)
+                    event_identity = _event_identity_sha256(stored_envelope, event)
+                except Exception:
+                    return self._mark_failed(safe_key, FailureCode.VALIDATED_EVENT_INVALID)
+            else:
+                try:
+                    event = _clone_validated_event(frozen_event)
+                    self._validate_event_binding(stored_envelope, event, allowed_categories)
+                    event_identity = _event_identity_sha256(stored_envelope, event)
+                    if frozen_identity != event_identity:
+                        raise _error("frozen validated event identity is inconsistent")
+                except Exception:
+                    return self._mark_reconcile(safe_key, None)
             with self._lock:
                 entry = self._entries[safe_key]
                 if entry.state is InboxState.RECONCILE_REQUIRED:
                     return self._status(entry)
+                if entry.validated_event is not None and (
+                    entry.validated_event != event or entry.event_identity_sha256 != event_identity
+                ):
+                    return self._mark_reconcile_locked(safe_key, entry.category)
                 if entry.state is InboxState.RECEIVED:
                     entry = self._transition_entry(
                         entry,
@@ -1194,13 +1548,16 @@ class SyncCore:
                         category=event.category,
                         source_updated_at=event.source_updated_at,
                     )
-                else:
-                    entry = replace(
-                        entry,
-                        category=event.category,
-                        source_updated_at=event.source_updated_at,
-                    )
+                entry = replace(
+                    entry,
+                    category=event.category,
+                    source_updated_at=event.source_updated_at,
+                    validated_event=_clone_validated_event(event),
+                    event_identity_sha256=event_identity,
+                )
                 self._entries[safe_key] = entry
+                if self._active_reconciliation_fence is not None:
+                    return self._status(entry)
                 active_slot = self._pair.active
                 try:
                     order_is_safe = self._order_is_safe(active_slot, stored_envelope, event)
@@ -1294,10 +1651,39 @@ class SyncCore:
             )
             return tuple(self._event_report(key, self._entries[key]) for key in keys)
 
+    def capture_reconciliation_fence(
+        self, *, expected_active_generation: str
+    ) -> ReconciliationFence:
+        """Freeze projection ordering before orchestration starts a full source capture."""
+
+        _text(expected_active_generation, _GENERATION_RE, "expected active generation")
+        with self._process_lock:
+            captured_at = self._safe_clock()
+            with self._lock:
+                active_generation = self._pair.active.generation.dataset_generation
+                if active_generation != expected_active_generation:
+                    raise SyncOperationError(
+                        "The active generation changed before the reconciliation fence."
+                    )
+                fence = ReconciliationFence(
+                    shop_domain=self._expected_shop_domain,
+                    active_generation=active_generation,
+                    delivery_sequence=self._delivery_sequence,
+                    captured_at=captured_at,
+                    token_sha256=secrets.token_hex(32),
+                )
+                self._active_reconciliation_fence = _copy_reconciliation_fence(fence)
+                self._post_fence_first_sequences = {}
+                return _copy_reconciliation_fence(fence)
+
     def rollback(self, *, expected_active_generation: str) -> str:
         _text(expected_active_generation, _GENERATION_RE, "expected active generation")
         with self._process_lock:
             with self._lock:
+                if self._active_reconciliation_fence is not None:
+                    raise SyncOperationError(
+                        "Rollback is blocked by an active reconciliation fence."
+                    )
                 pair = self._pair
                 if pair.active.generation.dataset_generation != expected_active_generation:
                     raise SyncOperationError("The active generation changed before rollback.")
@@ -1322,80 +1708,184 @@ class SyncCore:
         self,
         *,
         shop_domain: str,
-        source_cut_at: str,
-        source_manifest: SourceSnapshotManifest,
-        source_manifest_bytes: bytes,
-        manifest: DatasetManifestV1,
-        records: tuple[CatalogProductRecordV1, ...],
+        fence: ReconciliationFence,
+        reconciled_generation: reconciliation.ReconciledCatalogGenerationV1,
         expected_active_generation: str,
     ) -> str:
         safe_shop = _text(shop_domain, _SHOP_RE, "reconciliation shop domain")
-        source_cut_key = _timestamp_key(source_cut_at, "reconciliation source cut")
         if safe_shop != self._expected_shop_domain:
             raise SyncOperationError("The reconciliation shop does not match the dataset.")
+        safe_fence = _copy_reconciliation_fence(fence)
         _text(expected_active_generation, _GENERATION_RE, "expected active generation")
         with self._process_lock:
             with self._lock:
                 pair = self._pair
+                registered_fence = self._active_reconciliation_fence
+                if registered_fence is None or registered_fence != safe_fence:
+                    raise SyncOperationError("The reconciliation fence is not active.")
+                if (
+                    safe_fence.shop_domain != safe_shop
+                    or safe_fence.active_generation != expected_active_generation
+                ):
+                    raise SyncOperationError("The reconciliation fence does not match the request.")
                 if pair.active.generation.dataset_generation != expected_active_generation:
                     raise SyncOperationError("The active generation changed before reconciliation.")
-                if (source_cut_key[1], source_cut_key[2]) <= (
-                    self._max_source_cut_key[1],
-                    self._max_source_cut_key[2],
-                ):
-                    raise SyncOperationError("The reconciliation source cut is not newer.")
-                delivery_watermark = self._delivery_sequence
-            try:
-                candidate = _initial_generation(
-                    manifest,
-                    records,
-                    source_manifest=source_manifest,
-                    source_manifest_bytes=source_manifest_bytes,
-                    shop_domain=safe_shop,
-                    source_cut_at=source_cut_at,
+                catch_up_sequence = self._delivery_sequence
+                post_fence_sequences = dict(self._post_fence_first_sequences)
+                replay_entries = tuple(
+                    sorted(
+                        (
+                            (first_sequence, key, self._entries[key])
+                            for key, first_sequence in post_fence_sequences.items()
+                        ),
+                        key=lambda item: item[0],
+                    )
                 )
-                candidate_built_key = _timestamp_key(
+                if any(
+                    entry.state not in {InboxState.VALIDATED, InboxState.PROJECTED}
+                    or entry.validated_event is None
+                    or entry.event_identity_sha256 is None
+                    for _, _, entry in replay_entries
+                ):
+                    raise SyncOperationError("Reconciliation catch-up is incomplete.")
+            try:
+                candidate, capture_started_at = _copy_reconciled_generation(
+                    reconciled_generation,
+                    shop_domain=safe_shop,
+                )
+                capture_started_key = _timestamp_key(
+                    capture_started_at, "reconciliation capture start"
+                )
+                fence_time_key = _timestamp_key(
+                    safe_fence.captured_at, "reconciliation fence timestamp"
+                )
+                if capture_started_key[1:] < fence_time_key[1:]:
+                    raise _error("reconciliation capture started before its delivery fence")
+                source_cut_key = _timestamp_key(
+                    candidate.source_cut_at, "reconciliation source cut"
+                )
+                if source_cut_key[1:] <= self._max_source_cut_key[1:]:
+                    raise _error("reconciliation source cut is not newer")
+                base_built_key = _timestamp_key(
                     candidate.built_at, "reconciliation build timestamp"
                 )
-                if (candidate_built_key[1], candidate_built_key[2]) <= (
-                    self._max_built_key[1],
-                    self._max_built_key[2],
-                ):
+                if base_built_key[1:] <= self._max_built_key[1:]:
                     raise _error("reconciliation build timestamp must advance its high-watermark")
+
+                replay_slot = _GenerationSlot(candidate, MappingProxyType({}))
+                replayed_generations: dict[_InboxKey, str] = {}
+                for _, replay_key, replay_entry in replay_entries:
+                    event = _clone_validated_event(replay_entry.validated_event)
+                    envelope = _clone_envelope(replay_entry.envelope)
+                    allowed_categories = SUPPORTED_TOPIC_CATEGORIES.get(envelope.topic)
+                    if allowed_categories is None:
+                        raise _error("reconciliation catch-up event topic is unsupported")
+                    self._validate_event_binding(envelope, event, allowed_categories)
+                    if replay_entry.event_identity_sha256 != _event_identity_sha256(
+                        envelope, event
+                    ):
+                        raise _error("reconciliation catch-up event identity is inconsistent")
+                    context = ProjectionContext(
+                        dataset_generation=replay_slot.generation.dataset_generation,
+                        base_dataset_generation=replay_slot.generation.base_dataset_generation,
+                        taxonomy_rule_version=replay_slot.generation.taxonomy_rule_version,
+                        records=_copy_records(replay_slot.generation.records),
+                    )
+                    projected_records = _copy_records(
+                        self._projector(
+                            context,
+                            _clone_validated_event(event),
+                            _clone_envelope(envelope),
+                        )
+                    )
+                    if self._order_is_safe(replay_slot, envelope, event):
+                        built_at = self._safe_clock()
+                        replayed = _advance_generation(
+                            replay_slot.generation,
+                            projected_records,
+                            envelope,
+                            event,
+                            built_at,
+                        )
+                        event_identity = _event_identity_sha256(envelope, event)
+                        orders = dict(replay_slot.applied_orders)
+                        orders[(envelope.shop_domain, event.product_gid)] = _AppliedOrder(
+                            _timestamp_key(event.source_updated_at, "source update timestamp"),
+                            event_identity,
+                        )
+                        replay_slot = _GenerationSlot(replayed, MappingProxyType(orders))
+                    elif tuple(record.to_json_bytes() for record in projected_records) != tuple(
+                        record.to_json_bytes() for record in replay_slot.generation.records
+                    ):
+                        raise _ProjectionNeedsReconciliation
+                    replayed_generations[replay_key] = replay_slot.generation.dataset_generation
+
+                candidate_built_key = _timestamp_key(
+                    replay_slot.generation.built_at, "reconciliation build timestamp"
+                )
                 self._invoke_activation_probe(ActivationKind.RECONCILIATION)
+            except SyncOperationError:
+                raise
             except Exception:
                 raise SyncOperationError(
-                    "Reconciliation validation or activation failed."
+                    "Reconciliation validation, catch-up, or activation failed."
                 ) from None
             with self._lock:
                 if self._pair is not pair:
                     raise SyncOperationError("The active generation changed before reconciliation.")
-                self._pair = _GenerationPair(
-                    active=_GenerationSlot(candidate, MappingProxyType({})),
-                    previous=pair.active,
+                if (
+                    self._active_reconciliation_fence != registered_fence
+                    or self._delivery_sequence != catch_up_sequence
+                    or self._post_fence_first_sequences != post_fence_sequences
+                ):
+                    raise SyncOperationError("Deliveries changed during reconciliation catch-up.")
+                for _, replay_key, replay_entry in replay_entries:
+                    current_entry = self._entries[replay_key]
+                    if (
+                        current_entry.last_delivery_sequence != replay_entry.last_delivery_sequence
+                        or current_entry.validated_event != replay_entry.validated_event
+                        or current_entry.event_identity_sha256 != replay_entry.event_identity_sha256
+                        or current_entry.state not in {InboxState.VALIDATED, InboxState.PROJECTED}
+                    ):
+                        raise SyncOperationError(
+                            "Deliveries changed during reconciliation catch-up."
+                        )
+                updated_entries = dict(self._entries)
+                for covered_key, covered_entry in updated_entries.items():
+                    if covered_entry.last_delivery_sequence <= safe_fence.delivery_sequence:
+                        updated_entries[covered_key] = replace(
+                            covered_entry,
+                            state=InboxState.PROJECTED,
+                            failure_code=None,
+                            projected_generation=replay_slot.generation.dataset_generation,
+                        )
+                newly_projected = 0
+                for _, replay_key, replay_entry in replay_entries:
+                    if replay_entry.state is not InboxState.PROJECTED:
+                        newly_projected += 1
+                        self._record_last_projected_locked(replay_entry.envelope.received_at)
+                    updated_entries[replay_key] = replace(
+                        replay_entry,
+                        state=InboxState.PROJECTED,
+                        failure_code=None,
+                        projected_generation=replayed_generations[replay_key],
+                    )
+                self._entries = updated_entries
+                self._pair = _GenerationPair(active=replay_slot, previous=pair.active)
+                self._max_source_cut_key = _timestamp_key(
+                    replay_slot.generation.source_cut_at,
+                    "reconciled source high-watermark",
                 )
-                self._max_source_cut_key = source_cut_key
                 self._max_built_key = candidate_built_key
-                self._unresolved_failed = {
-                    key
-                    for key in self._unresolved_failed
-                    if not self._entry_covered_by_reconciliation(
-                        self._entries[key], delivery_watermark, source_cut_key
-                    )
-                }
-                self._unresolved_reconciliation = {
-                    key
-                    for key in self._unresolved_reconciliation
-                    if not self._entry_covered_by_reconciliation(
-                        self._entries[key], delivery_watermark, source_cut_key
-                    )
-                }
-                self._projection_paused = bool(
-                    self._unresolved_failed or self._unresolved_reconciliation
-                )
+                self._unresolved_failed.clear()
+                self._unresolved_reconciliation.clear()
+                self._projection_paused = False
                 self._rollback_reconciliation_pending = False
+                self._active_reconciliation_fence = None
+                self._post_fence_first_sequences = {}
+                self._projected_events_total += newly_projected
                 self._reconciliation_installs_total += 1
-                return candidate.dataset_generation
+                return replay_slot.generation.dataset_generation
 
     def metrics(self) -> SyncMetrics:
         observed_at = self._safe_clock()
@@ -1411,9 +1901,12 @@ class SyncCore:
             unresolved_reconciliation = len(self._unresolved_reconciliation) + int(
                 self._rollback_reconciliation_pending
             )
+            projection_paused = (
+                self._projection_paused or self._active_reconciliation_fence is not None
+            )
             stale = (
                 lag > self._stale_after_seconds
-                or self._projection_paused
+                or projection_paused
                 or bool(self._unresolved_failed)
                 or unresolved_reconciliation > 0
             )
@@ -1431,7 +1924,7 @@ class SyncCore:
                 lag_seconds=lag,
                 stale_after_seconds=self._stale_after_seconds,
                 stale=stale,
-                projection_paused=self._projection_paused,
+                projection_paused=projection_paused,
                 unresolved_failed_events=len(self._unresolved_failed),
                 unresolved_reconciliation_events=unresolved_reconciliation,
                 dead_letter_events=dead_letters,
@@ -1644,22 +2137,6 @@ class SyncCore:
             dead_letter=status.dead_letter,
         )
 
-    @staticmethod
-    def _entry_covered_by_reconciliation(
-        entry: _InboxEntry,
-        delivery_watermark: int,
-        source_cut_key: tuple[str, int, str],
-    ) -> bool:
-        if entry.last_delivery_sequence > delivery_watermark:
-            return False
-        timestamps = [entry.last_received_at]
-        if entry.source_updated_at is not None:
-            timestamps.append(entry.source_updated_at)
-        return all(
-            (_timestamp_key(timestamp, "event coverage timestamp")[1:]) <= source_cut_key[1:]
-            for timestamp in timestamps
-        )
-
     def _record_last_event_locked(self, timestamp: str) -> None:
         if self._last_event_at is None:
             self._last_event_at = timestamp
@@ -1701,6 +2178,7 @@ __all__ = [
     "InboxState",
     "ProjectionContext",
     "RawWebhookEnvelope",
+    "ReconciliationFence",
     "SyncContractError",
     "SyncCore",
     "SyncEventReport",
