@@ -30,6 +30,10 @@ VARIANT_ONE = 9_007_199_254_741_101
 VARIANT_TWO = 9_007_199_254_741_103
 ITEM_ONE = 9_007_199_254_742_001
 ITEM_TWO = 9_007_199_254_742_003
+LEVEL_ONE = 9_007_199_254_743_001
+LEVEL_TWO = 9_007_199_254_743_003
+LOCATION_ONE = 9_007_199_254_744_001
+LOCATION_TWO = 9_007_199_254_744_003
 PUBLICATION = "gid://shopify/Publication/9007199254743001"
 SOURCE_SHA = "a" * 40
 SNAPSHOT_SET = "sha256:" + "b" * 64
@@ -117,11 +121,11 @@ def _variant(
     }
 
 
-def _level(item: int, location: int) -> dict[str, object]:
+def _level(variant: int, item: int, level: int, location: int) -> dict[str, object]:
     return {
         "__typename": "InventoryLevel",
-        "__parentId": _gid("InventoryItem", item),
-        "id": f"{_gid('InventoryLevel', location)}?inventory_item_id={item}",
+        "__parentId": _gid("ProductVariant", variant),
+        "id": f"{_gid('InventoryLevel', level)}?inventory_item_id={item}",
         "location": {"id": _gid("Location", location), "name": "Synthetic location"},
         "quantities": [
             {"name": name, "quantity": 0}
@@ -160,16 +164,16 @@ def _rows() -> tuple[list[dict[str, object]], list[dict[str, object]]]:
         _metafield(_gid("Product", PRODUCT_ONE), 9007199254747001, "game", "magic"),
     ]
     variants = [
-        _level(ITEM_TWO, 9007199254746002),
         _variant(PRODUCT_ONE, VARIANT_ONE, ITEM_ONE),
-        _level(ITEM_ONE, 9007199254746001),
-        _variant(PRODUCT_TWO, VARIANT_TWO, ITEM_TWO),
+        _level(VARIANT_ONE, ITEM_ONE, LEVEL_ONE, LOCATION_ONE),
         _metafield(
             _gid("ProductVariant", VARIANT_ONE),
             9007199254747002,
             "synthetic_note",
             "synthetic",
         ),
+        _variant(PRODUCT_TWO, VARIANT_TWO, ITEM_TWO),
+        _level(VARIANT_TWO, ITEM_TWO, LEVEL_TWO, LOCATION_TWO),
     ]
     return products, variants
 
@@ -469,7 +473,7 @@ def test_duplicate_and_conflicting_typed_gid_rows_fail(tmp_path: Path, conflict:
         ("conflicting_source", "conflicting secondary source identity"),
         ("missing_child", "missing or excess ProductVariant children"),
         ("orphan_variant", "dangling ProductVariant"),
-        ("orphan_level", "dangling InventoryLevel"),
+        ("orphan_level", "InventoryLevel parent ProductVariant is unavailable"),
         ("missing_publication", "missing Online Store publication evidence"),
         ("duplicate_item", "conflicting InventoryItem ownership"),
         ("duplicate_handle", "conflicting Product handle"),
@@ -497,16 +501,62 @@ def test_reconciliation_rejects_identity_and_accounting_failures(
             "id": _gid("Product", 9007199254740999),
         }
     elif mutation == "orphan_level":
-        variants[0]["__parentId"] = _gid("InventoryItem", 9007199254742999)
-        variants[0]["id"] = (
-            f"{_gid('InventoryLevel', 9007199254746002)}?inventory_item_id=9007199254742999"
-        )
+        variants[4]["__parentId"] = _gid("ProductVariant", 9007199254742999)
     elif mutation == "missing_publication":
         products[0] = _publication(PRODUCT_TWO, _gid("Publication", 42))
     elif mutation == "duplicate_item":
-        variants[3]["inventoryItem"] = variants[1]["inventoryItem"]
+        variants[3]["inventoryItem"] = variants[0]["inventoryItem"]
     else:
         products[3]["handle"] = products[1]["handle"]
+    with pytest.raises(ReconciliationDataError, match=message):
+        reconcile_snapshot_parts(
+            _inputs(tmp_path, products=products, variants=variants),
+            expectation=_expectation(),
+            taxonomy_config=load_taxonomy(),
+        )
+
+
+@pytest.mark.parametrize(
+    ("mutation", "message"),
+    [
+        ("inventory_item_parent", "InventoryLevel split shape is invalid"),
+        ("unknown_variant_parent", "InventoryLevel parent ProductVariant is unavailable"),
+        ("different_variant_parent", "snapshot row contract is invalid"),
+        ("different_inventory_item", "snapshot row contract is invalid"),
+        ("extra_gid_parameter", "snapshot row contract is invalid"),
+        ("invalid_location", "snapshot row contract is invalid"),
+        ("child_before_parent", "InventoryLevel parent ProductVariant is unavailable"),
+        ("duplicate_item_location", "conflicting source row"),
+    ],
+)
+def test_split_inventory_level_ownership_fails_closed(
+    tmp_path: Path, mutation: str, message: str
+) -> None:
+    products, variants = _rows()
+    level = variants[1]
+    if mutation == "inventory_item_parent":
+        level["__parentId"] = _gid("InventoryItem", ITEM_ONE)
+    elif mutation == "unknown_variant_parent":
+        level["__parentId"] = _gid("ProductVariant", 9007199254741999)
+    elif mutation == "different_variant_parent":
+        level = variants[4]
+        level["__parentId"] = _gid("ProductVariant", VARIANT_ONE)
+    elif mutation == "different_inventory_item":
+        level["id"] = f"{_gid('InventoryLevel', LEVEL_ONE)}?inventory_item_id={ITEM_TWO}"
+    elif mutation == "extra_gid_parameter":
+        level["id"] = f"{_gid('InventoryLevel', LEVEL_ONE)}?inventory_item_id={ITEM_ONE}&extra=1"
+    elif mutation == "invalid_location":
+        level["location"] = {
+            "id": _gid("InventoryItem", LOCATION_ONE),
+            "name": "Synthetic location",
+        }
+    elif mutation == "child_before_parent":
+        variants.insert(0, variants.pop(1))
+    else:
+        variants.insert(
+            2,
+            _level(VARIANT_ONE, ITEM_ONE, 9007199254743999, LOCATION_ONE),
+        )
     with pytest.raises(ReconciliationDataError, match=message):
         reconcile_snapshot_parts(
             _inputs(tmp_path, products=products, variants=variants),
@@ -543,7 +593,9 @@ def test_changed_query_and_snapshot_cannot_enter_reconciliation(tmp_path: Path) 
 
     inputs = _inputs(tmp_path / "snapshot")
     with inputs[1].snapshot_path.open("ab") as handle:
-        handle.write(json.dumps(_level(ITEM_ONE, 9007199254746001)).encode() + b"\n")
+        handle.write(
+            json.dumps(_level(VARIANT_ONE, ITEM_ONE, LEVEL_ONE, LOCATION_ONE)).encode() + b"\n"
+        )
     with pytest.raises(
         ReconciliationDataError, match=r"duplicate InventoryLevel|immutable manifest"
     ):
@@ -1239,15 +1291,15 @@ def test_variant_and_metafield_row_contracts_fail_closed(
 ) -> None:
     products, variants = _rows()
     if mutation == "missing_product":
-        variants[1]["product"] = None
+        variants[0]["product"] = None
     elif mutation == "wrong_product_type":
-        variants[1]["product"] = {"__typename": "Variant", "id": _gid("Product", PRODUCT_ONE)}
+        variants[0]["product"] = {"__typename": "Variant", "id": _gid("Product", PRODUCT_ONE)}
     elif mutation == "bad_product_gid":
-        variants[1]["product"] = {"__typename": "Product", "id": _gid("Variant", 1)}
+        variants[0]["product"] = {"__typename": "Product", "id": _gid("Variant", 1)}
     elif mutation == "missing_inventory_item":
-        variants[1]["inventoryItem"] = None
+        variants[0]["inventoryItem"] = None
     elif mutation == "bad_contract":
-        variants[1]["price"] = True
+        variants[0]["price"] = True
     else:
         variants.extend(
             [

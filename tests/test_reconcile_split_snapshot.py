@@ -265,6 +265,8 @@ def variant_rows() -> list[dict[str, object]]:
     product = 9_007_199_254_740_993
     variant = 9_007_199_254_741_101
     item = 9_007_199_254_742_001
+    level = 9_007_199_254_743_001
+    location = 9_007_199_254_744_001
     return [
         {
             "__typename": "ProductVariant",
@@ -287,10 +289,10 @@ def variant_rows() -> list[dict[str, object]]:
         },
         {
             "__typename": "InventoryLevel",
-            "__parentId": gid("InventoryItem", item),
-            "id": f"{gid('InventoryLevel', 9007199254746001)}?inventory_item_id={item}",
+            "__parentId": gid("ProductVariant", variant),
+            "id": f"{gid('InventoryLevel', level)}?inventory_item_id={item}",
             "location": {
-                "id": gid("Location", 9007199254746001),
+                "id": gid("Location", location),
                 "name": "Synthetic location",
             },
             "quantities": [

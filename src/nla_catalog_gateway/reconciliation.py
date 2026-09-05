@@ -960,6 +960,27 @@ def _normalize_root_variant(payload: dict[str, Any]) -> dict[str, Any]:
     return normalized
 
 
+def _normalize_split_inventory_level(
+    connection: sqlite3.Connection, payload: dict[str, Any]
+) -> dict[str, Any]:
+    try:
+        variant_gid = bulk._gid_value(
+            payload.get("__parentId"),
+            "ProductVariant",
+            "InventoryLevel split parent",
+        )
+    except bulk.BulkContractError as exc:
+        raise ReconciliationDataError("InventoryLevel split shape is invalid") from exc
+    owner = connection.execute(
+        "SELECT inventory_item_gid FROM variants WHERE gid=?", (variant_gid,)
+    ).fetchone()
+    if owner is None or type(owner[0]) is not str:
+        raise ReconciliationDataError("InventoryLevel parent ProductVariant is unavailable")
+    normalized = dict(payload)
+    normalized["__parentId"] = owner[0]
+    return normalized
+
+
 def _row_identity(payload: dict[str, Any]) -> tuple[str, str]:
     typename = payload.get("__typename")
     try:
@@ -1036,7 +1057,11 @@ def _insert_source_row(
                 raise ReconciliationDataError("conflicting InventoryItem ownership")
             bulk._insert_variant(connection, normalized, line)
         elif typename == "InventoryLevel":
-            bulk._insert_inventory_level(connection, payload, line)
+            bulk._insert_inventory_level(
+                connection,
+                _normalize_split_inventory_level(connection, payload),
+                line,
+            )
         else:
             bulk._gid_value(
                 payload.get("__parentId"), "ProductVariant", "ProductVariant Metafield owner"

@@ -133,14 +133,17 @@ def _publication(
     }
 
 
-def _level(item: int, number: int, *, quantity: int = -1) -> dict[str, object]:
+def _level(
+    item: int, number: int, *, location: int | None = None, quantity: int = -1
+) -> dict[str, object]:
+    location_id = number if location is None else location
     return {
         "__typename": "InventoryLevel",
         "id": f"gid://shopify/InventoryLevel/{number}?inventory_item_id={item}",
         "__parentId": f"gid://shopify/InventoryItem/{item}",
         "location": {
-            "id": f"gid://shopify/Location/{number}",
-            "name": f"Location {number}",
+            "id": f"gid://shopify/Location/{location_id}",
+            "name": f"Location {location_id}",
         },
         "quantities": [
             {"name": "incoming", "quantity": quantity},
@@ -1002,17 +1005,42 @@ def test_canonical_gid_contract_and_unbounded_decimal_identity(tmp_path: Path) -
             bulk_module._gid_value(f"gid://shopify/{kind}/1?x=1", kind, "test")
 
     mismatch_cases = (
-        "gid://shopify/InventoryLevel/2?inventory_item_id=11",
+        "gid://shopify/Location/1?inventory_item_id=11",
         "gid://shopify/InventoryLevel/1?inventory_item_id=12",
         "gid://shopify/InventoryLevel/1?inventory_item_id=11&x=1",
         "gid://shopify/InventoryLevel/1?inventory_item_id=%31%31",
         "gid://shopify/InventoryLevel/1?x=1&inventory_item_id=11",
+        "gid://shopify/InventoryLevel/0?inventory_item_id=11",
+        "gid://shopify/InventoryLevel/01?inventory_item_id=11",
     )
     for index, invalid_gid in enumerate(mismatch_cases):
         level = _level(11, 1)
         level["id"] = invalid_gid
         with pytest.raises(BulkContractError, match="invalid InventoryLevel GID"):
             _build(tmp_path / f"level-{index}", [*_minimal_rows(), level])
+
+    opaque_level, _manifest = _build(
+        tmp_path / "opaque-level-identity",
+        [*_minimal_rows(), _level(11, 2, location=1)],
+    )
+    connection = sqlite3.connect(opaque_level / "catalog.sqlite3")
+    try:
+        assert connection.execute("SELECT gid, location_gid FROM inventory_levels").fetchone() == (
+            "gid://shopify/InventoryLevel/2?inventory_item_id=11",
+            "gid://shopify/Location/1",
+        )
+    finally:
+        connection.close()
+
+    with pytest.raises(BulkContractError, match="duplicate or conflicting InventoryLevel"):
+        _build(
+            tmp_path / "duplicate-item-location",
+            [
+                *_minimal_rows(),
+                _level(11, 1, location=9),
+                _level(11, 2, location=9),
+            ],
+        )
 
     large = 9007199254740993
     output, _manifest = _build(

@@ -41,10 +41,12 @@ Publication GID. The independently supplied active-and-published count must equa
 over `status=ACTIVE`, the exact Publication GID and `isPublished=true`; manifest keys distinguish
 expected from verified counts and account for all four Product statuses, including `UNLISTED`.
 
-Ordinary Shopify GIDs use unbounded canonical positive-decimal text. InventoryLevel composite
-GIDs bind their location and inventory-item components exactly. Every InventoryLevel contains the
-five requested signed quantities, with no location cap. Decimal price text is retained without
-floats or clamps, booleans cannot masquerade as integers, and negative inventory is preserved.
+Ordinary Shopify GIDs use unbounded canonical positive-decimal text. InventoryLevel parameterized
+GIDs bind an opaque canonical level identity to their inventory-item component exactly; the typed
+Location GID is validated separately and is not inferred from that opaque identity. Every
+InventoryLevel contains the five requested signed quantities, with no location cap. Decimal price
+text is retained without floats or clamps, booleans cannot masquerade as integers, and negative
+inventory is preserved.
 Timestamps preserve exact valid text but must use the canonical timezone-aware Shopify-emitted
 RFC3339 subset.
 

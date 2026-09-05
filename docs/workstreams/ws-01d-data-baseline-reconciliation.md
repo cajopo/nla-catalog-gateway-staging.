@@ -12,9 +12,9 @@ Issue #43 is the separate real-baseline gate and runner-hardening follow-up. It 
 issue-#32 evidence model while adding pinned input handles, hostile NTFS path rejection and
 identity-safe staged output publication required before a current capture can be accepted.
 
-`NLA_DATA_ROOT` is missing on this host. All executable evidence described here is conspicuously
-synthetic. Real-baseline acceptance, distributions and capability promotion remain blocked on a
-separate independently reviewed run with the external data root.
+Repository fixtures and committed executable evidence remain conspicuously synthetic. A current
+capture is held outside Git, but real-baseline acceptance, distributions and capability promotion
+remain blocked until the independently reviewed external-data run succeeds.
 
 ## Query split and schema evidence
 
@@ -26,8 +26,12 @@ The packaged query documents are:
   and InventoryItem `inventoryLevels` (three connections, maximum depth two).
 
 The ProductVariant root explicitly selects `product { __typename id }`; it cannot inherit Product
-ownership from a different Bulk operation. InventoryLevel JSONL parent IDs are accepted only as
-typed InventoryItem GIDs. Metafields in the first part must have Product owners and those in the
+ownership from a different Bulk operation. For this root-ProductVariant query, Shopify Bulk emits
+each nested InventoryLevel with its root ProductVariant as `__parentId`; reconciliation requires
+that typed parent to have been inserted, resolves its exact InventoryItem GID, and requires the
+InventoryLevel GID's `inventory_item_id` parameter to match. The InventoryLevel path component is
+an opaque canonical positive-decimal identity, not a Location ID; the typed Location GID is
+validated separately. Metafields in the first part must have Product owners and those in the
 second part ProductVariant owners. The model never joins by title, handle, SKU, barcode, source ID
 or numeric conversion.
 
@@ -92,6 +96,8 @@ Reconciliation rejects:
 - missing/excess ProductVariant children against every Product `variantsCount.count`;
 - orphan ProductVariants, InventoryLevels, Metafields or publication rows;
 - ProductVariants without explicit typed Product and InventoryItem ownership;
+- InventoryLevels without an already observed typed ProductVariant parent, with a mismatched
+  InventoryItem parameter, or with duplicate InventoryItem/Location ownership;
 - one InventoryItem assigned to multiple ProductVariants;
 - duplicate/conflicting handles or matching secondary source IDs assigned to different Products;
 - disagreement between verified sync and PowerTools source identities;
@@ -119,11 +125,12 @@ Product is included: classified plus reasoned unclassified equals source count, 
 exclusions. Product/Variant/status/source-identity/active-published counts flow into
 `DatasetManifestV1`, whose existing validation checks the exact record set.
 
-The synthetic fixture exercises Product and ProductVariant metafield owners, InventoryItem parent
-links, typed GIDs above `2^53`, duplicate titles/SKUs, zero inventory, zero price text, order
-independence, mixed/partial captures, missing and orphan children, duplicate/conflicting rows,
-secondary identity conflicts, hostile values and every defensive branch. It does not contain or
-claim real Shopify observations.
+The synthetic fixture exercises Product and ProductVariant metafield owners, root-ProductVariant
+InventoryLevel parent links, distinct InventoryLevel/InventoryItem/Location identities, typed GIDs
+above `2^53`, duplicate titles/SKUs, zero inventory, zero price text, order independence,
+mixed/partial captures, missing and orphan children, duplicate/conflicting rows, secondary
+identity conflicts, hostile values and every defensive branch. It contains no real Shopify row or
+commercial value.
 
 All runtime capabilities remain at their existing provisional/unsupported states. This candidate
 is evidence for a later real-baseline gate, not evidence that global browse, search, filters,
@@ -158,9 +165,10 @@ handle and holds all seven pinned handles through reconciliation and output publ
 large JSONL streams are consumed only through those pinned,
 write/delete-denying handles, with handle state checked around every scan. The two reviewed query
 documents and three bounded control documents are copied to immutable byte values while the same
-locks are held, and all later parsing and query checks consume only those frozen bytes. No input is
-reopens consumed bytes by path after the pin. Atomic replacement and same-inode, same-size changes with restored timestamps
-are therefore denied or cannot alter the consumed evidence. The output parent must already exist
+locks are held, and all later parsing and query checks consume only those frozen bytes. No code
+path reopens consumed bytes by path after pinning. Atomic replacement and same-inode, same-size
+changes with restored timestamps are therefore denied or cannot alter the consumed evidence. The
+output parent must already exist
 without any reparse-point alias. The requested output directory must be new and outside this
 repository: its parent and later staging/published target remain bound to canonical directory
 handles; existing targets, traversal, aliases and every unsafe path component fail closed. Every
@@ -227,12 +235,13 @@ the CLI therefore permits it only outside the repository. The summary explicitly
 path or raw JSONL row. Files are created exclusively, flushed and fsynced in an unpredictable
 sibling staging directory. Each live file handle is bound to its expected device/inode, byte count
 and SHA-256 and is checked before publication. Because Windows does not provide a portable
-contract for renaming a directory while these child handles deny deletion, they are closed only
-after this pre-publish seal; the directory itself remains bound to its native handle and is renamed
-with `SetFileInformationByHandle`. A sharing violation or unsupported native rename fails closed
-with no path-based fallback. Immediately after the rename, all seven files are reopened with exact
-read/delete handles that deny write and replacement, and every identity, byte count and SHA-256 is
-checked again while all seven handles remain held. Each check also requires the exact
+contract for renaming a directory while child handles remain open under their required access and
+share modes, they are closed only after this pre-publish seal; the directory itself remains bound
+to its native handle and is renamed with `SetFileInformationByHandle`. A sharing violation or
+unsupported native rename fails closed with no path-based fallback. Immediately after the rename,
+all seven files are reopened with exact read/delete handles that deny write and replacement, and
+every identity, byte count and SHA-256 is checked again while all seven handles remain held. Each
+check also requires the exact
 unnamed-stream-only shape. For the single publish-attestation linearization point, all seven exact
 carrier handles are marked delete-pending together. While every guard remains active, the runner
 rechecks every handle-bound identity, size, SHA-256 and stream list, then the exact seven-name
@@ -276,6 +285,15 @@ The first issue-#43 invocation against the current Shopify-derived capture faile
 publishing an output directory. Redacted diagnostics proved both immutable part manifests valid,
 then isolated the first failure to the initial Product insertion: the earlier runner required
 `number_integer` for both source aliases even though the PowerTools alias is uniformly the exact
-`single_line_text_field` described above. No final real reconciliation has been run after the
-correction. Independent re-review and a fresh frozen invocation remain required, so this evidence
-does not yet change the real-baseline, distribution, staging or capability status above.
+`single_line_text_field` described above.
+
+A second frozen invocation on candidate
+`b0033d2a6890ac555472495fba73aa5827495f65` after that correction again validated both immutable
+part manifests, then failed closed at the first InventoryLevel in the variants semantic pass. The runner had
+incorrectly required its flattened `__parentId` to be an InventoryItem rather than its root
+ProductVariant and had incorrectly equated the opaque InventoryLevel identity with the Location
+identity. The final target, private staging directory and temporary reconciliation database were
+all absent afterward; no dataset was activated and neither Shopify nor PowerTools was mutated.
+The current correction has not yet been rerun against the external capture. Independent re-review
+and a fresh frozen invocation remain required, so this evidence does not change the real-baseline,
+distribution, staging or capability status above.
