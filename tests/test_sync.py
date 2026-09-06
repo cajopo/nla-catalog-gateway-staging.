@@ -882,41 +882,45 @@ def test_projector_failure_invalid_candidate_and_drift_are_isolated() -> None:
 
 
 @pytest.mark.parametrize("category", [EventCategory.PRODUCT_CREATE, EventCategory.PRODUCT_UPDATE])
-def test_candidate_rejects_globally_duplicate_source_identity(category: EventCategory) -> None:
+def test_candidate_accepts_globally_duplicate_secondary_source_identity(
+    category: EventCategory,
+) -> None:
     adapters = Adapters()
     adapters.category = category
+    records = _records()
     if category is EventCategory.PRODUCT_CREATE:
         adapters.product_id = "3"
 
-    def duplicate_source(
-        context: ProjectionContext, event: ValidatedWebhookEvent
-    ) -> tuple[CatalogProductRecordV1, ...]:
-        if category is EventCategory.PRODUCT_CREATE:
+        def duplicate_source(
+            context: ProjectionContext, event: ValidatedWebhookEvent
+        ) -> tuple[CatalogProductRecordV1, ...]:
             duplicate = replace(
                 _product("3", updated_at=event.source_updated_at),
                 powertools_source_id="1",
                 sync_source_id="1",
             )
             return (*context.records, duplicate)
-        target = context.records[0]
-        return (
+
+        adapters.projector_override = duplicate_source
+    else:
+        records = (
+            records[0],
             replace(
-                target,
-                powertools_source_id="2",
-                sync_source_id="2",
-                updated_at=event.source_updated_at,
-                variants=(replace(target.variants[0], updated_at=event.source_updated_at),),
+                records[1],
+                powertools_source_id=records[0].powertools_source_id,
+                sync_source_id=records[0].sync_source_id,
             ),
-            context.records[1],
         )
 
-    adapters.projector_override = duplicate_source
-    core, _, _ = _core(adapters)
+    core, _, _ = _core(adapters, records=records)
     topic = "products/create" if category is EventCategory.PRODUCT_CREATE else "products/update"
     result = core.ingest(_envelope(f"duplicate-source-{category.value}", topic=topic))
-    assert result.status.state is InboxState.FAILED
-    assert result.status.failure_code is FailureCode.CANDIDATE_INVALID
-    assert core.active_dataset().records == _records()
+    assert result.status.state is InboxState.PROJECTED
+    assert result.status.failure_code is None
+    active = core.active_dataset().records
+    assert len({record.product_gid for record in active}) == len(active)
+    assert sum(record.powertools_source_id == "1" for record in active) == 2
+    assert all(record.powertools_source_id == record.sync_source_id for record in active)
 
 
 def test_clock_and_activation_failures_leave_active_generation_unchanged_then_retry() -> None:

@@ -93,11 +93,13 @@ candidate cannot become active.
 
 Every projector result is a non-empty tuple of canonical `CatalogProductRecordV1` values.
 Product GIDs, handles, Variant GIDs, InventoryItem GIDs, paired PowerTools/sync source IDs, and
-the taxonomy version are checked across the whole generation. Non-null paired source IDs are
-globally unique, matching the Bulk contract. Create adds exactly its target, delete removes
-exactly its target, and update/unpublish/inventory events retain the Product identity set and the
-target Product's byte-identical `powerToolsSourceId` and `syncSourceId`. Source-identity repair is
-therefore possible only through a fully attested reconciliation generation. Every
+the taxonomy version are checked across the whole generation. A non-null source-ID pair must be
+equal within its Product, but it is not a primary identity and may repeat across distinct Product
+GIDs, matching the runtime contract and reconciled baseline. Create adds exactly its target,
+delete removes exactly its target, and update/unpublish/inventory events retain the Product
+identity set and the target Product's byte-identical `powerToolsSourceId` and `syncSourceId`.
+Repairing the source-ID pair of an existing Product is therefore possible only through a fully
+attested reconciliation generation. Every
 non-target Product must be byte-for-byte unchanged; unpublish must explicitly remove Online Store
 publication. An inventory event may change inventory/tracking and timestamps but cannot overwrite
 price or any other non-inventory material.

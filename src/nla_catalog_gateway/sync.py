@@ -252,7 +252,6 @@ def _validate_record_set(records: tuple[CatalogProductRecordV1, ...]) -> None:
     handles: set[str] = set()
     variant_gids: set[str] = set()
     inventory_item_gids: set[str] = set()
-    source_ids: set[str] = set()
     taxonomy_version = _taxonomy_version(
         records[0].classification_rule_version, "taxonomy rule version"
     )
@@ -266,13 +265,8 @@ def _validate_record_set(records: tuple[CatalogProductRecordV1, ...]) -> None:
             != taxonomy_version
         ):
             raise _error("candidate records do not share one taxonomy rule version")
-        source_id = record.powertools_source_id
-        if source_id is not None and source_id in source_ids:
-            raise _error("candidate source identities are not unique")
         product_gids.add(record.product_gid)
         handles.add(record.handle)
-        if source_id is not None:
-            source_ids.add(source_id)
         for variant in record.variants:
             _text(variant.variant_gid, _GID_RE, "Variant GID", max_bytes=MAX_GID_BYTES)
             _text(
