@@ -1,13 +1,18 @@
-# WS-09A — Runtime API v1 fail-closed skeleton
+# WS-09A — Evidence-bound runtime API v1
 
 ## Scope
 
-Issue #33 introduces only a framework-independent HTTP boundary around the accepted runtime
-contracts. This branch contains no HTTP server, App Proxy secret or cryptography, Shopify client,
-SQLite projection adapter, search engine, facet engine, deployment configuration, or theme code.
-It never mutates Shopify, TCG PowerTools, a theme, or a production resource.
+Issue #33 integrates the accepted, framework-independent runtime components without adding an HTTP
+server, Shopify client, deployment configuration, or theme code. It never mutates Shopify, TCG
+PowerTools, a theme, or a production resource.
 
-The shipped concrete components are deliberately unusable for public catalog output:
+`AppProxyVerifierAuthorizer` directly adapts the accepted verifier and exposes only the verified
+shop domain. `EvidenceBoundCatalogBackend` atomically selects one immutable generation assembled
+from `VerifiedReconciledGenerationV1`, `CatalogProjection`, `CursorCodecV1`, and
+`VerifiedCatalogCoreEvidenceV1`. `EvidenceBoundCapabilityGate` authorizes only an exact open lease
+issued by that backend.
+
+The safe defaults remain deliberately unusable for public catalog output:
 
 - `DenyAllProxyAuthorizer` rejects every request;
 - `UnavailableCatalogBackend` exposes no generation;
@@ -17,16 +22,52 @@ The shipped concrete components are deliberately unusable for public catalog out
 - readiness additionally requires the frozen contract features `activeIndex`, `catalogOutput`, and
   `cursorCodec` to be `verified`.
 
-The current v1 capability matrix cannot claim those states. Dependency injection is present for
-deterministic fake-backed tests and future reviewed adapters, but an injected gate alone cannot
-bypass the frozen request/page gates.
+`DEFAULT_CAPABILITIES_V1` is unchanged.
+
+## Pending authority replacement
+
+Three older global gates still prevent the integrated concrete path from serving output:
+
+1. `RuntimeCatalogService.readiness()` calls `_contract_output_is_verified()` and requires the
+   static `activeIndex`, `catalogOutput`, and `cursorCodec` matrix entries to be `verified`.
+2. `RuntimeCatalogService._require_capabilities()` calls
+   `CatalogRequestV1.require_executable()`.
+3. `_validated_result()` calls `CatalogPageV1.require_output_capability()`.
+
+The intended replacement is the concrete `EvidenceBoundCapabilityGate`, not a weaker global
+allowlist. It checks the exact backend-issued lease and the complete six-way binding: shop domain,
+reconciliation-summary SHA-256, dataset generation, catalog-content SHA-256, SQLite projection
+content fingerprint, and the explicitly configured catalog-core verifier code SHA. The two source
+part `sourceCodeSha` values must remain equal to each other, but are intentionally not equated with
+the verifier code SHA: they describe different provenance.
+
+Before verification or readiness, the service also requires an exact concrete composition:
+`AppProxyVerifierAuthorizer`, `EvidenceBoundCatalogBackend`, and
+`EvidenceBoundCapabilityGate`, with the gate carrying the backend's private identity token.
+Protocol-compatible or permissive substitutes are never production authorization. Boundary unit
+tests replace only this private attestation helper; there is no public enable flag.
+
+This change leaves all three older gates intact pending explicit authorization to remove them.
+Therefore a fully wired `RuntimeCatalogService` remains unavailable, while the concrete
+adapter/backend/lease/gate integration can be verified directly. No alternate bypass is present.
+The replacement must preserve these fail-closed invariants:
+
+- omitted dependencies still select the deny/unavailable defaults;
+- non-evidence or cross-backend component compositions fail before authorization or acquisition;
+- a lease from another backend, a closed lease, a changed projection, or any evidence mismatch is
+  denied;
+- one request acquires exactly one generation and an activation cannot rewrite that pinned lease;
+- malformed/expired/context-mismatched cursors map only to fixed public error codes;
+- cancellation propagates unchanged and is never normalized into a response.
 
 ## Transport boundary
 
 The intended catalog route is a strict `POST` to a configured App Proxy path. A thin adapter must
-construct `RuntimeHttpRequest` without interpreting or rebuilding the raw query. The future #12
-adapter receives those exact bytes and returns only a canonical, redacted `shop_domain`. The
-service separately binds that identity and every acquired dataset lease to one configured expected
+construct `RuntimeHttpRequest` without interpreting or rebuilding the raw query. The concrete
+adapter passes those exact bytes to `AppProxyVerifier` and returns only a canonical, redacted
+`shop_domain`. Verification failures become `ProxyRequestRejected`; verifier configuration or
+internal failures become `ProxyVerifierUnavailable`. A checkpoint runs before and after
+verification. The service separately binds that identity and every acquired dataset lease to one configured expected
 `{shop}.myshopify.com` domain.
 
 The request body is:
@@ -58,7 +99,8 @@ coherence. Public response bytes must round-trip to the one canonical JSON repre
 
 The parser rejects duplicate or unknown keys, BOMs, malformed UTF-8/Unicode, floats, non-finite
 numbers, oversized integers, unsupported versions, malformed opaque tokens, noncanonical request
-DTOs, queries over 256 characters, and incompatible query/family or subtype/family combinations.
+DTOs, queries over 256 characters before or after NFKC normalization, and incompatible
+query/family or subtype/family combinations.
 It never falls back to browse when search or filters are unsupported.
 
 ## Bounds and cancellation
@@ -71,19 +113,29 @@ fit the configured next-request body/cursor bounds.
 
 One `RequestControl` is passed to authorization, generation acquisition, capability evaluation,
 and page execution. Cooperative cancellation has precedence over normalized dependency errors and
-is propagated as `RequestCancelled`; it is never converted into an HTTP response. A lease is
-closed exactly once after success, ordinary failure, timeout, or cancellation, including a race in
-which cancellation occurs immediately after acquisition. The future #7 SQLite adapter still needs
-a deadline/cancellation hook such as a bounded busy timeout and progress handler; wrapping a query
-in a worker thread is not sufficient cancellation.
+is propagated as `RequestCancelled`; it is never converted into an HTTP response. Lease close is
+idempotent and a closed lease fails closed. Pagination passes the same checkpoint into the SQLite
+progress handler and removes that handler in `finally`; search, facet evaluation, tuple filtering,
+keyset traversal, and variant accounting checkpoint their non-SQL loops.
 
 ## Pinned generation and fixed failures
 
-`CatalogBackend.acquire(control=...)` returns one immutable `CatalogGenerationLease`. The service
+`CatalogBackend.acquire(control=...)` returns one immutable `CatalogGenerationLease`. The concrete
+backend validates the generation, manifest and projection before swapping the complete candidate
+under one lock. The service
 reads its generation once, executes through that same lease, defensively round-trips the returned
 page, removes its internal unsigned cursor context, and requires request, shop, page generation,
 terminal state, and opaque-cursor presence to remain consistent. A concurrent backend activation
 cannot cause a second selection within the request.
+
+Browse requests without `q` or filters, including a concrete family, use
+`CatalogPaginator` and its SQLite Product-GID keyset. Search uses `search_single_cards`; search and
+filter results are composed through `evaluate_facets`, then paged as an immutable tuple by the same
+numeric Product-GID keyset. `CursorCodecV1` binds the full request, generation, final Product GID,
+expiry, endpoint, and contract version under HMAC. Query/filter cursors are authenticated before
+running either in-memory oracle, so invalid input cannot force a catalog scan. No path uses
+`OFFSET`. Facet counts and search suggestions remain internal in this slice; the wire response is
+only the canonical page plus opaque cursor.
 
 Errors are serialized only through the frozen `CatalogErrorV1` messages. Request values,
 exception text, SQL, paths, secrets, and signed query material are never copied into the response.
@@ -98,15 +150,14 @@ a fixed non-sensitive `not_ready` response.
 
 ## Gates before a real adapter or public route
 
-1. Merge and independently accept #7 and #12. Add a #12 verifier/exposure-policy adapter and a #7
-   lease API that selects exactly once and signs/validates opaque cursors.
+1. Obtain explicit authorization for the three-gate authority replacement documented above, then
+   remove exactly those redundant static calls while retaining the concrete gate and safe defaults.
 2. Keep the resolved public page/cursor boundary intact: only the opaque signed cursor may cross
    the wire; unsigned cursor context remains internal.
-3. Produce baseline evidence and a reviewed capability promotion. The current frozen v1 matrix
-   intentionally forbids public output and readiness.
-4. Build one generation-bound query engine instead of copying the in-memory acceptance oracles:
-   #9 search scope, #10 filters/facet counts, and #7 keyset traversal must share the same lease.
-   Search capability and a public facet response schema do not yet exist.
+3. Supply real baseline evidence and the reviewed verifier code SHA at composition time. Do not
+   change the frozen v1 capability matrix.
+4. If facet counts or search suggestions are later required on the public wire, review and freeze a
+   separate response schema; this slice intentionally emits neither.
 5. Add a publication coordinator between #11 sync generations and #7 immutable projections. A
    `GenerationView` is not by itself a `DatasetManifestV1`/SQLite activation.
 6. Through #13, select the server/provider and prove ingress isolation, App Proxy secret lifecycle,

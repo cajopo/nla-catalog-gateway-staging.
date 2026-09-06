@@ -1,10 +1,8 @@
-"""Framework-independent, fail-closed HTTP boundary for the catalog runtime.
+"""Framework-independent, evidence-bound HTTP boundary for the catalog runtime.
 
-This module deliberately ships no server, App Proxy cryptography, dataset adapter,
-search implementation, or capability promotion.  The concrete defaults reject
-proxy traffic, report no dataset, and refuse public catalog output.  Protocols let
-later, independently reviewed workstreams attach those capabilities without
-copying their semantics into this boundary.
+The module ships no server or deployment configuration.  Safe defaults still reject
+proxy traffic, expose no dataset, and deny catalog output.  Concrete adapters bind the
+accepted App Proxy verifier and catalog-core evidence to one immutable request lease.
 """
 
 from __future__ import annotations
@@ -15,9 +13,38 @@ import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from types import MappingProxyType
 from typing import Any, Protocol
 
+from nla_catalog_gateway.app_proxy_security import (
+    AppProxyConfigurationError,
+    AppProxyVerificationError,
+    AppProxyVerifier,
+    VerifiedAppProxyRequest,
+)
+from nla_catalog_gateway.canonical_search import (
+    CanonicalSearchError,
+    SearchMode,
+    normalize_search_text,
+    search_single_cards,
+)
+from nla_catalog_gateway.core_evidence import VerifiedCatalogCoreEvidenceV1
+from nla_catalog_gateway.facets import FacetContractError, evaluate_facets
+from nla_catalog_gateway.generation_bundle import VerifiedReconciledGenerationV1
+from nla_catalog_gateway.pagination import (
+    AtomicCatalogActivation,
+    CatalogPaginator,
+    CatalogProjection,
+    CursorCodecV1,
+    CursorContextMismatchError,
+    CursorExpiredError,
+    DatasetUnavailableError,
+    InvalidCursorError,
+    PaginationContractError,
+    StaleGenerationError,
+    UnsupportedPaginationRequestError,
+)
 from nla_catalog_gateway.runtime_contract import (
     CONTRACT_VERSION,
     DEFAULT_CAPABILITIES_V1,
@@ -27,10 +54,13 @@ from nla_catalog_gateway.runtime_contract import (
     CatalogErrorV1,
     CatalogItemV1,
     CatalogPageV1,
+    CatalogProductRecordV1,
     CatalogRequestV1,
+    CursorContextV1,
     RequestFamily,
     RuntimeContractError,
 )
+from nla_catalog_gateway.taxonomy import ProductFamily
 
 MAX_REQUEST_BODY_BYTES = 64 * 1024
 MAX_RESPONSE_BODY_BYTES = MAX_CONTRACT_BYTES
@@ -63,6 +93,9 @@ _BOMS = (
 )
 _CURSOR_RE = re.compile(r"[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\Z")
 _GENERATION_RE = re.compile(r"sha256:[0-9a-f]{64}\Z")
+_SHA256_RE = re.compile(r"[0-9a-f]{64}\Z")
+_CODE_SHA_RE = re.compile(r"[0-9a-f]{40}\Z")
+_PRODUCT_GID_RE = re.compile(r"gid://shopify/Product/([1-9][0-9]*)\Z")
 _HEADER_NAME_RE = re.compile(rb"[!#$%&'*+\-.^_`|~0-9A-Za-z]+\Z")
 _SHOP_RE = re.compile(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.myshopify\.com\Z")
 
@@ -334,6 +367,238 @@ class FailClosedCapabilityGate:
     def ready(self, lease: CatalogGenerationLease, *, control: RequestControl) -> bool:
         del lease, control
         return False
+
+
+class AppProxyVerifierAuthorizer:
+    """Adapt the accepted App Proxy verifier without exposing signed query values."""
+
+    __slots__ = ("_verifier",)
+
+    def __init__(self, verifier: AppProxyVerifier) -> None:
+        if type(verifier) is not AppProxyVerifier:
+            raise RuntimeApiContractError("App Proxy verifier is invalid")
+        self._verifier = verifier
+
+    def verify(
+        self,
+        *,
+        raw_query: bytes,
+        request_path: str,
+        control: RequestControl,
+    ) -> VerifiedProxyIdentity:
+        control.checkpoint()
+        failure: str | None = None
+        verified: VerifiedAppProxyRequest | None = None
+        try:
+            verified = self._verifier.verify(
+                raw_query=raw_query,
+                request_path=request_path,
+            )
+        except AppProxyVerificationError:
+            failure = "rejected"
+        except AppProxyConfigurationError:
+            failure = "unavailable"
+        except Exception:
+            failure = "unavailable"
+        control.checkpoint()
+        if failure == "rejected":
+            raise ProxyRequestRejected
+        if failure is not None:
+            raise ProxyVerifierUnavailable
+        if type(verified) is not VerifiedAppProxyRequest:
+            raise ProxyVerifierUnavailable
+        invalid_identity = False
+        try:
+            identity = VerifiedProxyIdentity(verified.shop)
+        except Exception:
+            invalid_identity = True
+        if invalid_identity:
+            raise ProxyVerifierUnavailable
+        control.checkpoint()
+        return identity
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class _EvidenceBoundGeneration:
+    verified: VerifiedReconciledGenerationV1 = field(repr=False)
+    projection: CatalogProjection = field(repr=False)
+    cursor_codec: CursorCodecV1 = field(repr=False)
+    evidence: VerifiedCatalogCoreEvidenceV1 = field(repr=False)
+    records: tuple[CatalogProductRecordV1, ...] = field(repr=False)
+    items: tuple[CatalogItemV1, ...] = field(repr=False)
+    paginator: CatalogPaginator = field(repr=False)
+    clock: Callable[[], datetime] = field(repr=False, compare=False)
+    binding: tuple[str, str, str, str, str, str] = field(repr=False)
+
+
+class EvidenceBoundCatalogBackend:
+    """Atomically select one complete, immutable evidence-bound generation."""
+
+    __slots__ = ("_active", "_clock", "_expected_code_sha", "_lock", "_token")
+
+    def __init__(
+        self,
+        verified: VerifiedReconciledGenerationV1,
+        projection: CatalogProjection,
+        cursor_codec: CursorCodecV1,
+        evidence: VerifiedCatalogCoreEvidenceV1,
+        *,
+        expected_code_sha: str,
+        clock: Callable[[], datetime] | None = None,
+    ) -> None:
+        if (
+            type(expected_code_sha) is not str
+            or _CODE_SHA_RE.fullmatch(expected_code_sha) is None
+            or (clock is not None and not callable(clock))
+        ):
+            raise RuntimeApiContractError("catalog runtime binding is invalid")
+        self._lock = threading.Lock()
+        self._token = object()
+        self._expected_code_sha = expected_code_sha
+        self._clock = clock or (lambda: datetime.now(UTC))
+        self._active = _new_evidence_bound_generation(
+            verified,
+            projection,
+            cursor_codec,
+            evidence,
+            expected_code_sha=self._expected_code_sha,
+            clock=self._clock,
+        )
+
+    @property
+    def active_generation(self) -> str:
+        with self._lock:
+            return self._active.binding[2]
+
+    def activate(
+        self,
+        verified: VerifiedReconciledGenerationV1,
+        projection: CatalogProjection,
+        cursor_codec: CursorCodecV1,
+        evidence: VerifiedCatalogCoreEvidenceV1,
+    ) -> None:
+        candidate = _new_evidence_bound_generation(
+            verified,
+            projection,
+            cursor_codec,
+            evidence,
+            expected_code_sha=self._expected_code_sha,
+            clock=self._clock,
+        )
+        with self._lock:
+            self._active = candidate
+
+    def acquire(self, *, control: RequestControl) -> EvidenceBoundCatalogLease:
+        if type(control) is not RequestControl:
+            raise CatalogBackendFailure(CatalogErrorCode.TEMPORARILY_UNAVAILABLE)
+        control.checkpoint()
+        with self._lock:
+            lease = EvidenceBoundCatalogLease(
+                backend_token=self._token,
+                generation=self._active,
+            )
+        try:
+            control.checkpoint()
+        except BaseException:
+            lease.close()
+            raise
+        return lease
+
+
+class EvidenceBoundCatalogLease:
+    """One pinned generation; close is idempotent and prevents later reads."""
+
+    __slots__ = ("_backend_token", "_closed", "_generation", "_lock")
+
+    def __init__(self, *, backend_token: object, generation: _EvidenceBoundGeneration) -> None:
+        self._backend_token = backend_token
+        self._generation = generation
+        self._lock = threading.Lock()
+        self._closed = False
+
+    @property
+    def dataset_generation(self) -> str:
+        return self._generation.binding[2]
+
+    @property
+    def shop_domain(self) -> str:
+        return self._generation.binding[0]
+
+    def fetch_page(
+        self,
+        request: CatalogRequestV1,
+        cursor: str | None,
+        *,
+        control: RequestControl,
+    ) -> CatalogLeaseResult:
+        if type(control) is not RequestControl:
+            raise CatalogBackendFailure(CatalogErrorCode.TEMPORARILY_UNAVAILABLE)
+        with self._lock:
+            if self._closed:
+                raise CatalogBackendFailure(CatalogErrorCode.DATASET_UNAVAILABLE)
+            control.checkpoint()
+            try:
+                result = _fetch_evidence_bound_page(
+                    self._generation,
+                    request,
+                    cursor,
+                    control=control,
+                )
+            except (CatalogBackendFailure, RequestDeadlineExceeded):
+                raise
+            except Exception as exc:
+                failure_code = _catalog_execution_error_code(exc)
+            else:
+                failure_code = None
+            if failure_code is not None:
+                raise CatalogBackendFailure(failure_code)
+            control.checkpoint()
+            return result
+
+    def close(self) -> None:
+        with self._lock:
+            self._closed = True
+
+    def _authorized_generation(self, backend_token: object) -> _EvidenceBoundGeneration | None:
+        with self._lock:
+            if self._closed or self._backend_token is not backend_token:
+                return None
+            return self._generation
+
+
+class EvidenceBoundCapabilityGate:
+    """Authorize only exact leases carrying the accepted six-way evidence binding."""
+
+    __slots__ = ("_backend_token",)
+
+    def __init__(self, backend: EvidenceBoundCatalogBackend) -> None:
+        if type(backend) is not EvidenceBoundCatalogBackend:
+            raise RuntimeApiContractError("catalog capability backend is invalid")
+        self._backend_token = backend._token
+
+    def require_catalog(
+        self,
+        lease: CatalogGenerationLease,
+        request: CatalogRequestV1,
+        *,
+        control: RequestControl,
+    ) -> None:
+        control.checkpoint()
+        if not _canonical_request(request) or not self._authorizes(lease):
+            raise CatalogBackendFailure(CatalogErrorCode.UNSUPPORTED_CAPABILITY)
+        control.checkpoint()
+
+    def ready(self, lease: CatalogGenerationLease, *, control: RequestControl) -> bool:
+        control.checkpoint()
+        result = self._authorizes(lease)
+        control.checkpoint()
+        return result
+
+    def _authorizes(self, lease: CatalogGenerationLease) -> bool:
+        if type(lease) is not EvidenceBoundCatalogLease:
+            return False
+        generation = lease._authorized_generation(self._backend_token)
+        return generation is not None and _evidence_binding_is_current(generation)
 
 
 @dataclass(frozen=True, slots=True)
@@ -677,6 +942,12 @@ class RuntimeCatalogService:
         try:
             control = self._new_control(cancellation)
             control.checkpoint()
+            if not _runtime_composition_is_evidence_bound(
+                self._authorizer,
+                self._backend,
+                self._capability_gate,
+            ):
+                return _health_response(503, "not_ready")
             if not _contract_output_is_verified():
                 return _health_response(503, "not_ready")
             lease = self._acquire(control)
@@ -725,6 +996,12 @@ class RuntimeCatalogService:
 
     def _catalog(self, request: RuntimeHttpRequest, control: RequestControl) -> RuntimeHttpResponse:
         content_length = self._validate_metadata(request, control)
+        if not _runtime_composition_is_evidence_bound(
+            self._authorizer,
+            self._backend,
+            self._capability_gate,
+        ):
+            raise CatalogBackendFailure(CatalogErrorCode.UNSUPPORTED_CAPABILITY)
         try:
             identity = self._authorizer.verify(
                 raw_query=request.raw_query,
@@ -890,6 +1167,22 @@ def _canonical_json_bytes(value: Any) -> bytes:
         raise RuntimeApiContractError("runtime value is not canonically serializable") from exc
 
 
+def _runtime_composition_is_evidence_bound(
+    authorizer: object,
+    backend: object,
+    capability_gate: object,
+) -> bool:
+    try:
+        return (
+            type(authorizer) is AppProxyVerifierAuthorizer
+            and type(backend) is EvidenceBoundCatalogBackend
+            and type(capability_gate) is EvidenceBoundCapabilityGate
+            and capability_gate._backend_token is backend._token
+        )
+    except Exception:
+        return False
+
+
 def _duplicate_key(_pairs: list[tuple[str, Any]]) -> dict[str, Any]:
     result: dict[str, Any] = {}
     for key, value in _pairs:
@@ -981,6 +1274,16 @@ def _validate_query_bound(query: Any) -> None:
         raise RuntimeApiContractError("catalog query is invalid")
     if query is not None and len(query) > MAX_QUERY_CHARS:
         raise RuntimeApiContractError("catalog query exceeds the character limit")
+    if query is None:
+        return
+    try:
+        normalized = normalize_search_text(query)
+    except CanonicalSearchError:
+        invalid = True
+    else:
+        invalid = len(normalized) > MAX_QUERY_CHARS
+    if invalid:
+        raise RuntimeApiContractError("catalog query exceeds the normalized character limit")
 
 
 def _raw_request_is_incompatible(value: Any) -> bool:
@@ -1078,6 +1381,325 @@ def _validated_headers(headers: Any, limits: RuntimeLimits) -> int | None:
     if content_length > limits.max_request_body_bytes:
         raise RuntimeApiContractError("content length exceeds the byte limit")
     return content_length
+
+
+def _product_gid_key(product_gid: str) -> tuple[int, str]:
+    if type(product_gid) is not str:
+        raise RuntimeApiContractError("catalog Product GID is invalid")
+    match = _PRODUCT_GID_RE.fullmatch(product_gid)
+    if match is None:
+        raise RuntimeApiContractError("catalog Product GID is invalid")
+    digits = match.group(1)
+    return len(digits), digits
+
+
+def _canonical_request(request: object) -> bool:
+    if type(request) is not CatalogRequestV1:
+        return False
+    try:
+        canonical = CatalogRequestV1.from_json_bytes(request.to_json_bytes())
+        _validate_request_scope(canonical)
+    except Exception:
+        return False
+    return canonical == request
+
+
+def _new_evidence_bound_generation(
+    verified: VerifiedReconciledGenerationV1,
+    projection: CatalogProjection,
+    cursor_codec: CursorCodecV1,
+    evidence: VerifiedCatalogCoreEvidenceV1,
+    *,
+    expected_code_sha: str,
+    clock: Callable[[], datetime],
+) -> _EvidenceBoundGeneration:
+    try:
+        if (
+            type(verified) is not VerifiedReconciledGenerationV1
+            or type(projection) is not CatalogProjection
+            or type(cursor_codec) is not CursorCodecV1
+            or type(evidence) is not VerifiedCatalogCoreEvidenceV1
+            or type(expected_code_sha) is not str
+            or _CODE_SHA_RE.fullmatch(expected_code_sha) is None
+            or not callable(clock)
+        ):
+            raise RuntimeApiContractError("catalog runtime binding is invalid")
+        checked = VerifiedReconciledGenerationV1(
+            verified.generation,
+            verified.summary_sha256,
+        )
+        generation = checked.generation
+        manifest = generation.dataset_manifest
+        records = generation.records
+        manifest.validate_records(records)
+        parts = generation.source_manifest.parts
+        if type(parts) is not tuple or len(parts) != 2:
+            raise RuntimeApiContractError("catalog runtime binding is invalid")
+        shop_domain = _validated_shop(parts[0].shop_domain)
+        if (
+            parts[1].shop_domain != shop_domain
+            or parts[1].source_code_sha != parts[0].source_code_sha
+            or type(parts[0].source_code_sha) is not str
+            or _CODE_SHA_RE.fullmatch(parts[0].source_code_sha) is None
+        ):
+            raise RuntimeApiContractError("catalog runtime binding is invalid")
+        reopened = CatalogProjection.open(
+            projection.path,
+            expected_generation=manifest.dataset_generation,
+        )
+        if (
+            reopened._file_fingerprint != projection._file_fingerprint
+            or reopened.manifest != manifest
+            or projection.manifest != manifest
+        ):
+            raise RuntimeApiContractError("catalog runtime binding is invalid")
+        codec = CursorCodecV1(cursor_codec.secret, cursor_codec.ttl_seconds)
+        binding = (
+            shop_domain,
+            checked.summary_sha256,
+            manifest.dataset_generation,
+            manifest.catalog_content_sha256,
+            reopened._file_fingerprint.content_sha256,
+            expected_code_sha,
+        )
+        evidence_binding = (
+            evidence.shop_domain,
+            evidence.summary_sha256,
+            evidence.dataset_generation,
+            evidence.catalog_content_sha256,
+            evidence.projection_fingerprint,
+            evidence.code_sha,
+        )
+        if (
+            binding != evidence_binding
+            or evidence.code_sha != expected_code_sha
+            or _SHA256_RE.fullmatch(binding[1]) is None
+            or _GENERATION_RE.fullmatch(binding[2]) is None
+            or _SHA256_RE.fullmatch(binding[3]) is None
+            or _SHA256_RE.fullmatch(binding[4]) is None
+        ):
+            raise RuntimeApiContractError("catalog runtime binding is invalid")
+        public_items = [
+            CatalogItemV1.from_product_record(record)
+            for record in records
+            if record.publishable and record.product_family is not ProductFamily.UNCLASSIFIED
+        ]
+        public_items.sort(key=lambda item: _product_gid_key(item.product_gid))
+        paginator = CatalogPaginator(
+            AtomicCatalogActivation(reopened),
+            codec,
+            clock=clock,
+        )
+        return _EvidenceBoundGeneration(
+            verified=checked,
+            projection=reopened,
+            cursor_codec=codec,
+            evidence=evidence,
+            records=records,
+            items=tuple(public_items),
+            paginator=paginator,
+            clock=clock,
+            binding=binding,
+        )
+    except RuntimeApiContractError:
+        raise
+    except Exception:
+        raise RuntimeApiContractError("catalog runtime binding is invalid") from None
+
+
+def _evidence_binding_is_current(generation: _EvidenceBoundGeneration) -> bool:
+    try:
+        if type(generation) is not _EvidenceBoundGeneration:
+            return False
+        verified = generation.verified
+        projection = generation.projection
+        evidence = generation.evidence
+        if (
+            type(verified) is not VerifiedReconciledGenerationV1
+            or type(projection) is not CatalogProjection
+            or type(generation.cursor_codec) is not CursorCodecV1
+            or type(evidence) is not VerifiedCatalogCoreEvidenceV1
+            or type(generation.paginator) is not CatalogPaginator
+        ):
+            return False
+        projection._assert_file_unchanged()
+        manifest = verified.generation.dataset_manifest
+        parts = verified.generation.source_manifest.parts
+        if type(parts) is not tuple or len(parts) != 2:
+            return False
+        binding = (
+            parts[0].shop_domain,
+            verified.summary_sha256,
+            manifest.dataset_generation,
+            manifest.catalog_content_sha256,
+            projection._file_fingerprint.content_sha256,
+            generation.binding[5],
+        )
+        evidence_binding = (
+            evidence.shop_domain,
+            evidence.summary_sha256,
+            evidence.dataset_generation,
+            evidence.catalog_content_sha256,
+            evidence.projection_fingerprint,
+            evidence.code_sha,
+        )
+        return (
+            generation.binding == binding == evidence_binding
+            and parts[1].shop_domain == binding[0]
+            and parts[1].source_code_sha == parts[0].source_code_sha
+            and type(parts[0].source_code_sha) is str
+            and _CODE_SHA_RE.fullmatch(parts[0].source_code_sha) is not None
+            and projection.dataset_generation == binding[2]
+            and projection.manifest == manifest
+            and generation.paginator._activation.active_generation == binding[2]
+        )
+    except Exception:
+        return False
+
+
+def _fetch_evidence_bound_page(
+    generation: _EvidenceBoundGeneration,
+    request: CatalogRequestV1,
+    cursor: str | None,
+    *,
+    control: RequestControl,
+) -> CatalogLeaseResult:
+    if not _canonical_request(request):
+        raise CatalogBackendFailure(CatalogErrorCode.UNSUPPORTED_CAPABILITY)
+    control.checkpoint()
+    if request.query in (None, "") and not request.filters.nonempty:
+        result = generation.paginator.fetch_page(
+            request,
+            cursor=cursor,
+            checkpoint=control.checkpoint,
+        )
+        return CatalogLeaseResult(result.page, result.next_cursor)
+
+    now = generation.clock()
+    if cursor is None:
+        context = CursorContextV1.from_request(
+            request,
+            generation.binding[2],
+            last_product_gid=None,
+            expires_at=generation.cursor_codec.expires_at(now),
+        )
+    else:
+        context = generation.cursor_codec.decode(
+            cursor,
+            expected_request=request,
+            expected_generation=generation.binding[2],
+            now=now,
+        )
+    control.checkpoint()
+    query_product_gids: tuple[str, ...] | None = None
+    if request.query not in (None, ""):
+        search = search_single_cards(
+            generation.records,
+            game=request.game,
+            query=request.query,
+            checkpoint=control.checkpoint,
+        )
+        if search.mode is SearchMode.BROWSE:
+            browse_gids: list[str] = []
+            for item in generation.items:
+                control.checkpoint()
+                if item.game is request.game and item.product_family is ProductFamily.SINGLE:
+                    browse_gids.append(item.product_gid)
+            query_product_gids = tuple(browse_gids)
+        else:
+            hit_gids: list[str] = []
+            for hit in search.hits:
+                control.checkpoint()
+                hit_gids.append(hit.product_gid)
+            query_product_gids = tuple(hit_gids)
+    evaluation = evaluate_facets(
+        generation.items,
+        request,
+        query_product_gids=query_product_gids,
+        checkpoint=control.checkpoint,
+    )
+    return _keyset_tuple_page(
+        generation,
+        request,
+        context,
+        evaluation.items,
+        control=control,
+    )
+
+
+def _keyset_tuple_page(
+    generation: _EvidenceBoundGeneration,
+    request: CatalogRequestV1,
+    context: CursorContextV1,
+    items: tuple[CatalogItemV1, ...],
+    *,
+    control: RequestControl,
+) -> CatalogLeaseResult:
+    control.checkpoint()
+    after_key = (
+        None if context.last_product_gid is None else _product_gid_key(context.last_product_gid)
+    )
+    page_items: list[CatalogItemV1] = []
+    has_next_page = False
+    for item in items:
+        control.checkpoint()
+        item_key = _product_gid_key(item.product_gid)
+        if after_key is not None and item_key <= after_key:
+            continue
+        if len(page_items) == request.page_size:
+            has_next_page = True
+            break
+        page_items.append(item)
+    returned_variant_count = 0
+    for item in page_items:
+        control.checkpoint()
+        returned_variant_count += len(item.variants)
+    immutable_items = tuple(page_items)
+    next_context = (
+        CursorContextV1.from_request(
+            request,
+            generation.binding[2],
+            last_product_gid=immutable_items[-1].product_gid,
+            expires_at=context.expires_at,
+        )
+        if has_next_page
+        else None
+    )
+    page = CatalogPageV1(
+        dataset_generation=generation.binding[2],
+        request=request,
+        request_context_sha256=context.request_context_sha256,
+        items=immutable_items,
+        returned_product_count=len(immutable_items),
+        returned_variant_count=returned_variant_count,
+        has_next_page=has_next_page,
+        next_cursor_context=next_context,
+    )
+    page.validate_for_context(context)
+    control.checkpoint()
+    next_cursor = None if next_context is None else generation.cursor_codec.encode(next_context)
+    control.checkpoint()
+    return CatalogLeaseResult(page, next_cursor)
+
+
+def _catalog_execution_error_code(error: Exception) -> CatalogErrorCode:
+    if isinstance(error, CursorContextMismatchError):
+        code = CatalogErrorCode.CURSOR_CONTEXT_MISMATCH
+    elif isinstance(error, StaleGenerationError):
+        code = CatalogErrorCode.RESTART_REQUIRED
+    elif isinstance(error, (CursorExpiredError, InvalidCursorError)):
+        code = CatalogErrorCode.INVALID_CURSOR
+    elif isinstance(error, DatasetUnavailableError):
+        code = CatalogErrorCode.DATASET_UNAVAILABLE
+    elif isinstance(error, UnsupportedPaginationRequestError):
+        code = CatalogErrorCode.UNSUPPORTED_CAPABILITY
+    elif isinstance(error, (CanonicalSearchError, FacetContractError, RuntimeContractError)):
+        code = CatalogErrorCode.DATASET_UNAVAILABLE
+    elif isinstance(error, PaginationContractError):
+        code = CatalogErrorCode.TEMPORARILY_UNAVAILABLE
+    else:
+        code = CatalogErrorCode.TEMPORARILY_UNAVAILABLE
+    return code
 
 
 def _lease_identity(lease: Any) -> tuple[str, str]:
@@ -1189,12 +1811,16 @@ def _release_lease(
             raise RuntimeApiContractError("lease close result is invalid")
         if checkpoint:
             control.checkpoint()
+    except RequestCancelled:
+        if not suppress:
+            raise
     except Exception as exc:
         if not suppress:
             raise CatalogBackendFailure(CatalogErrorCode.TEMPORARILY_UNAVAILABLE) from exc
 
 
 __all__ = [
+    "AppProxyVerifierAuthorizer",
     "CatalogBackend",
     "CatalogBackendFailure",
     "CatalogGenerationLease",
@@ -1202,6 +1828,9 @@ __all__ = [
     "CatalogRequestEnvelopeV1",
     "CatalogResponseEnvelopeV1",
     "DenyAllProxyAuthorizer",
+    "EvidenceBoundCapabilityGate",
+    "EvidenceBoundCatalogBackend",
+    "EvidenceBoundCatalogLease",
     "FailClosedCapabilityGate",
     "IncompatibleCatalogRequestError",
     "InvalidOpaqueCursorError",

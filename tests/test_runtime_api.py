@@ -264,6 +264,7 @@ class _Gate:
 def test_capabilities(monkeypatch: pytest.MonkeyPatch) -> None:
     """Test-only override; no shipped implementation can enable runtime output."""
 
+    monkeypatch.setattr(runtime_api, "_runtime_composition_is_evidence_bound", lambda *_: True)
     monkeypatch.setattr(CatalogRequestV1, "require_executable", lambda _self: None)
     monkeypatch.setattr(CatalogPageV1, "require_output_capability", lambda _self: None)
     monkeypatch.setattr(runtime_api, "_contract_output_is_verified", lambda: True)
@@ -765,27 +766,34 @@ def test_catalog_nonterminal_page_returns_only_opaque_cursor_for_reuse(
     assert decoded.page.has_next_page is True
 
 
-def test_current_contract_gate_cannot_be_bypassed_by_an_injected_gate() -> None:
+def test_non_evidence_composition_cannot_be_bypassed_by_allow_all_adapters() -> None:
     request = _request()
     lease = _Lease(CatalogLeaseResult(_page(request), None))
-    response = _service(lease, gate=_Gate()).catalog(_http_request(_body(request)))
+    backend = _Backend(lease)
+    authorizer = _Authorizer()
+    service = _service(backend=backend, authorizer=authorizer, gate=_Gate())
+    response = service.catalog(_http_request(_body(request)))
     assert response.status == 503
     assert _error(response).code is CatalogErrorCode.UNSUPPORTED_CAPABILITY
     assert not lease.calls
-    assert lease.close_calls == 1
+    assert lease.close_calls == 0
+    assert backend.calls == 0
+    assert not authorizer.calls
+    assert json.loads(service.readiness().body)["status"] == "not_ready"
+    assert backend.calls == 0
 
 
 def test_default_service_components_never_expose_catalog_output() -> None:
     request = _http_request()
     assert _error(
         RuntimeCatalogService(expected_shop_domain=SHOP, clock_ns=lambda: 0).catalog(request)
-    ).code is (CatalogErrorCode.INVALID_REQUEST)
+    ).code is (CatalogErrorCode.UNSUPPORTED_CAPABILITY)
     service = RuntimeCatalogService(
         expected_shop_domain=SHOP, authorizer=_Authorizer(), clock_ns=lambda: 0
     )
     response = service.catalog(request)
     assert response.status == 503
-    assert _error(response).code is CatalogErrorCode.DATASET_UNAVAILABLE
+    assert _error(response).code is CatalogErrorCode.UNSUPPORTED_CAPABILITY
 
 
 @pytest.mark.parametrize(
@@ -798,7 +806,10 @@ def test_default_service_components_never_expose_catalog_output() -> None:
     ],
 )
 def test_proxy_failures_are_fixed_and_value_free(
-    outcome: Any, status: int, code: CatalogErrorCode
+    outcome: Any,
+    status: int,
+    code: CatalogErrorCode,
+    test_capabilities: None,
 ) -> None:
     response = _service(authorizer=_Authorizer(outcome)).catalog(_http_request())
     assert response.status == status
@@ -860,7 +871,9 @@ def test_arbitrary_base_exceptions_propagate_and_acquired_leases_close(
         assert lease.close_calls == 1
 
 
-def test_hostile_exception_text_is_never_observed_or_returned() -> None:
+def test_hostile_exception_text_is_never_observed_or_returned(
+    test_capabilities: None,
+) -> None:
     class HostileError(Exception):
         def __str__(self) -> str:
             raise RuntimeError("SECRET_STR")
@@ -908,7 +921,7 @@ def test_invalid_cursor_from_transport_or_backend_never_reaches_another_generati
     assert lease.calls[0][1] == OPAQUE_CURSOR
 
 
-def test_incompatible_request_maps_to_fixed_error() -> None:
+def test_incompatible_request_maps_to_fixed_error(test_capabilities: None) -> None:
     request = _request(family=RequestFamily.ALL).as_dict()
     request["q"] = "card"
     raw = json.dumps(
@@ -919,7 +932,9 @@ def test_incompatible_request_maps_to_fixed_error() -> None:
     assert _error(response).code is CatalogErrorCode.INCOMPATIBLE_FILTER
 
 
-def test_malformed_request_is_not_misclassified_as_incompatible() -> None:
+def test_malformed_request_is_not_misclassified_as_incompatible(
+    test_capabilities: None,
+) -> None:
     request = _request(family=RequestFamily.SEALED, subtype="booster-box").as_dict()
     request["productFamily"] = "single"
     request["pageSize"] = "bad"
@@ -955,7 +970,10 @@ def test_malformed_request_is_not_misclassified_as_incompatible() -> None:
         {"body_chunks": ("body",)},
     ],
 )
-def test_catalog_rejects_invalid_transport_shapes_before_backend(mutation: dict[str, Any]) -> None:
+def test_catalog_rejects_invalid_transport_shapes_before_backend(
+    mutation: dict[str, Any],
+    test_capabilities: None,
+) -> None:
     original = _http_request()
     values = {
         "method": original.method,
@@ -1011,7 +1029,9 @@ def test_catalog_rejects_ambiguous_headers(headers: tuple[Any, ...]) -> None:
     assert _error(response).code is CatalogErrorCode.INVALID_REQUEST
 
 
-def test_header_and_body_aggregate_bounds_and_content_length_are_enforced() -> None:
+def test_header_and_body_aggregate_bounds_and_content_length_are_enforced(
+    test_capabilities: None,
+) -> None:
     limits = RuntimeLimits(
         max_request_body_bytes=1024,
         max_header_count=2,
