@@ -51,6 +51,10 @@ class DeliberateBaseException(BaseException):
     pass
 
 
+class RequestCancelled(RuntimeError):
+    """Test double for the runtime cancellation exception owned by the caller."""
+
+
 def _fixture() -> dict[str, Any]:
     return json.loads(FIXTURE_PATH.read_text(encoding="utf-8"))
 
@@ -241,6 +245,96 @@ def test_empty_normalized_query_routes_to_browse_without_running_search(
     assert result.match_tier is None
     assert result.hits == ()
     assert result.suggestions == ()
+
+
+def test_checkpoint_return_value_is_ignored_without_changing_results(
+    records: tuple[CatalogProductRecordV1, ...],
+) -> None:
+    calls = 0
+
+    def checkpoint() -> object:
+        nonlocal calls
+        calls += 1
+        return object()
+
+    search = search_single_cards(
+        records,
+        game=Game.MAGIC,
+        query="lightning bolt",
+        checkpoint=checkpoint,  # type: ignore[arg-type]
+    )
+    report = report_missing_canonical_names(
+        records,
+        game=Game.MAGIC,
+        checkpoint=checkpoint,  # type: ignore[arg-type]
+    )
+
+    assert search == search_single_cards(records, game=Game.MAGIC, query="lightning bolt")
+    assert report == report_missing_canonical_names(records, game=Game.MAGIC)
+    assert calls > len(records) * 2
+
+
+@pytest.mark.parametrize("entry_point", ["search", "report"])
+def test_checkpoint_cancellation_precedes_validation_and_propagates_unchanged(
+    entry_point: str,
+) -> None:
+    cancelled = RequestCancelled("request cancelled")
+
+    def checkpoint() -> None:
+        raise cancelled
+
+    with pytest.raises(RequestCancelled) as error:
+        if entry_point == "search":
+            search_single_cards(
+                [],  # type: ignore[arg-type]
+                game="magic",  # type: ignore[arg-type]
+                query=1,  # type: ignore[arg-type]
+                checkpoint=checkpoint,
+            )
+        else:
+            report_missing_canonical_names(
+                [],  # type: ignore[arg-type]
+                game="magic",  # type: ignore[arg-type]
+                checkpoint=checkpoint,
+            )
+
+    assert error.value is cancelled
+    assert error.value.__cause__ is None
+    assert error.value.__context__ is None
+
+
+@pytest.mark.parametrize("entry_point", ["search", "report"])
+def test_checkpoint_can_cancel_inside_the_post_validation_record_loop(
+    records: tuple[CatalogProductRecordV1, ...],
+    entry_point: str,
+) -> None:
+    calls = 0
+    cancellation_call = len(records) + 3
+    cancelled = RequestCancelled("request cancelled")
+
+    def checkpoint() -> None:
+        nonlocal calls
+        calls += 1
+        if calls == cancellation_call:
+            raise cancelled
+
+    with pytest.raises(RequestCancelled) as error:
+        if entry_point == "search":
+            search_single_cards(
+                records,
+                game=Game.MAGIC,
+                query="lightning bolt",
+                checkpoint=checkpoint,
+            )
+        else:
+            report_missing_canonical_names(
+                records,
+                game=Game.MAGIC,
+                checkpoint=checkpoint,
+            )
+
+    assert calls == cancellation_call
+    assert error.value is cancelled
 
 
 def test_missing_name_report_is_game_scoped_complete_and_gid_ordered(

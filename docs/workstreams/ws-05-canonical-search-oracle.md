@@ -49,6 +49,14 @@ game filtering, so a future baseline proof need not partition away cross-game le
 Duplicate Product GIDs, non-v1 records, forged runtime records, invalid Unicode, or
 non-canonical game values fail closed.
 
+Both oracle entry points accept an optional keyword-only `checkpoint`. It is invoked before
+input validation, before each record handled by validation and selection, and throughout
+result ordering and materialization loops. A checkpoint return value has no meaning:
+cancellation is signalled only by raising the caller's runtime cancellation exception. The
+oracle neither catches nor translates that exception, so it propagates unchanged and no
+partial search result or coverage report is returned. With no checkpoint, call signatures
+and domain-error behavior remain backward compatible.
+
 Every supplied Product is outer-validated, rendered to canonical v1 JSON, and decoded back
 through the complete runtime schema before it is searched or reported. Only the reconstructed
 Product graph is consumed. This makes nested Variant and selected-option validation part of

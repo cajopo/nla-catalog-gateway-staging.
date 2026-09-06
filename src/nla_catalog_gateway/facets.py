@@ -9,6 +9,7 @@ selected by that workstream rather than relying on an invented matcher here.
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
 from dataclasses import dataclass, replace
 from enum import StrEnum
 from types import MappingProxyType
@@ -273,6 +274,7 @@ def evaluate_facets(
     request: CatalogRequestV1,
     *,
     query_product_gids: tuple[str, ...] | None = None,
+    checkpoint: Callable[[], None] | None = None,
 ) -> FacetEvaluation:
     """Evaluate AND-across-facets counts, excluding each facet's own selection.
 
@@ -281,23 +283,38 @@ def evaluate_facets(
     exactly when ``q`` is non-empty and is deliberately supplied by the search oracle.
     """
 
+    if checkpoint is not None and not callable(checkpoint):
+        raise FacetContractError("facet checkpoint must be callable")
+    _run_checkpoint(checkpoint)
     request = _validated_request(request)
-    items, item_by_gid = _validated_item_index(items)
-    query_scope = _validated_query_scope(item_by_gid, request, query_product_gids)
-    filtered = _matching_items(items, request, query_scope, excluded=None)
+    items, item_by_gid = _validated_item_index(items, checkpoint=checkpoint)
+    query_scope = _validated_query_scope(
+        item_by_gid,
+        request,
+        query_product_gids,
+        checkpoint=checkpoint,
+    )
+    filtered = _matching_items(
+        items,
+        request,
+        query_scope,
+        excluded=None,
+        checkpoint=checkpoint,
+    )
 
     family_base = _matching_items(
         items,
         request,
         query_scope,
         excluded=FacetDimension.PRODUCT_FAMILY,
+        checkpoint=checkpoint,
     )
+    family_totals = dict.fromkeys(_PUBLIC_FAMILIES, 0)
+    for item in family_base:
+        _run_checkpoint(checkpoint)
+        family_totals[item.product_family] += 1
     family_counts = tuple(
-        FacetValueCount(
-            family.value,
-            sum(item.product_family is family for item in family_base),
-        )
-        for family in _PUBLIC_FAMILIES
+        FacetValueCount(family.value, family_totals[family]) for family in _PUBLIC_FAMILIES
     )
 
     stock_base = _matching_items(
@@ -305,13 +322,15 @@ def evaluate_facets(
         request,
         query_scope,
         excluded=FacetDimension.IN_STOCK,
+        checkpoint=checkpoint,
     )
+    positive_inventory_count = 0
+    for item in stock_base:
+        _run_checkpoint(checkpoint)
+        positive_inventory_count += _has_positive_inventory_fact(item)
     stock_counts = (
-        FacetValueCount("true", sum(_has_positive_inventory_fact(item) for item in stock_base)),
-        FacetValueCount(
-            "false",
-            sum(not _has_positive_inventory_fact(item) for item in stock_base),
-        ),
+        FacetValueCount("true", positive_inventory_count),
+        FacetValueCount("false", len(stock_base) - positive_inventory_count),
     )
     facets = [
         ContextualFacet(FacetDimension.PRODUCT_FAMILY, family_counts),
@@ -324,24 +343,31 @@ def evaluate_facets(
             request,
             query_scope,
             excluded=FacetDimension.PRODUCT_SUBTYPE,
+            checkpoint=checkpoint,
         )
-        subtype_names = {item.product_subtype for item in subtype_base if item.product_subtype}
+        subtype_totals: dict[str, int] = {}
+        missing_subtype_count = 0
+        for item in subtype_base:
+            _run_checkpoint(checkpoint)
+            if item.product_subtype is None:
+                missing_subtype_count += 1
+            else:
+                subtype_totals[item.product_subtype] = (
+                    subtype_totals.get(item.product_subtype, 0) + 1
+                )
         if request.filters.product_subtype is not None:
-            subtype_names.add(request.filters.product_subtype)
+            subtype_totals.setdefault(request.filters.product_subtype, 0)
         subtype_counts = tuple(
-            FacetValueCount(
-                subtype,
-                sum(item.product_subtype == subtype for item in subtype_base),
-            )
-            for subtype in sorted(subtype_names)
+            FacetValueCount(subtype, subtype_totals[subtype]) for subtype in sorted(subtype_totals)
         )
         facets.append(
             ContextualFacet(
                 FacetDimension.PRODUCT_SUBTYPE,
                 subtype_counts,
-                missing_value_count=sum(item.product_subtype is None for item in subtype_base),
+                missing_value_count=missing_subtype_count,
             )
         )
+    _run_checkpoint(checkpoint)
     return FacetEvaluation(filtered, tuple(facets))
 
 
@@ -404,6 +430,8 @@ def _has_canonical_percent_escapes(query_string: str) -> bool:
 
 def _validated_item_index(
     items: tuple[CatalogItemV1, ...],
+    *,
+    checkpoint: Callable[[], None] | None = None,
 ) -> tuple[tuple[CatalogItemV1, ...], dict[str, CatalogItemV1]]:
     if type(items) is not tuple:
         raise FacetContractError("facet input must be an immutable Product tuple")
@@ -412,6 +440,7 @@ def _validated_item_index(
     canonical_items = []
     result: dict[str, CatalogItemV1] = {}
     for item in items:
+        _run_checkpoint(checkpoint)
         item = _validated_item(item)
         if item.product_gid in result:
             raise FacetContractError("facet input Product GIDs must be unique")
@@ -424,6 +453,8 @@ def _validated_query_scope(
     item_by_gid: dict[str, CatalogItemV1],
     request: CatalogRequestV1,
     query_product_gids: tuple[str, ...] | None,
+    *,
+    checkpoint: Callable[[], None] | None = None,
 ) -> frozenset[str] | None:
     query_active = request.query not in (None, "")
     if not query_active:
@@ -434,17 +465,19 @@ def _validated_query_scope(
         raise FacetContractError("active query requires canonical Product GID tuple")
     if len(query_product_gids) > MAX_QUERY_PRODUCT_GIDS:
         raise FacetContractError("query Product GIDs exceed the context limit")
-    if any(
-        type(gid) is not str or _PRODUCT_GID_RE.fullmatch(gid) is None for gid in query_product_gids
-    ):
-        raise FacetContractError("active query requires canonical Product GID tuple")
-    if len(set(query_product_gids)) != len(query_product_gids):
-        raise FacetContractError("query Product GIDs must be unique")
-    if any(gid not in item_by_gid for gid in query_product_gids):
-        raise FacetContractError("query Product GIDs must belong to the facet input")
-    if any(item_by_gid[gid].game is not request.game for gid in query_product_gids):
-        raise FacetContractError("query context must not contain cross-game Products")
-    return frozenset(query_product_gids)
+    result: set[str] = set()
+    for gid in query_product_gids:
+        _run_checkpoint(checkpoint)
+        if type(gid) is not str or _PRODUCT_GID_RE.fullmatch(gid) is None:
+            raise FacetContractError("active query requires canonical Product GID tuple")
+        if gid in result:
+            raise FacetContractError("query Product GIDs must be unique")
+        if gid not in item_by_gid:
+            raise FacetContractError("query Product GIDs must belong to the facet input")
+        if item_by_gid[gid].game is not request.game:
+            raise FacetContractError("query context must not contain cross-game Products")
+        result.add(gid)
+    return frozenset(result)
 
 
 def _matching_items(
@@ -453,9 +486,11 @@ def _matching_items(
     query_scope: frozenset[str] | None,
     *,
     excluded: FacetDimension | None,
+    checkpoint: Callable[[], None] | None = None,
 ) -> tuple[CatalogItemV1, ...]:
     matches = []
     for item in items:
+        _run_checkpoint(checkpoint)
         if item.game is not request.game:
             continue
         if query_scope is not None and item.product_gid not in query_scope:
@@ -479,7 +514,14 @@ def _matching_items(
         ):
             continue
         matches.append(item)
-    return tuple(sorted(matches, key=lambda item: _product_gid_sort_key(item.product_gid)))
+    result = tuple(sorted(matches, key=lambda item: _product_gid_sort_key(item.product_gid)))
+    _run_checkpoint(checkpoint)
+    return result
+
+
+def _run_checkpoint(checkpoint: Callable[[], None] | None) -> None:
+    if checkpoint is not None:
+        checkpoint()
 
 
 def _product_gid_sort_key(product_gid: str) -> tuple[int, str]:
