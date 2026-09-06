@@ -14,7 +14,7 @@ from collections.abc import Callable, Iterator
 from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass, field, fields, replace
 from datetime import UTC, datetime
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from types import MappingProxyType, SimpleNamespace
 from typing import Any, BinaryIO
 
@@ -1118,10 +1118,22 @@ def test_close_failure_is_mapped_after_handles_are_closed(
     assert all(handle.closed for handle in selected.handles)
 
 
-@pytest.mark.skipif(os.name != "nt", reason="requires the real Win32 handle boundary")
 def test_native_win32_fixed_ntfs_backend_round_trip_and_close(
     bundle_case: BundleCase,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    if os.name != "nt":
+        assert type(generation_bundle._directory_identity(bundle_case.directory)) is (
+            generation_bundle._FileIdentity
+        )
+        assert frozenset(generation_bundle._directory_names(bundle_case.directory)) == (
+            generation_bundle._OUTPUT_FILENAMES
+        )
+        harness = _install_native_backend_harness(monkeypatch, bundle_case)
+        with harness.backend.open(harness.bundle.directory) as pinned:
+            assert pinned == harness.bundle
+        return
+
     with generation_bundle.open_reconciled_generation(
         bundle_case.directory,
         bundle_case.summary_sha256,
@@ -1783,6 +1795,75 @@ def test_windows_runtime_loaders_fail_closed(
         target()
 
 
+def test_mocked_win32_success_paths_are_portable(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    fake_msvcrt = SimpleNamespace()
+    monkeypatch.setattr(generation_bundle, "_WINDOWS_HANDLE_API_AVAILABLE", True)
+    monkeypatch.setitem(sys.modules, "msvcrt", fake_msvcrt)
+    assert generation_bundle._windows_msvcrt() is fake_msvcrt
+
+    kernel = SimpleNamespace(
+        CreateFileW=_WinFunction(lambda *_args: 71),
+        CloseHandle=_WinFunction(lambda _handle: True),
+    )
+    monkeypatch.setattr(generation_bundle, "_windows_kernel32", lambda: kernel)
+    assert (
+        generation_bundle._native_create_file(
+            tmp_path / "carrier.bin",
+            access=1,
+            share=2,
+            flags=3,
+        )
+        == 71
+    )
+    generation_bundle._native_close(71)
+
+    handle = SimpleNamespace()
+    owner = generation_bundle._OwnedNativeBinary(handle=handle)
+    assert owner.release() is handle
+    assert owner.handle is None
+
+    rendered = r"\\?\Volume{00000000-0000-0000-0000-000000000000}\external\bundle"
+
+    def final_path(_handle: int, buffer: Any, _size: int, _mode: int) -> int:
+        buffer.value = rendered
+        return len(rendered)
+
+    monkeypatch.setattr(
+        generation_bundle,
+        "_windows_kernel32",
+        lambda: SimpleNamespace(GetFinalPathNameByHandleW=_WinFunction(final_path)),
+    )
+    assert generation_bundle._native_handle_canonical_path(71) == (
+        generation_bundle._CanonicalHandlePath(
+            "volume{00000000-0000-0000-0000-000000000000}",
+            ("external", "bundle"),
+        )
+    )
+
+    monkeypatch.setattr(
+        generation_bundle,
+        "_windows_kernel32",
+        lambda: _stream_kernel(b"", results=[False]),
+    )
+    monkeypatch.setattr(
+        generation_bundle,
+        "_WIN32_LAST_ERROR",
+        lambda: generation_bundle._ERROR_HANDLE_EOF,
+    )
+    assert generation_bundle._native_file_streams(71, directory=True) == ()
+
+    monkeypatch.setattr(
+        generation_bundle,
+        "_native_file_streams",
+        lambda _handle, *, directory=False: () if directory else (("::$DATA", 3),),
+    )
+    generation_bundle._require_unnamed_stream(71, 3)
+    generation_bundle._require_no_directory_streams(71)
+
+
 @pytest.mark.parametrize("operation", ["create", "close"])
 def test_native_create_and_close_map_invalid_win32_results(
     monkeypatch: pytest.MonkeyPatch,
@@ -2227,6 +2308,50 @@ def test_canonical_path_attestation_requires_exact_component_spelling(
     assert generation_bundle._canonical_paths_equal(left, right) is False
 
 
+def test_mocked_win32_path_attestation_success_is_portable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = generation_bundle._CanonicalHandlePath(
+        "volume{00000000-0000-0000-0000-000000000000}",
+        (),
+    )
+    canonical = generation_bundle._CanonicalHandlePath(
+        root.volume_guid,
+        ("external", "bundle"),
+    )
+    identity = generation_bundle._NativeFileIdentity(7, bytes(range(16)))
+
+    @contextmanager
+    def owned_handle(*_args: Any, **_kwargs: Any) -> Iterator[Any]:
+        yield SimpleNamespace(handle=71)
+
+    monkeypatch.setattr(generation_bundle, "_owned_native_handle", owned_handle)
+    monkeypatch.setattr(
+        generation_bundle,
+        "_native_handle_canonical_path",
+        lambda _handle: canonical,
+    )
+    monkeypatch.setattr(
+        generation_bundle,
+        "_native_handle_identity",
+        lambda _handle: identity,
+    )
+    path = PureWindowsPath(r"C:\external\bundle")
+    assert generation_bundle._native_path_canonical_path(path, directory=True) == canonical
+    assert generation_bundle._native_path_attestation(path, directory=True) == (
+        identity,
+        canonical,
+    )
+
+    monkeypatch.setattr(
+        generation_bundle,
+        "_native_path_canonical_path",
+        lambda *_args, **_kwargs: root,
+    )
+    assert generation_bundle._expected_canonical_drive_path(path) == canonical
+    assert generation_bundle._repository_canonical_path() == root
+
+
 def test_expected_drive_path_rejects_nonroot_anchor_attestation(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -2245,7 +2370,7 @@ def test_alias_walk_rejects_path_without_drive_anchor() -> None:
         generation_bundle._path_has_alias(Path("relative"))
 
 
-@pytest.mark.parametrize("mode", ["alias", "failure"])
+@pytest.mark.parametrize("mode", ["alias", "clear", "failure"])
 def test_alias_walk_detects_reparse_and_maps_lstat_failure(
     monkeypatch: pytest.MonkeyPatch,
     mode: str,
@@ -2256,13 +2381,17 @@ def test_alias_walk_detects_reparse_and_maps_lstat_failure(
         if mode == "failure":
             raise OSError("private")
         return SimpleNamespace(
-            st_file_attributes=generation_bundle._REPARSE_POINT_ATTRIBUTE,
+            st_file_attributes=(
+                generation_bundle._REPARSE_POINT_ATTRIBUTE if mode == "alias" else 0
+            ),
             st_mode=stat.S_IFDIR,
         )
 
     monkeypatch.setattr(type(path), "lstat", lstat)
     if mode == "alias":
         assert generation_bundle._path_has_alias(path) is True
+    elif mode == "clear":
+        assert generation_bundle._path_has_alias(path) is False
     else:
         with pytest.raises(generation_bundle.GenerationBundleError, match=f"^{FILESYSTEM_ERROR}$"):
             generation_bundle._path_has_alias(path)
@@ -2367,7 +2496,7 @@ def test_native_handle_identity_reads_full_64_bit_volume_and_128_bit_file_id(
 
 @pytest.mark.parametrize(
     "mode",
-    ["invalid-guid", "remote-volume", "volume-info", "filesystem"],
+    ["success", "invalid-guid", "remote-volume", "volume-info", "filesystem"],
 )
 def test_pinned_volume_ntfs_gate_rejects_invalid_or_nonlocal_volume(
     monkeypatch: pytest.MonkeyPatch,
@@ -2389,20 +2518,36 @@ def test_pinned_volume_ntfs_gate_rejects_invalid_or_nonlocal_volume(
         GetVolumeInformationW=_WinFunction(volume_info),
     )
     monkeypatch.setattr(generation_bundle, "_windows_kernel32", lambda: kernel)
-    with pytest.raises(generation_bundle.GenerationBundleError, match=f"^{FILESYSTEM_ERROR}$"):
+    if mode == "success":
         generation_bundle._require_local_ntfs_volume(canonical)
+    else:
+        with pytest.raises(
+            generation_bundle.GenerationBundleError,
+            match=f"^{FILESYSTEM_ERROR}$",
+        ):
+            generation_bundle._require_local_ntfs_volume(canonical)
 
 
-@pytest.mark.parametrize("mode", ["invalid-anchor", "remote-drive"])
+@pytest.mark.parametrize("mode", ["success", "invalid-anchor", "remote-drive"])
 def test_fixed_drive_preflight_rejects_before_any_path_traversal(
     monkeypatch: pytest.MonkeyPatch,
     mode: str,
 ) -> None:
-    path = Path("relative") if mode == "invalid-anchor" else Path(r"Z:\external\bundle")
-    kernel = SimpleNamespace(GetDriveTypeW=_WinFunction(lambda _anchor: 2))
+    path = Path("relative") if mode == "invalid-anchor" else PureWindowsPath(r"Z:\external\bundle")
+    kernel = SimpleNamespace(
+        GetDriveTypeW=_WinFunction(
+            lambda _anchor: generation_bundle._DRIVE_FIXED if mode == "success" else 2
+        )
+    )
     monkeypatch.setattr(generation_bundle, "_windows_kernel32", lambda: kernel)
-    with pytest.raises(generation_bundle.GenerationBundleError, match=f"^{FILESYSTEM_ERROR}$"):
+    if mode == "success":
         generation_bundle._require_fixed_drive_anchor(path)
+    else:
+        with pytest.raises(
+            generation_bundle.GenerationBundleError,
+            match=f"^{FILESYSTEM_ERROR}$",
+        ):
+            generation_bundle._require_fixed_drive_anchor(path)
 
 
 class _EndlessDirectoryEntries:
