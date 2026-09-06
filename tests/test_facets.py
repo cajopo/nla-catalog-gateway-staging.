@@ -465,6 +465,74 @@ def test_oracle_uses_decoded_copies_not_forged_nested_runtime_objects() -> None:
     assert type(normalized.items[0].variants[0]) is CatalogVariantItemV1
 
 
+def test_optional_checkpoint_preserves_results_and_has_deterministic_calls() -> None:
+    catalog = _catalog()
+    request = _request(family=RequestFamily.SEALED, in_stock=False, subtype="booster-box")
+    expected = evaluate_facets(catalog, request)
+    call_counts = []
+
+    for _ in range(2):
+        calls = 0
+
+        def checkpoint() -> None:
+            nonlocal calls
+            calls += 1
+
+        assert evaluate_facets(catalog, request, checkpoint=checkpoint) == expected
+        call_counts.append(calls)
+
+    assert call_counts[0] == call_counts[1]
+    assert call_counts[0] > len(catalog)
+
+
+def test_checkpoint_cancellation_propagates_unchanged_without_partial_result() -> None:
+    class RequestCancelled(Exception):
+        pass
+
+    cancellation = RequestCancelled()
+    calls = 0
+
+    def checkpoint() -> None:
+        nonlocal calls
+        calls += 1
+        if calls == 10:
+            raise cancellation
+
+    with pytest.raises(RequestCancelled) as captured:
+        evaluate_facets(_catalog(), _request(), checkpoint=checkpoint)
+
+    assert captured.value is cancellation
+    assert calls == 10
+
+
+def test_query_scope_loop_is_cancellable_and_checkpoint_must_be_callable() -> None:
+    catalog = _catalog()
+    query_gids = tuple(item.product_gid for item in catalog if item.game is Game.MAGIC)
+
+    class RequestCancelled(Exception):
+        pass
+
+    calls = 0
+
+    def checkpoint() -> None:
+        nonlocal calls
+        calls += 1
+        if calls == len(catalog) + 3:
+            raise RequestCancelled
+
+    with pytest.raises(RequestCancelled):
+        evaluate_facets(
+            catalog,
+            _request(query="card"),
+            query_product_gids=query_gids,
+            checkpoint=checkpoint,
+        )
+    assert calls == len(catalog) + 3
+
+    with pytest.raises(FacetContractError, match="checkpoint must be callable"):
+        evaluate_facets(catalog, _request(), checkpoint=object())  # type: ignore[arg-type]
+
+
 def test_inventory_and_price_labels_use_only_v1_facts() -> None:
     positive_untracked = _item(20, inventory=1, tracked=False)
     zero_tracked = _item(21, inventory=0, tracked=True, price="0")
