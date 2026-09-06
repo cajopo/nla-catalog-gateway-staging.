@@ -1762,6 +1762,7 @@ def test_windows_runtime_loaders_fail_closed(
             generation_bundle.ctypes,
             "WinDLL",
             lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("private")),
+            raising=False,
         )
     if mode == "msvcrt-import":
         original_import = builtins.__import__
@@ -2249,7 +2250,7 @@ def test_alias_walk_detects_reparse_and_maps_lstat_failure(
     monkeypatch: pytest.MonkeyPatch,
     mode: str,
 ) -> None:
-    path = Path(r"C:\top\child")
+    path = Path(r"C:\top\child") if os.name == "nt" else Path("/top/child")
 
     def lstat(_self: Path) -> Any:
         if mode == "failure":
@@ -2279,7 +2280,11 @@ def test_alias_walk_detects_reparse_and_maps_lstat_failure(
         r"\rooted-without-drive",
     ],
 )
-def test_supported_namespace_rejects_unc_device_and_drive_ambiguous_paths(raw: str) -> None:
+def test_supported_namespace_rejects_unc_device_and_drive_ambiguous_paths(
+    monkeypatch: pytest.MonkeyPatch,
+    raw: str,
+) -> None:
+    monkeypatch.setattr(generation_bundle, "_WINDOWS_HANDLE_API_AVAILABLE", True)
     with pytest.raises(generation_bundle.GenerationBundleError, match=f"^{FILESYSTEM_ERROR}$"):
         generation_bundle._require_supported_namespace(Path(raw))
 
@@ -2434,12 +2439,14 @@ def test_directory_scan_stops_at_eighth_entry_and_closes_iterator(
 def test_alias_walk_is_top_down_and_stops_at_first_reparse(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    path = Path(r"C:\ancestor\descendant")
+    path = Path(r"C:\ancestor\descendant") if os.name == "nt" else Path("/ancestor/descendant")
+    ancestor = Path(r"C:\ancestor") if os.name == "nt" else Path("/ancestor")
+    root = Path("C:\\") if os.name == "nt" else Path("/")
     visited: list[Path] = []
 
     def lstat(current: Path) -> Any:
         visited.append(current)
-        is_alias = current == Path(r"C:\ancestor")
+        is_alias = current == ancestor
         return SimpleNamespace(
             st_file_attributes=(generation_bundle._REPARSE_POINT_ATTRIBUTE if is_alias else 0),
             st_mode=stat.S_IFDIR,
@@ -2447,7 +2454,7 @@ def test_alias_walk_is_top_down_and_stops_at_first_reparse(
 
     monkeypatch.setattr(type(path), "lstat", lstat)
     assert generation_bundle._path_has_alias(path) is True
-    assert visited == [Path("C:\\"), Path(r"C:\ancestor")]
+    assert visited == [root, ancestor]
 
 
 def _install_native_backend_harness(
