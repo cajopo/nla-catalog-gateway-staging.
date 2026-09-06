@@ -505,6 +505,29 @@ def test_checkpoint_cancellation_propagates_unchanged_without_partial_result() -
     assert calls == 10
 
 
+def test_matching_item_sort_checkpoint_propagates_cancellation_unchanged() -> None:
+    catalog = _catalog()
+    cancellation = RuntimeError("request cancelled")
+    calls = 0
+
+    def checkpoint() -> None:
+        nonlocal calls
+        calls += 1
+        if calls == len(catalog) + 2:
+            raise cancellation
+
+    with pytest.raises(RuntimeError, match="request cancelled") as captured:
+        facets._matching_items(
+            catalog,
+            _request(),
+            None,
+            excluded=None,
+            checkpoint=checkpoint,
+        )
+    assert captured.value is cancellation
+    assert calls == len(catalog) + 2
+
+
 def test_query_scope_loop_is_cancellable_and_checkpoint_must_be_callable() -> None:
     catalog = _catalog()
     query_gids = tuple(item.product_gid for item in catalog if item.game is Game.MAGIC)

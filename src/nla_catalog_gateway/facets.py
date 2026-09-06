@@ -357,9 +357,20 @@ def evaluate_facets(
                 )
         if request.filters.product_subtype is not None:
             subtype_totals.setdefault(request.filters.product_subtype, 0)
-        subtype_counts = tuple(
-            FacetValueCount(subtype, subtype_totals[subtype]) for subtype in sorted(subtype_totals)
-        )
+        if checkpoint is None:
+            ordered_subtypes = sorted(subtype_totals)
+        else:
+
+            def checkpointed_subtype_key(subtype: str) -> str:
+                checkpoint()
+                return subtype
+
+            ordered_subtypes = sorted(subtype_totals, key=checkpointed_subtype_key)
+        subtype_values = []
+        for subtype in ordered_subtypes:
+            _run_checkpoint(checkpoint)
+            subtype_values.append(FacetValueCount(subtype, subtype_totals[subtype]))
+        subtype_counts = tuple(subtype_values)
         facets.append(
             ContextualFacet(
                 FacetDimension.PRODUCT_SUBTYPE,
@@ -514,7 +525,16 @@ def _matching_items(
         ):
             continue
         matches.append(item)
-    result = tuple(sorted(matches, key=lambda item: _product_gid_sort_key(item.product_gid)))
+    if checkpoint is None:
+        matches.sort(key=lambda item: _product_gid_sort_key(item.product_gid))
+    else:
+
+        def checkpointed_sort_key(item: CatalogItemV1) -> tuple[int, str]:
+            checkpoint()
+            return _product_gid_sort_key(item.product_gid)
+
+        matches.sort(key=checkpointed_sort_key)
+    result = tuple(matches)
     _run_checkpoint(checkpoint)
     return result
 
