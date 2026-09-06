@@ -49,6 +49,7 @@ MAX_VARIANTS_PER_PRODUCT: Final = 10_000
 MAX_PROJECTION_FILE_BYTES: Final = 64 * 1024 * 1024 * 1024
 FILE_HASH_CHUNK_BYTES: Final = 1024 * 1024
 SQLITE_HEADER_BYTES: Final = 100
+_SQLITE_PROGRESS_VM_STEPS: Final = 1_000
 
 _READ_ONLY_MODE: Final = stat.S_IRUSR | stat.S_IRGRP | stat.S_IROTH
 _WRITE_BITS: Final = stat.S_IWUSR | stat.S_IWGRP | stat.S_IWOTH
@@ -631,9 +632,17 @@ class CatalogProjection:
         if stamp != self._file_fingerprint.stamp:
             raise DatasetUnavailableError("catalog dataset is unavailable")
 
-    def fetch_page(self, request: CatalogRequestV1, context: CursorContextV1) -> CatalogPageV1:
+    def fetch_page(
+        self,
+        request: CatalogRequestV1,
+        context: CursorContextV1,
+        *,
+        checkpoint: Callable[[], None] | None = None,
+    ) -> CatalogPageV1:
         request = _validate_proof_request(request)
         context = _validated_cursor_context(context)
+        if checkpoint is not None and not callable(checkpoint):
+            raise PaginationContractError("pagination checkpoint is invalid")
         if context.request != request:
             raise CursorContextMismatchError("cursor request context does not match")
         if context.dataset_generation != self.dataset_generation:
@@ -643,24 +652,64 @@ class CatalogProjection:
             if context.last_product_gid is None
             else _gid_digits(context.last_product_gid, _PRODUCT_GID_RE, "Product GID")
         )
+        checkpoint_failure: BaseException | None = None
+
+        def run_checkpoint() -> None:
+            nonlocal checkpoint_failure
+            if checkpoint is None:
+                return
+            try:
+                checkpoint()
+            except BaseException as exc:
+                checkpoint_failure = exc
+                raise
+
+        def sqlite_progress_checkpoint() -> int:
+            try:
+                run_checkpoint()
+            except BaseException:
+                return 1
+            return 0
+
+        run_checkpoint()
         try:
             self._assert_file_unchanged()
+            run_checkpoint()
             with _readonly_connection(self.path) as connection:
-                rows = self._product_rows(
-                    connection,
-                    request=request,
-                    after_digits=after_digits,
-                    limit=request.page_size + 1,
-                )
-                has_next_page = len(rows) > request.page_size
-                page_rows = rows[: request.page_size]
-                variants = self._variant_rows(
-                    connection, tuple(row["product_gid"] for row in page_rows)
-                )
+                try:
+                    if checkpoint is not None:
+                        connection.set_progress_handler(
+                            sqlite_progress_checkpoint, _SQLITE_PROGRESS_VM_STEPS
+                        )
+                    rows = self._product_rows(
+                        connection,
+                        request=request,
+                        after_digits=after_digits,
+                        limit=request.page_size + 1,
+                    )
+                    run_checkpoint()
+                    has_next_page = len(rows) > request.page_size
+                    page_rows = rows[: request.page_size]
+                    product_gids: list[str] = []
+                    for row in page_rows:
+                        run_checkpoint()
+                        product_gids.append(row["product_gid"])
+                    variants = self._variant_rows(
+                        connection,
+                        tuple(product_gids),
+                        checkpoint=run_checkpoint,
+                    )
+                    run_checkpoint()
+                finally:
+                    if checkpoint is not None:
+                        connection.set_progress_handler(None, 0)
             self._assert_file_unchanged()
-            items = tuple(
-                self._item_from_row(row, variants[row["product_gid"]]) for row in page_rows
-            )
+            item_values: list[CatalogItemV1] = []
+            for row in page_rows:
+                run_checkpoint()
+                item_values.append(self._item_from_row(row, variants[row["product_gid"]]))
+            items = tuple(item_values)
+            run_checkpoint()
         except DatasetUnavailableError:
             raise
         except (
@@ -673,6 +722,8 @@ class CatalogProjection:
             TypeError,
             ValueError,
         ) as exc:
+            if checkpoint_failure is not None:
+                raise checkpoint_failure from None
             raise DatasetUnavailableError("catalog dataset is unavailable") from exc
         try:
             next_context = (
@@ -696,9 +747,10 @@ class CatalogProjection:
                 next_cursor_context=next_context,
             )
             page.validate_for_context(context)
-            return page
         except (OverflowError, RecursionError, RuntimeContractError) as exc:
             raise DatasetUnavailableError("catalog dataset is unavailable") from exc
+        run_checkpoint()
+        return page
 
     @staticmethod
     def _product_rows(
@@ -737,7 +789,10 @@ class CatalogProjection:
 
     @staticmethod
     def _variant_rows(
-        connection: sqlite3.Connection, product_gids: tuple[str, ...]
+        connection: sqlite3.Connection,
+        product_gids: tuple[str, ...],
+        *,
+        checkpoint: Callable[[], None] | None = None,
     ) -> dict[str, tuple[CatalogVariantItemV1, ...]]:
         if not product_gids:
             return {}
@@ -751,11 +806,18 @@ class CatalogProjection:
         rows = connection.execute(sql, product_gids).fetchall()
         grouped: dict[str, list[CatalogVariantItemV1]] = {gid: [] for gid in product_gids}
         for row in rows:
+            if checkpoint is not None:
+                checkpoint()
             raw = row["public_variant_json"]
             grouped[row["product_gid"]].append(CatalogVariantItemV1.from_json_bytes(raw))
-        if any(not values for values in grouped.values()):
-            raise DatasetUnavailableError("catalog dataset is unavailable")
-        return {gid: tuple(values) for gid, values in grouped.items()}
+        result: dict[str, tuple[CatalogVariantItemV1, ...]] = {}
+        for gid, values in grouped.items():
+            if checkpoint is not None:
+                checkpoint()
+            if not values:
+                raise DatasetUnavailableError("catalog dataset is unavailable")
+            result[gid] = tuple(values)
+        return result
 
     @staticmethod
     def _item_from_row(
@@ -1129,9 +1191,17 @@ class CatalogPaginator:
         self._clock = clock or (lambda: datetime.now(UTC))
 
     def fetch_page(
-        self, request: CatalogRequestV1, *, cursor: str | None = None
+        self,
+        request: CatalogRequestV1,
+        *,
+        cursor: str | None = None,
+        checkpoint: Callable[[], None] | None = None,
     ) -> AuthenticatedCatalogPage:
         request = _validate_proof_request(request)
+        if checkpoint is not None and not callable(checkpoint):
+            raise PaginationContractError("pagination checkpoint is invalid")
+        if checkpoint is not None:
+            checkpoint()
         try:
             now = self._clock()
         except Exception as exc:
@@ -1153,10 +1223,16 @@ class CatalogPaginator:
                 expected_generation=projection.dataset_generation,
                 now=now,
             )
-        page = projection.fetch_page(request, context)
+        if checkpoint is not None:
+            checkpoint()
+        page = projection.fetch_page(request, context, checkpoint=checkpoint)
+        if checkpoint is not None:
+            checkpoint()
         next_cursor = (
             None
             if page.next_cursor_context is None
             else self._cursor_codec.encode(page.next_cursor_context)
         )
+        if checkpoint is not None:
+            checkpoint()
         return AuthenticatedCatalogPage(page=page, next_cursor=next_cursor)
