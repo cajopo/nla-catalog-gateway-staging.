@@ -673,6 +673,32 @@ def test_cursor_rejects_wrong_version_context_generation_and_expiry() -> None:
         codec.decode(_token_for_raw(raw), expected_request=request, now=NOW)
 
 
+def test_cursor_codec_authenticates_search_and_filter_request_contexts() -> None:
+    codec = CursorCodecV1(HMAC_KEY)
+    requests = (
+        _request(family=RequestFamily.SINGLE, query="Black Lotus"),
+        _request(family=RequestFamily.SEALED, in_stock=True),
+    )
+    for request in requests:
+        context = CursorContextV1.from_request(
+            request,
+            GENERATION_A,
+            last_product_gid="gid://shopify/Product/2",
+            expires_at="2026-09-02T12:30:00.000000Z",
+        )
+        token = codec.encode(context)
+
+        assert (
+            codec.decode(
+                token,
+                expected_request=request,
+                expected_generation=GENERATION_A,
+                now=NOW,
+            )
+            == context
+        )
+
+
 def test_generation_activation_makes_old_cursor_deterministically_stale(
     tmp_path: Path,
 ) -> None:
