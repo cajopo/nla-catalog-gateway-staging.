@@ -25,6 +25,7 @@ from nla_catalog_gateway.runtime_contract import (
     CapabilityState,
     CatalogErrorCode,
     CatalogErrorV1,
+    CatalogItemV1,
     CatalogPageV1,
     CatalogRequestV1,
     RequestFamily,
@@ -404,10 +405,120 @@ class CatalogRequestEnvelopeV1:
 
 
 @dataclass(frozen=True, slots=True)
-class CatalogResponseEnvelopeV1:
-    """Canonical page plus the opaque cursor issued by the pinned backend."""
+class _PublicCatalogPageV1:
+    """Validated public page fields, excluding unsigned internal cursor context."""
 
-    page: CatalogPageV1
+    dataset_generation: str
+    request: CatalogRequestV1
+    request_context_sha256: str
+    items: tuple[CatalogItemV1, ...]
+    returned_product_count: int
+    returned_variant_count: int
+    has_next_page: bool
+    contract_version: int = CONTRACT_VERSION
+
+    FIELDS = frozenset(
+        {
+            "contractVersion",
+            "datasetGeneration",
+            "hasNextPage",
+            "items",
+            "request",
+            "requestContextSha256",
+            "returnedProductCount",
+            "returnedVariantCount",
+        }
+    )
+
+    def __post_init__(self) -> None:
+        if type(self.has_next_page) is not bool:
+            raise RuntimeApiContractError("public page hasNextPage must be a boolean")
+        try:
+            terminal = CatalogPageV1(
+                contract_version=self.contract_version,
+                dataset_generation=self.dataset_generation,
+                request=self.request,
+                request_context_sha256=self.request_context_sha256,
+                items=self.items,
+                returned_product_count=self.returned_product_count,
+                returned_variant_count=self.returned_variant_count,
+                has_next_page=False,
+                next_cursor_context=None,
+            )
+            terminal = CatalogPageV1.from_json_bytes(terminal.to_json_bytes())
+        except (AttributeError, RuntimeContractError, TypeError, ValueError) as exc:
+            raise RuntimeApiContractError("public page fields are invalid") from exc
+        if self.has_next_page and not terminal.items:
+            raise RuntimeApiContractError("nonterminal public page must contain an item")
+        object.__setattr__(self, "dataset_generation", terminal.dataset_generation)
+        object.__setattr__(self, "request", terminal.request)
+        object.__setattr__(self, "request_context_sha256", terminal.request_context_sha256)
+        object.__setattr__(self, "items", terminal.items)
+        object.__setattr__(self, "returned_product_count", terminal.returned_product_count)
+        object.__setattr__(self, "returned_variant_count", terminal.returned_variant_count)
+        object.__setattr__(self, "contract_version", terminal.contract_version)
+
+    @classmethod
+    def from_catalog_page(cls, page: CatalogPageV1) -> _PublicCatalogPageV1:
+        if type(page) is not CatalogPageV1:
+            raise RuntimeApiContractError("response envelope page must be canonical")
+        try:
+            canonical = CatalogPageV1.from_json_bytes(page.to_json_bytes())
+        except (AttributeError, RuntimeContractError, TypeError, ValueError) as exc:
+            raise RuntimeApiContractError("response envelope page must be canonical") from exc
+        return cls(
+            contract_version=canonical.contract_version,
+            dataset_generation=canonical.dataset_generation,
+            request=canonical.request,
+            request_context_sha256=canonical.request_context_sha256,
+            items=canonical.items,
+            returned_product_count=canonical.returned_product_count,
+            returned_variant_count=canonical.returned_variant_count,
+            has_next_page=canonical.has_next_page,
+        )
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "contractVersion": self.contract_version,
+            "datasetGeneration": self.dataset_generation,
+            "hasNextPage": self.has_next_page,
+            "items": [item.as_dict() for item in self.items],
+            "request": self.request.as_dict(),
+            "requestContextSha256": self.request_context_sha256,
+            "returnedProductCount": self.returned_product_count,
+            "returnedVariantCount": self.returned_variant_count,
+        }
+
+    @classmethod
+    def from_dict(cls, value: dict[str, Any]) -> _PublicCatalogPageV1:
+        if type(value) is not dict:
+            raise RuntimeApiContractError("response envelope page must be an object")
+        _exact_keys(value, cls.FIELDS)
+        terminal_value = dict(value)
+        has_next_page = terminal_value["hasNextPage"]
+        terminal_value["hasNextPage"] = False
+        terminal_value["nextCursorContext"] = None
+        try:
+            terminal = CatalogPageV1.from_dict(terminal_value)
+        except RuntimeContractError as exc:
+            raise RuntimeApiContractError("response envelope page is invalid") from exc
+        return cls(
+            contract_version=terminal.contract_version,
+            dataset_generation=terminal.dataset_generation,
+            request=terminal.request,
+            request_context_sha256=terminal.request_context_sha256,
+            items=terminal.items,
+            returned_product_count=terminal.returned_product_count,
+            returned_variant_count=terminal.returned_variant_count,
+            has_next_page=has_next_page,
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class CatalogResponseEnvelopeV1:
+    """Safe public page plus the opaque cursor issued by the pinned backend."""
+
+    page: _PublicCatalogPageV1 | CatalogPageV1
     next_cursor: str | None
     contract_version: int = CONTRACT_VERSION
 
@@ -416,19 +527,50 @@ class CatalogResponseEnvelopeV1:
     def __post_init__(self) -> None:
         if type(self.contract_version) is not int or self.contract_version != CONTRACT_VERSION:
             raise RuntimeApiContractError("response envelope contractVersion must be 1")
-        if type(self.page) is not CatalogPageV1:
+        if type(self.page) is CatalogPageV1:
+            page = _PublicCatalogPageV1.from_catalog_page(self.page)
+        elif type(self.page) is _PublicCatalogPageV1:
+            page = _PublicCatalogPageV1(
+                contract_version=self.page.contract_version,
+                dataset_generation=self.page.dataset_generation,
+                request=self.page.request,
+                request_context_sha256=self.page.request_context_sha256,
+                items=self.page.items,
+                returned_product_count=self.page.returned_product_count,
+                returned_variant_count=self.page.returned_variant_count,
+                has_next_page=self.page.has_next_page,
+            )
+        else:
             raise RuntimeApiContractError("response envelope page must be canonical")
         cursor = _validated_cursor(self.next_cursor, MAX_CURSOR_CHARS)
-        if type(self.page.has_next_page) is not bool or self.page.has_next_page != (
-            cursor is not None
-        ):
+        if page.has_next_page != (cursor is not None):
             raise RuntimeApiContractError("opaque cursor must match terminal page state")
+        object.__setattr__(self, "page", page)
 
     def as_dict(self) -> dict[str, Any]:
+        if (
+            type(self.contract_version) is not int
+            or self.contract_version != CONTRACT_VERSION
+            or type(self.page) is not _PublicCatalogPageV1
+        ):
+            raise RuntimeApiContractError("response envelope is invalid")
+        page = _PublicCatalogPageV1(
+            contract_version=self.page.contract_version,
+            dataset_generation=self.page.dataset_generation,
+            request=self.page.request,
+            request_context_sha256=self.page.request_context_sha256,
+            items=self.page.items,
+            returned_product_count=self.page.returned_product_count,
+            returned_variant_count=self.page.returned_variant_count,
+            has_next_page=self.page.has_next_page,
+        )
+        cursor = _validated_cursor(self.next_cursor, MAX_CURSOR_CHARS)
+        if page.has_next_page != (cursor is not None):
+            raise RuntimeApiContractError("opaque cursor must match terminal page state")
         return {
             "contractVersion": self.contract_version,
-            "nextCursor": self.next_cursor,
-            "page": self.page.as_dict(),
+            "nextCursor": cursor,
+            "page": page.as_dict(),
         }
 
     def to_json_bytes(self) -> bytes:
@@ -460,11 +602,14 @@ class CatalogResponseEnvelopeV1:
         page_value = value["page"]
         if type(page_value) is not dict:
             raise RuntimeApiContractError("response envelope page must be an object")
-        try:
-            page = CatalogPageV1.from_dict(page_value)
-        except RuntimeContractError as exc:
-            raise RuntimeApiContractError("response envelope page is invalid") from exc
-        return cls(page=page, next_cursor=_validated_cursor(value["nextCursor"], MAX_CURSOR_CHARS))
+        page = _PublicCatalogPageV1.from_dict(page_value)
+        result = cls(
+            page=page,
+            next_cursor=_validated_cursor(value["nextCursor"], MAX_CURSOR_CHARS),
+        )
+        if result.to_json_bytes() != raw:
+            raise RuntimeApiContractError("response envelope JSON is not canonical")
+        return result
 
 
 class RuntimeCatalogService:

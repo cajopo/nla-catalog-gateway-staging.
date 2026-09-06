@@ -49,12 +49,12 @@ The response body planned by #33 is:
 }
 ```
 
-The `page` sub-object round-trips exactly as `CatalogPageV1`; `nextCursor` is the only cursor the
-client may send back. `CursorContextV1` remains unsigned internal canonical material and is never
-accepted as input. Because the provisional `CatalogPageV1` itself contains
-`nextCursorContext`, the future public wire adapter must resolve whether that internal metadata is
-retained or redacted in a new versioned page DTO before `catalogOutput` is promoted. This skeleton
-cannot emit it publicly because all real output gates remain closed.
+The `page` sub-object contains the validated `CatalogPageV1` fields except
+`nextCursorContext`. That unsigned internal material is always removed before serialization and is
+rejected as an unknown field by the public decoder. `nextCursor` is the only cursor a client may
+receive or send back. A private transport DTO reuses a terminal `CatalogPageV1` to validate the
+remaining fields, then separately validates nonterminal item presence and opaque-cursor
+coherence. Public response bytes must round-trip to the one canonical JSON representation.
 
 The parser rejects duplicate or unknown keys, BOMs, malformed UTF-8/Unicode, floats, non-finite
 numbers, oversized integers, unsupported versions, malformed opaque tokens, noncanonical request
@@ -81,9 +81,9 @@ in a worker thread is not sufficient cancellation.
 
 `CatalogBackend.acquire(control=...)` returns one immutable `CatalogGenerationLease`. The service
 reads its generation once, executes through that same lease, defensively round-trips the returned
-page, and requires request, shop, page generation, terminal state, and opaque-cursor presence to
-remain consistent. A concurrent backend activation cannot cause a second selection within the
-request.
+page, removes its internal unsigned cursor context, and requires request, shop, page generation,
+terminal state, and opaque-cursor presence to remain consistent. A concurrent backend activation
+cannot cause a second selection within the request.
 
 Errors are serialized only through the frozen `CatalogErrorV1` messages. Request values,
 exception text, SQL, paths, secrets, and signed query material are never copied into the response.
@@ -100,8 +100,8 @@ a fixed non-sensitive `not_ready` response.
 
 1. Merge and independently accept #7 and #12. Add a #12 verifier/exposure-policy adapter and a #7
    lease API that selects exactly once and signs/validates opaque cursors.
-2. Resolve the public page/cursor wire DTO. Raw unsigned cursor context must never become an
-   accepted client credential.
+2. Keep the resolved public page/cursor boundary intact: only the opaque signed cursor may cross
+   the wire; unsigned cursor context remains internal.
 3. Produce baseline evidence and a reviewed capability promotion. The current frozen v1 matrix
    intentionally forbids public output and readiness.
 4. Build one generation-bound query engine instead of copying the in-memory acceptance oracles:

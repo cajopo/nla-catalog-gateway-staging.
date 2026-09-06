@@ -500,7 +500,10 @@ def test_response_envelope_round_trips_terminal_and_authenticated_next_cursor(
     continued = CatalogResponseEnvelopeV1(_page(request, terminal=False), OPAQUE_CURSOR)
     raw = continued.to_json_bytes()
     assert CatalogResponseEnvelopeV1.from_json_bytes(raw) == continued
-    assert json.loads(raw)["nextCursor"] == OPAQUE_CURSOR
+    document = json.loads(raw)
+    assert document["nextCursor"] == OPAQUE_CURSOR
+    assert "nextCursorContext" not in document["page"]
+    assert "nextCursorContext" in _page(request, terminal=False).as_dict()
 
 
 def test_response_envelope_rejects_invalid_type_version_page_and_cursor_state() -> None:
@@ -525,6 +528,79 @@ def test_response_envelope_rejects_invalid_type_version_page_and_cursor_state() 
         )
 
 
+def test_public_response_decoder_rejects_unsigned_context_unknown_fields_and_noncanonical_json(
+    test_capabilities: None,
+) -> None:
+    envelope = CatalogResponseEnvelopeV1(
+        _page(_request(family=RequestFamily.SINGLE), terminal=False),
+        OPAQUE_CURSOR,
+    )
+    raw = envelope.to_json_bytes()
+    document = json.loads(raw)
+    document["page"]["nextCursorContext"] = _page(
+        _request(family=RequestFamily.SINGLE), terminal=False
+    ).as_dict()["nextCursorContext"]
+    with pytest.raises(RuntimeApiContractError, match="missing or unknown fields"):
+        CatalogResponseEnvelopeV1.from_json_bytes(
+            json.dumps(document, separators=(",", ":"), sort_keys=True).encode()
+        )
+
+    document = json.loads(raw)
+    document["page"]["unknown"] = True
+    with pytest.raises(RuntimeApiContractError, match="missing or unknown fields"):
+        CatalogResponseEnvelopeV1.from_json_bytes(
+            json.dumps(document, separators=(",", ":"), sort_keys=True).encode()
+        )
+
+    with pytest.raises(RuntimeApiContractError, match="not canonical"):
+        CatalogResponseEnvelopeV1.from_json_bytes(b" " + raw)
+
+
+def test_public_page_requires_boolean_nonterminal_state_with_an_item() -> None:
+    terminal = CatalogResponseEnvelopeV1(_page(_request()), None)
+    values = terminal.page.as_dict()
+    values["hasNextPage"] = True
+    raw = json.dumps(
+        {"contractVersion": 1, "nextCursor": OPAQUE_CURSOR, "page": values},
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode()
+    with pytest.raises(RuntimeApiContractError, match="must contain an item"):
+        CatalogResponseEnvelopeV1.from_json_bytes(raw)
+
+    values["hasNextPage"] = 1
+    with pytest.raises(RuntimeApiContractError, match="must be a boolean"):
+        runtime_api._PublicCatalogPageV1.from_dict(values)
+
+
+def test_private_public_page_copy_rejects_forged_or_invalid_fields() -> None:
+    safe = CatalogResponseEnvelopeV1(_page(_request()), None).page
+    with pytest.raises(RuntimeApiContractError, match="public page fields are invalid"):
+        runtime_api._PublicCatalogPageV1(
+            dataset_generation=safe.dataset_generation,
+            request=safe.request,
+            request_context_sha256=safe.request_context_sha256,
+            items=safe.items,
+            returned_product_count=1,
+            returned_variant_count=safe.returned_variant_count,
+            has_next_page=False,
+        )
+    with pytest.raises(RuntimeApiContractError, match="must be canonical"):
+        runtime_api._PublicCatalogPageV1.from_catalog_page(object())  # type: ignore[arg-type]
+
+    forged = _page(_request())
+    object.__setattr__(forged, "request", object())
+    with pytest.raises(RuntimeApiContractError, match="must be canonical"):
+        runtime_api._PublicCatalogPageV1.from_catalog_page(forged)
+
+    with pytest.raises(RuntimeApiContractError, match="must be an object"):
+        runtime_api._PublicCatalogPageV1.from_dict([])  # type: ignore[arg-type]
+    values = safe.as_dict()
+    values["request"] = None
+    with pytest.raises(RuntimeApiContractError, match="page is invalid"):
+        runtime_api._PublicCatalogPageV1.from_dict(values)
+
+
 def test_response_envelope_normalizes_render_failures_and_bounds_output(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -532,6 +608,29 @@ def test_response_envelope_normalizes_render_failures_and_bounds_output(
     object.__setattr__(envelope, "page", object())
     with pytest.raises(RuntimeApiContractError):
         envelope.to_json_bytes()
+
+    restored_internal = CatalogResponseEnvelopeV1(
+        _page(_request(family=RequestFamily.SINGLE), terminal=False),
+        OPAQUE_CURSOR,
+    )
+    object.__setattr__(
+        restored_internal,
+        "page",
+        _page(_request(family=RequestFamily.SINGLE), terminal=False),
+    )
+    with pytest.raises(RuntimeApiContractError, match="response envelope is invalid"):
+        restored_internal.to_json_bytes()
+
+    tampered_page = CatalogResponseEnvelopeV1(_page(_request()), None)
+    object.__setattr__(tampered_page.page, "returned_product_count", 1)
+    with pytest.raises(RuntimeApiContractError, match="response envelope is invalid"):
+        tampered_page.to_json_bytes()
+
+    tampered_cursor = CatalogResponseEnvelopeV1(_page(_request()), None)
+    object.__setattr__(tampered_cursor, "next_cursor", OPAQUE_CURSOR)
+    with pytest.raises(RuntimeApiContractError, match="response envelope is invalid"):
+        tampered_cursor.to_json_bytes()
+
     good = CatalogResponseEnvelopeV1(_page(_request()), None)
     monkeypatch.setattr(runtime_api, "MAX_RESPONSE_BODY_BYTES", 1)
     with pytest.raises(RuntimeApiContractError):
