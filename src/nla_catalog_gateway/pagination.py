@@ -267,13 +267,17 @@ def _utc_timestamp(value: object) -> str:
     return value.isoformat(timespec="microseconds").replace("+00:00", "Z")
 
 
-def _validate_proof_request(request: object) -> CatalogRequestV1:
+def _validated_request(request: object) -> CatalogRequestV1:
     if type(request) is not CatalogRequestV1:
         raise PaginationContractError("request must be CatalogRequestV1")
     try:
-        canonical = CatalogRequestV1.from_json_bytes(request.to_json_bytes())
+        return CatalogRequestV1.from_json_bytes(request.to_json_bytes())
     except (AttributeError, OverflowError, RecursionError, RuntimeContractError) as exc:
         raise PaginationContractError("request must be canonical CatalogRequestV1") from exc
+
+
+def _validate_proof_request(request: object) -> CatalogRequestV1:
+    canonical = _validated_request(request)
     if canonical.query not in (None, ""):
         raise UnsupportedPaginationRequestError("non-empty search is outside pagination scope")
     if canonical.filters.nonempty:
@@ -383,7 +387,7 @@ class CursorCodecV1:
         now: datetime,
         expected_generation: str | None = None,
     ) -> CursorContextV1:
-        expected_request = _validate_proof_request(expected_request)
+        expected_request = _validated_request(expected_request)
         now_text = _utc_timestamp(now)
         if type(token) is not str or not token or len(token) > MAX_CURSOR_TOKEN_CHARS:
             raise InvalidCursorError("cursor token is invalid")
