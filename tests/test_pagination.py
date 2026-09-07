@@ -415,23 +415,37 @@ def test_paginator_runs_checkpoint_after_projection_and_cursor_encoding(
     )
     page = projection.fetch_page(request, context)
     assert page.next_cursor_context is not None
+    events: list[str] = []
+
+    def fetch_page(*_args: object, **_kwargs: object) -> CatalogPageV1:
+        events.append("fetch")
+        return page
+
+    def encode(*_args: object, **_kwargs: object) -> str:
+        events.append("encode")
+        return "next-cursor"
 
     monkeypatch.setattr(
         CatalogProjection,
         "fetch_page",
-        lambda *_args, **_kwargs: page,
+        fetch_page,
     )
-    monkeypatch.setattr(CursorCodecV1, "encode", lambda *_args, **_kwargs: "next-cursor")
-    calls = 0
+    monkeypatch.setattr(CursorCodecV1, "encode", encode)
 
     def checkpoint() -> None:
-        nonlocal calls
-        calls += 1
+        events.append("checkpoint")
 
     result = _paginator(projection).fetch_page(request, checkpoint=checkpoint)
 
     assert result.next_cursor == "next-cursor"
-    assert calls == 4
+    assert events == [
+        "checkpoint",
+        "checkpoint",
+        "fetch",
+        "checkpoint",
+        "encode",
+        "checkpoint",
+    ]
 
 
 def test_variant_decode_loop_runs_value_free_checkpoint(tmp_path: Path) -> None:
