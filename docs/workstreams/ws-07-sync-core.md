@@ -180,6 +180,31 @@ unresolved/dead-letter counts, retained inbox bytes, delivery/dedupe/conflict/fa
 counters, activations, rollbacks, and full reconciliation installs. They contain no raw payload,
 product data, credentials, or signed URLs.
 
+## Minimal publication handoff
+
+The issue-#11 publication slice now connects one committed `GenerationView` to the existing
+evidence-bound runtime backend without using the pre-commit `activation_probe`. The coordinator
+accepts only a view for a full reconciliation that is byte-identical to an existing
+`VerifiedReconciledGenerationV1`. It first runs the existing catalog-core evidence verifier, then
+builds and reopens a separate immutable SQLite projection. Only after both steps succeed does
+`SyncCore.publish_active_dataset` hold the process lock, re-attest the still-active view, and call
+the backend's conditional atomic activation. The coordinator captures an opaque activation token
+before verification/build; every successful backend activation rotates that token under the same
+lock, so an intervening writer (including an A-to-B-to-A sequence) wins rather than being
+overwritten by the slower publisher. Invalid evidence, a stale view or backend token, projection
+failure, or backend activation failure leaves the most recently activated backend generation
+unchanged. A
+successfully built but unactivated immutable candidate may remain for operator inspection; it is
+never selected implicitly.
+
+There is deliberately no identity conversion. A full-reconciliation view and its projection use
+the same `DatasetManifestV1.dataset_generation`. An incremental view uses the separate
+`nla-catalog-incremental-generation-v1` identity domain and is rejected, because its retained base
+manifest is not evidence for the changed records. Supporting incremental publication requires a
+separately reviewed manifest/evidence contract; this slice does not fabricate one. It also adds no
+webhook transport, queue, persistence, provider, scheduler, deployment, Shopify mutation, theme
+change, or live capability.
+
 ## Reproducible evidence and remaining real gate
 
 Focused author evidence:
