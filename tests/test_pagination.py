@@ -402,6 +402,38 @@ def test_optional_checkpoint_propagates_cancellation_without_returning_a_page(
         paginator.fetch_page(_request(), checkpoint=object())  # type: ignore[arg-type]
 
 
+def test_paginator_runs_checkpoint_after_projection_and_cursor_encoding(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    projection = _projection(tmp_path, (_record("1"), _record("2")))
+    request = _request(page_size=1)
+    context = CursorContextV1.from_request(
+        request,
+        projection.dataset_generation,
+        last_product_gid=None,
+        expires_at="2026-09-02T12:30:00.000000Z",
+    )
+    page = projection.fetch_page(request, context)
+    assert page.next_cursor_context is not None
+
+    monkeypatch.setattr(
+        CatalogProjection,
+        "fetch_page",
+        lambda *_args, **_kwargs: page,
+    )
+    monkeypatch.setattr(CursorCodecV1, "encode", lambda *_args, **_kwargs: "next-cursor")
+    calls = 0
+
+    def checkpoint() -> None:
+        nonlocal calls
+        calls += 1
+
+    result = _paginator(projection).fetch_page(request, checkpoint=checkpoint)
+
+    assert result.next_cursor == "next-cursor"
+    assert calls == 4
+
+
 def test_variant_decode_loop_runs_value_free_checkpoint(tmp_path: Path) -> None:
     projection = _projection(tmp_path, (_record("1"),))
     cancellation = RuntimeError("request cancelled")
@@ -413,6 +445,11 @@ def test_variant_decode_loop_runs_value_free_checkpoint(tmp_path: Path) -> None:
         raise cancellation
 
     with pagination._readonly_connection(projection.path) as connection:
+        variants = CatalogProjection._variant_rows(
+            connection,
+            ("gid://shopify/Product/1",),
+        )
+        assert tuple(variants) == ("gid://shopify/Product/1",)
         with pytest.raises(RuntimeError, match="request cancelled") as captured:
             CatalogProjection._variant_rows(
                 connection,
@@ -431,10 +468,13 @@ def test_sqlite_progress_checkpoint_preserves_exception_and_is_removed(
     cancellation = RuntimeError("request cancelled")
     inside_sql = False
     progress_events: list[tuple[bool, int]] = []
+    progress_results: list[int] = []
 
     class TrackingConnection(sqlite3.Connection):
         def set_progress_handler(self, progress_handler: Callable[[], int] | None, n: int) -> None:
             progress_events.append((progress_handler is not None, n))
+            if progress_handler is not None:
+                progress_results.append(progress_handler())
             super().set_progress_handler(progress_handler, n)
 
     original_connect = sqlite3.connect
@@ -488,6 +528,7 @@ def test_sqlite_progress_checkpoint_preserves_exception_and_is_removed(
         (True, pagination._SQLITE_PROGRESS_VM_STEPS),
         (False, 0),
     ]
+    assert progress_results == [0]
 
 
 def test_complete_traversal_over_30000_products_has_no_gap_or_duplicate(
