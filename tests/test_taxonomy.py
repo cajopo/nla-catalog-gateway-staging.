@@ -56,7 +56,7 @@ def test_default_aliases_normalize_all_supported_games(alias: str, expected: Gam
     result = classify_product(_single(explicit_game=alias), load_taxonomy())
     assert result.game is expected
     assert result.family is ProductFamily.SINGLE
-    assert result.rule_version == "2026-09-01.1"
+    assert result.rule_version == "2026-09-07.1"
     assert result.rule_id == "source-record-type:single"
     assert result.reason is None
 
@@ -71,7 +71,7 @@ def test_serialized_game_values_round_trip_as_explicit_game(game: Game) -> None:
 def test_default_config_is_immutable_and_versioned() -> None:
     config = load_taxonomy()
     assert config.schema_version == 1
-    assert config.rule_version == "2026-09-01.1"
+    assert config.rule_version == "2026-09-07.1"
     with pytest.raises(TypeError):
         config.game_aliases["new"] = Game.MAGIC  # type: ignore[index]
 
@@ -83,7 +83,7 @@ def test_classification_serialization_includes_rule_or_reason() -> None:
         "game": "magic",
         "productFamily": "single",
         "productSubtype": None,
-        "classificationRuleVersion": "2026-09-01.1",
+        "classificationRuleVersion": "2026-09-07.1",
         "classificationRuleId": "source-record-type:single",
         "unclassifiedReason": None,
         "subtypeRuleId": None,
@@ -92,7 +92,7 @@ def test_classification_serialization_includes_rule_or_reason() -> None:
     unclassified = classify_product(ProductFacts("gid://shopify/Product/2"), load_taxonomy())
     payload = unclassified.as_dict()
     assert payload["game"] is None
-    assert payload["classificationRuleVersion"] == "2026-09-01.1"
+    assert payload["classificationRuleVersion"] == "2026-09-07.1"
     assert payload["classificationRuleId"] is None
     assert payload["unclassifiedReason"] == "missing_game_signal"
 
@@ -164,6 +164,35 @@ def test_new_gid_with_known_product_type_is_classified_without_an_id_rule() -> N
 
 
 @pytest.mark.parametrize(
+    ("product_type", "expected_game", "expected_rule_id"),
+    [
+        ("Magic Single", Game.MAGIC, "product-type:magic-single"),
+        ("Pokémon Single", Game.POKEMON, "product-type:pokemon-single"),
+        ("Yu-Gi-Oh! Single", Game.YUGIOH, "product-type:yu-gi-oh-single"),
+        ("Yugioh Single", Game.YUGIOH, "product-type:yugioh-single"),
+        ("One Piece Single", Game.ONE_PIECE, "product-type:one-piece-single"),
+    ],
+)
+def test_observed_single_product_types_classify_from_structured_type_only(
+    product_type: str,
+    expected_game: Game,
+    expected_rule_id: str,
+) -> None:
+    result = classify_product(
+        _single(
+            product_type=product_type,
+            explicit_game=None,
+            source_record_type=None,
+        ),
+        load_taxonomy(),
+    )
+    assert (result.game, result.family) == (expected_game, ProductFamily.SINGLE)
+    assert result.rule_version == "2026-09-07.1"
+    assert result.rule_id == expected_rule_id
+    assert result.reason is None
+
+
+@pytest.mark.parametrize(
     ("facts", "reason"),
     [
         (ProductFacts("gid://shopify/Product/10"), "missing_game_signal"),
@@ -215,7 +244,7 @@ def test_unknown_missing_and_conflicting_signals_are_unclassified(
 ) -> None:
     result = classify_product(facts, load_taxonomy())
     assert result.family is ProductFamily.UNCLASSIFIED
-    assert result.rule_version == "2026-09-01.1"
+    assert result.rule_version == "2026-09-07.1"
     assert result.rule_id is None
     assert result.reason == reason
     assert result.subtype is None
@@ -382,7 +411,7 @@ def test_catalog_report_accounts_for_every_record_and_rule() -> None:
     classifications, report = classify_catalog(iter(products), load_taxonomy())
     assert len(classifications) == report.total == report.classified + report.unclassified == 3
     assert report.as_dict() == {
-        "classificationRuleVersion": "2026-09-01.1",
+        "classificationRuleVersion": "2026-09-07.1",
         "total": 3,
         "classified": 2,
         "unclassified": 1,
@@ -404,7 +433,7 @@ def test_empty_catalog_has_a_reconciled_empty_report() -> None:
     classifications, report = classify_catalog([], load_taxonomy())
     assert classifications == ()
     assert report.as_dict() == {
-        "classificationRuleVersion": "2026-09-01.1",
+        "classificationRuleVersion": "2026-09-07.1",
         "total": 0,
         "classified": 0,
         "unclassified": 0,
