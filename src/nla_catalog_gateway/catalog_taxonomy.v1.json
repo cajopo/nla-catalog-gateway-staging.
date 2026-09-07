@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "classificationRuleVersion": "2026-09-01.1",
+  "classificationRuleVersion": "2026-09-07.1",
   "gameAliases": {
     "magic": "magic",
     "magic: the gathering": "magic",
@@ -17,6 +17,31 @@
       "id": "product-type:magic-display",
       "game": "magic",
       "productFamily": "sealed"
+    },
+    "Magic Single": {
+      "id": "product-type:magic-single",
+      "game": "magic",
+      "productFamily": "single"
+    },
+    "Pokémon Single": {
+      "id": "product-type:pokemon-single",
+      "game": "pokemon",
+      "productFamily": "single"
+    },
+    "Yu-Gi-Oh! Single": {
+      "id": "product-type:yu-gi-oh-single",
+      "game": "yugioh",
+      "productFamily": "single"
+    },
+    "Yugioh Single": {
+      "id": "product-type:yugioh-single",
+      "game": "yugioh",
+      "productFamily": "single"
+    },
+    "One Piece Single": {
+      "id": "product-type:one-piece-single",
+      "game": "one-piece",
+      "productFamily": "single"
     }
   },
   "sourceRecordTypes": {
