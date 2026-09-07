@@ -333,6 +333,11 @@ def _search_prepared_index(
         context="query",
         maximum=MAX_QUERY_CODEPOINTS,
     )
+    for expected_game, game_index in zip(Game, game_indexes, strict=True):
+        if checkpoint is not None:
+            checkpoint()
+        if type(game_index) is not _GameSingleCardIndex or game_index.game is not expected_game:
+            raise CanonicalSearchError("prepared search index is invalid")
     if not normalized_query:
         return SingleCardSearchResult(
             mode=SearchMode.BROWSE,
@@ -343,11 +348,6 @@ def _search_prepared_index(
             suggestions=(),
         )
 
-    for expected_game, game_index in zip(Game, game_indexes, strict=True):
-        if checkpoint is not None:
-            checkpoint()
-        if type(game_index) is not _GameSingleCardIndex or game_index.game is not expected_game:
-            raise CanonicalSearchError("prepared search index is invalid")
     selected_game_index = game_indexes[tuple(Game).index(checked_game)]
     return _search_game_index(
         selected_game_index,
