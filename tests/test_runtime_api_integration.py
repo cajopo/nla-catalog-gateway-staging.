@@ -235,6 +235,64 @@ def test_proxy_authorizer_rejects_invalid_dependency_and_untrusted_outputs(
         adapter.verify(raw_query=b"redacted", request_path="/proxy/catalog", control=_control())
 
 
+def test_proxy_authorizer_seals_its_verified_instance_and_composition_binding(
+    tmp_path: Path,
+) -> None:
+    verifier = proxy_helpers._verifier()
+    adapter = AppProxyVerifierAuthorizer(verifier)
+
+    class PermissiveVerifier:
+        def verify(self, **_kwargs: Any) -> Any:
+            return runtime_api.VerifiedAppProxyRequest(
+                proxy_helpers._TEST_SHOP,
+                proxy_helpers._STOREFRONT_PREFIX,
+            )
+
+    with pytest.raises(AttributeError):
+        adapter._verifier = PermissiveVerifier()  # type: ignore[attr-defined]
+    with pytest.raises(AttributeError):
+        object.__setattr__(adapter, "_verifier", PermissiveVerifier())
+
+    replacement = proxy_helpers._verifier(
+        config=proxy_helpers._config(shared_secret=b"replacement-key"),
+    )
+    with pytest.raises(RuntimeApiContractError, match="already bound"):
+        adapter.__init__(replacement)
+
+    identity = adapter.verify(
+        raw_query=proxy_helpers._signed_query(),
+        request_path="/proxy/catalog",
+        control=_control(),
+    )
+    assert identity.shop_domain == proxy_helpers._TEST_SHOP
+
+    case = _bound_case(tmp_path, "sealed-authorizer", evidence_helpers._records(), "a" * 64)
+    assert runtime_api._runtime_composition_is_evidence_bound(
+        adapter,
+        case.backend,
+        case.gate,
+    )
+
+    unbound = object.__new__(AppProxyVerifierAuthorizer)
+    assert runtime_api._bound_app_proxy_verifier(object()) is None
+    with pytest.raises(RuntimeApiContractError, match="verifier is invalid"):
+        runtime_api._register_authorizer_verifier(  # type: ignore[arg-type]
+            unbound,
+            object(),
+        )
+    assert not runtime_api._runtime_composition_is_evidence_bound(
+        unbound,
+        case.backend,
+        case.gate,
+    )
+    with pytest.raises(ProxyVerifierUnavailable):
+        unbound.verify(
+            raw_query=proxy_helpers._signed_query(),
+            request_path="/proxy/catalog",
+            control=_control(),
+        )
+
+
 def test_bound_backend_browses_searches_and_filters_real_synthetic_catalog(
     tmp_path: Path,
 ) -> None:

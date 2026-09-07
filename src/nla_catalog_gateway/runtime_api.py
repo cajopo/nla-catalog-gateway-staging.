@@ -16,6 +16,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from types import MappingProxyType
 from typing import Any, Protocol
+from weakref import WeakKeyDictionary
 
 from nla_catalog_gateway.app_proxy_security import (
     AppProxyConfigurationError,
@@ -158,6 +159,33 @@ class CatalogBackendFailure(Exception):
 
 class _OutputContractFailure(Exception):
     """An adapter returned an object that cannot be exposed safely."""
+
+
+def _make_authorizer_verifier_registry() -> tuple[
+    Callable[[object, AppProxyVerifier], None],
+    Callable[[object], AppProxyVerifier | None],
+]:
+    """Create a closure-owned, identity-keyed, one-write verifier registry."""
+
+    bindings: WeakKeyDictionary[object, AppProxyVerifier] = WeakKeyDictionary()
+    lock = threading.Lock()
+
+    def register(authorizer: object, verifier: AppProxyVerifier) -> None:
+        if type(verifier) is not AppProxyVerifier:
+            raise RuntimeApiContractError("App Proxy verifier is invalid")
+        with lock:
+            if authorizer in bindings:
+                raise RuntimeApiContractError("App Proxy verifier is already bound")
+            bindings[authorizer] = verifier
+
+    def lookup(authorizer: object) -> AppProxyVerifier | None:
+        with lock:
+            return bindings.get(authorizer)
+
+    return register, lookup
+
+
+_register_authorizer_verifier, _lookup_authorizer_verifier = _make_authorizer_verifier_registry()
 
 
 @dataclass(frozen=True, slots=True)
@@ -372,12 +400,12 @@ class FailClosedCapabilityGate:
 class AppProxyVerifierAuthorizer:
     """Adapt the accepted App Proxy verifier without exposing signed query values."""
 
-    __slots__ = ("_verifier",)
+    __slots__ = ("__weakref__",)
 
     def __init__(self, verifier: AppProxyVerifier) -> None:
-        if type(verifier) is not AppProxyVerifier:
+        if type(self) is not AppProxyVerifierAuthorizer or type(verifier) is not AppProxyVerifier:
             raise RuntimeApiContractError("App Proxy verifier is invalid")
-        self._verifier = verifier
+        _register_authorizer_verifier(self, verifier)
 
     def verify(
         self,
@@ -387,10 +415,13 @@ class AppProxyVerifierAuthorizer:
         control: RequestControl,
     ) -> VerifiedProxyIdentity:
         control.checkpoint()
+        verifier = _bound_app_proxy_verifier(self)
+        if verifier is None:
+            raise ProxyVerifierUnavailable
         failure: str | None = None
         verified: VerifiedAppProxyRequest | None = None
         try:
-            verified = self._verifier.verify(
+            verified = verifier.verify(
                 raw_query=raw_query,
                 request_path=request_path,
             )
@@ -1175,12 +1206,20 @@ def _runtime_composition_is_evidence_bound(
     try:
         return (
             type(authorizer) is AppProxyVerifierAuthorizer
+            and _bound_app_proxy_verifier(authorizer) is not None
             and type(backend) is EvidenceBoundCatalogBackend
             and type(capability_gate) is EvidenceBoundCapabilityGate
             and capability_gate._backend_token is backend._token
         )
     except Exception:
         return False
+
+
+def _bound_app_proxy_verifier(authorizer: object) -> AppProxyVerifier | None:
+    if type(authorizer) is not AppProxyVerifierAuthorizer:
+        return None
+    verifier = _lookup_authorizer_verifier(authorizer)
+    return verifier if type(verifier) is AppProxyVerifier else None
 
 
 def _duplicate_key(_pairs: list[tuple[str, Any]]) -> dict[str, Any]:
