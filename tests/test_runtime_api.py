@@ -783,6 +783,25 @@ def test_non_evidence_composition_cannot_be_bypassed_by_allow_all_adapters() -> 
     assert backend.calls == 0
 
 
+def test_nonexecutable_request_is_denied_before_the_capability_gate(
+    monkeypatch: pytest.MonkeyPatch,
+    test_capabilities: None,
+) -> None:
+    def reject(_self: CatalogRequestV1) -> None:
+        raise runtime_api.RuntimeContractError("fixed")
+
+    monkeypatch.setattr(CatalogRequestV1, "require_executable", reject)
+    lease = _Lease(CatalogLeaseResult(_page(_request()), None))
+    gate = _Gate()
+
+    response = _service(lease, gate=gate).catalog(_http_request())
+
+    assert response.status == 503
+    assert _error(response).code is CatalogErrorCode.UNSUPPORTED_CAPABILITY
+    assert not gate.catalog_calls
+    assert lease.close_calls == 1
+
+
 def test_default_service_components_never_expose_catalog_output() -> None:
     request = _http_request()
     assert _error(
@@ -1319,6 +1338,19 @@ def test_liveness_is_process_only_and_never_touches_dependencies() -> None:
 def test_readiness_is_false_under_frozen_contract_without_backend_access() -> None:
     backend = _Backend(RuntimeError("must not run"))
     response = _service(backend=backend).readiness()
+    assert response.status == 503
+    assert json.loads(response.body)["status"] == "not_ready"
+    assert backend.calls == 0
+
+
+def test_frozen_output_contract_blocks_evidence_shaped_readiness_before_backend(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    backend = _Backend(RuntimeError("must not run"))
+    monkeypatch.setattr(runtime_api, "_runtime_composition_is_evidence_bound", lambda *_: True)
+
+    response = _service(backend=backend).readiness()
+
     assert response.status == 503
     assert json.loads(response.body)["status"] == "not_ready"
     assert backend.calls == 0

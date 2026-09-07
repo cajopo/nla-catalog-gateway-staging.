@@ -194,6 +194,47 @@ def test_proxy_authorizer_uses_real_verifier_and_value_free_error_mapping(
     assert internal_error.value.__context__ is None
 
 
+def test_proxy_authorizer_rejects_invalid_dependency_and_untrusted_outputs(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    with pytest.raises(RuntimeApiContractError):
+        AppProxyVerifierAuthorizer(object())  # type: ignore[arg-type]
+
+    verifier = proxy_helpers._verifier()
+    adapter = AppProxyVerifierAuthorizer(verifier)
+
+    def wrong_output(
+        _self: AppProxyVerifier,
+        *,
+        raw_query: bytes,
+        request_path: str,
+    ) -> object:
+        del raw_query, request_path
+        return object()
+
+    monkeypatch.setattr(AppProxyVerifier, "verify", wrong_output)
+    with pytest.raises(ProxyVerifierUnavailable):
+        adapter.verify(raw_query=b"redacted", request_path="/proxy/catalog", control=_control())
+
+    invalid_verified = runtime_api.VerifiedAppProxyRequest(
+        "invalid.example.com",
+        "/proxy/catalog",
+    )
+
+    def invalid_identity(
+        _self: AppProxyVerifier,
+        *,
+        raw_query: bytes,
+        request_path: str,
+    ) -> Any:
+        del raw_query, request_path
+        return invalid_verified
+
+    monkeypatch.setattr(AppProxyVerifier, "verify", invalid_identity)
+    with pytest.raises(ProxyVerifierUnavailable):
+        adapter.verify(raw_query=b"redacted", request_path="/proxy/catalog", control=_control())
+
+
 def test_bound_backend_browses_searches_and_filters_real_synthetic_catalog(
     tmp_path: Path,
 ) -> None:
@@ -247,6 +288,66 @@ def test_bound_backend_browses_searches_and_filters_real_synthetic_catalog(
     assert closed.value.code is CatalogErrorCode.DATASET_UNAVAILABLE
 
 
+def test_bound_backend_rejects_invalid_construction_control_and_typed_failures(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    case = _bound_case(tmp_path, "backend-guards", evidence_helpers._records(), "a" * 64)
+    control = _control()
+    lease = case.backend.acquire(control=control)
+    assert lease.shop_domain == bundle_helpers.SHOP
+
+    with pytest.raises(RuntimeApiContractError):
+        EvidenceBoundCatalogBackend(
+            case.verified,
+            case.projection,
+            case.codec,
+            case.evidence,
+            expected_code_sha="invalid",
+        )
+    with pytest.raises(CatalogBackendFailure) as invalid_acquire:
+        case.backend.acquire(control=object())  # type: ignore[arg-type]
+    assert invalid_acquire.value.code is CatalogErrorCode.TEMPORARILY_UNAVAILABLE
+    with pytest.raises(CatalogBackendFailure) as invalid_fetch:
+        lease.fetch_page(_request(), None, control=object())  # type: ignore[arg-type]
+    assert invalid_fetch.value.code is CatalogErrorCode.TEMPORARILY_UNAVAILABLE
+    with pytest.raises(RuntimeApiContractError):
+        EvidenceBoundCapabilityGate(object())  # type: ignore[arg-type]
+    assert case.gate.ready(object(), control=control) is False  # type: ignore[arg-type]
+
+    closed: list[Any] = []
+    original_close = runtime_api.EvidenceBoundCatalogLease.close
+
+    def tracked_close(self: Any) -> None:
+        closed.append(self)
+        original_close(self)
+
+    monkeypatch.setattr(runtime_api.EvidenceBoundCatalogLease, "close", tracked_close)
+    ticks = iter((0, 10))
+    expiring = RequestControl(10, RequestCancellation(), lambda: next(ticks))
+    with pytest.raises(runtime_api.RequestDeadlineExceeded):
+        case.backend.acquire(control=expiring)
+    assert len(closed) == 1
+
+    def typed_failure(*_args: Any, **_kwargs: Any) -> Any:
+        raise CatalogBackendFailure(CatalogErrorCode.DATASET_UNAVAILABLE)
+
+    monkeypatch.setattr(runtime_api, "_fetch_evidence_bound_page", typed_failure)
+    with pytest.raises(CatalogBackendFailure) as typed:
+        lease.fetch_page(_request(), None, control=control)
+    assert typed.value.code is CatalogErrorCode.DATASET_UNAVAILABLE
+
+    uninitialized_gate = object.__new__(EvidenceBoundCapabilityGate)
+    assert (
+        runtime_api._runtime_composition_is_evidence_bound(
+            AppProxyVerifierAuthorizer(proxy_helpers._verifier()),
+            case.backend,
+            uninitialized_gate,
+        )
+        is False
+    )
+
+
 def test_invalid_query_cursor_is_rejected_before_search_scan(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -265,6 +366,142 @@ def test_invalid_query_cursor_is_rejected_before_search_scan(
             control=_control(),
         )
     assert invalid.value.code is CatalogErrorCode.INVALID_CURSOR
+
+
+def test_evidence_generation_constructor_rejects_each_malformed_boundary(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    case = _bound_case(tmp_path, "constructor-guards", evidence_helpers._records(), "a" * 64)
+    generation = case.verified.generation
+    parts = generation.source_manifest.parts
+
+    def verified_with_parts(candidate_parts: tuple[Any, ...]) -> VerifiedReconciledGenerationV1:
+        source = replace(generation.source_manifest, parts=candidate_parts)
+        candidate = replace(generation, source_manifest=source)
+        return VerifiedReconciledGenerationV1(candidate, case.verified.summary_sha256)
+
+    def construct(
+        verified: Any = case.verified,
+        projection: Any = case.projection,
+    ) -> Any:
+        return runtime_api._new_evidence_bound_generation(
+            verified,
+            projection,
+            case.codec,
+            case.evidence,
+            expected_code_sha=CODE_SHA,
+            clock=lambda: CURSOR_NOW,
+        )
+
+    with pytest.raises(RuntimeApiContractError):
+        construct(verified=object())
+    with pytest.raises(RuntimeApiContractError):
+        construct(verified=verified_with_parts((parts[0],)))
+
+    foreign = bundle_helpers._replace_part_manifest(
+        parts[1],
+        shop_domain="foreign.myshopify.com",
+    )
+    with pytest.raises(RuntimeApiContractError):
+        construct(verified=verified_with_parts((parts[0], foreign)))
+
+    forged_fingerprint = replace(
+        case.projection._file_fingerprint,
+        content_sha256="0" * 64,
+    )
+    forged_projection = replace(case.projection, _file_fingerprint=forged_fingerprint)
+    with pytest.raises(RuntimeApiContractError):
+        construct(projection=forged_projection)
+
+    def broken_open(*_args: Any, **_kwargs: Any) -> Any:
+        raise RuntimeError("sensitive")
+
+    monkeypatch.setattr(CatalogProjection, "open", broken_open)
+    with pytest.raises(RuntimeApiContractError) as unexpected:
+        construct()
+    assert unexpected.value.__cause__ is None
+
+
+def test_current_evidence_binding_rejects_malformed_and_unreadable_state(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    case = _bound_case(tmp_path, "current-binding", evidence_helpers._records(), "a" * 64)
+    active = case.backend._active
+    assert runtime_api._evidence_binding_is_current(object()) is False
+    assert runtime_api._evidence_binding_is_current(replace(active, cursor_codec=object())) is False
+
+    generation = active.verified.generation
+    source = replace(generation.source_manifest, parts=(generation.source_manifest.parts[0],))
+    malformed = VerifiedReconciledGenerationV1(
+        replace(generation, source_manifest=source),
+        active.verified.summary_sha256,
+    )
+    assert runtime_api._evidence_binding_is_current(replace(active, verified=malformed)) is False
+
+    def unreadable(_self: CatalogProjection) -> None:
+        raise RuntimeError("sensitive")
+
+    monkeypatch.setattr(CatalogProjection, "_assert_file_unchanged", unreadable)
+    assert runtime_api._evidence_binding_is_current(active) is False
+
+
+def test_runtime_private_validators_and_execution_error_mapping_are_total(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def invalid_normalization(_query: str) -> str:
+        raise runtime_api.CanonicalSearchError("fixed")
+
+    monkeypatch.setattr(runtime_api, "normalize_search_text", invalid_normalization)
+    with pytest.raises(RuntimeApiContractError):
+        runtime_api._validate_query_bound("query")
+    for gid in (object(), "gid://shopify/Product/0"):
+        with pytest.raises(RuntimeApiContractError):
+            runtime_api._product_gid_key(gid)  # type: ignore[arg-type]
+
+    assert runtime_api._canonical_request(object()) is False
+    malformed_request = _request()
+    object.__setattr__(malformed_request, "page_size", 0)
+    assert runtime_api._canonical_request(malformed_request) is False
+
+    cases = (
+        (runtime_api.CursorContextMismatchError("fixed"), CatalogErrorCode.CURSOR_CONTEXT_MISMATCH),
+        (runtime_api.DatasetUnavailableError("fixed"), CatalogErrorCode.DATASET_UNAVAILABLE),
+        (
+            runtime_api.UnsupportedPaginationRequestError("fixed"),
+            CatalogErrorCode.UNSUPPORTED_CAPABILITY,
+        ),
+        (runtime_api.CanonicalSearchError("fixed"), CatalogErrorCode.DATASET_UNAVAILABLE),
+        (runtime_api.FacetContractError("fixed"), CatalogErrorCode.DATASET_UNAVAILABLE),
+        (runtime_api.RuntimeContractError("fixed"), CatalogErrorCode.DATASET_UNAVAILABLE),
+        (runtime_api.PaginationContractError("fixed"), CatalogErrorCode.TEMPORARILY_UNAVAILABLE),
+        (RuntimeError("fixed"), CatalogErrorCode.TEMPORARILY_UNAVAILABLE),
+    )
+    for error, expected in cases:
+        assert runtime_api._catalog_execution_error_code(error) is expected
+
+
+def test_whitespace_search_uses_game_scoped_browse_and_noncanonical_input_is_denied(
+    tmp_path: Path,
+) -> None:
+    case = _bound_case(tmp_path, "browse", evidence_helpers._records(), "a" * 64)
+    control = _control()
+    lease = case.backend.acquire(control=control)
+
+    request = _request(family=RequestFamily.SINGLE, query=" \t ", page_size=2)
+    first = lease.fetch_page(request, None, control=control)
+    assert _gids(first) == ("gid://shopify/Product/1", "gid://shopify/Product/2")
+    assert first.next_cursor is not None
+
+    with pytest.raises(CatalogBackendFailure) as denied:
+        runtime_api._fetch_evidence_bound_page(
+            case.backend._active,
+            object(),  # type: ignore[arg-type]
+            None,
+            control=control,
+        )
+    assert denied.value.code is CatalogErrorCode.UNSUPPORTED_CAPABILITY
 
 
 def test_activation_pins_old_lease_and_rejects_old_cursor_on_new_generation(
