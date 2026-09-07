@@ -28,7 +28,10 @@ def _store(tmp_path: Path) -> SimpleNamespace:
     generations = root / staging_activation.GENERATIONS_DIRECTORY
     generations.mkdir()
     destination = generations / package.manifest_sha256
+    # POSIX cross-parent directory renames require a writable source directory.
+    package.directory.chmod(stat.S_IRWXU)
     os.rename(package.directory, destination)
+    destination.chmod(staging_helpers.package_staging_generation._READ_ONLY_DIRECTORY_MODE)
     pin = staging_activation.promote_staging_generation(
         root,
         package.manifest_sha256,

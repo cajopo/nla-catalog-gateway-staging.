@@ -14,7 +14,7 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
-from scripts import manage_staging_activation
+from scripts import manage_staging_activation, package_staging_generation
 
 import test_generation_bundle as bundle_helpers
 import test_staging_generation as staging_helpers
@@ -41,7 +41,11 @@ def _install_generation(tmp_path: Path, root: Path, code_character: str) -> Simp
         report["bindings"]["codeSha"] = code_character * 40
         package.manifest_sha256 = staging_helpers._rewrite_report(package.directory, report)
     destination = root / staging_activation.GENERATIONS_DIRECTORY / package.manifest_sha256
+    # A cross-parent directory rename needs the package directory to be writable
+    # on POSIX.  The installed fixture still models the immutable package.
+    package.directory.chmod(stat.S_IRWXU)
     os.rename(package.directory, destination)
+    destination.chmod(package_staging_generation._READ_ONLY_DIRECTORY_MODE)
     package.directory = destination
     return package
 
@@ -636,7 +640,12 @@ def test_secure_lock_open_covers_posix_and_windows_failure_cleanup(
     close_handle = FakeFunction(1)
     kernel32 = SimpleNamespace(CreateFileW=create_file, CloseHandle=close_handle)
     with monkeypatch.context() as context:
-        context.setattr(staging_activation.ctypes, "WinDLL", lambda *_args, **_kwargs: kernel32)
+        context.setattr(
+            staging_activation.ctypes,
+            "WinDLL",
+            lambda *_args, **_kwargs: kernel32,
+            raising=False,
+        )
         with pytest.raises(OSError):
             staging_activation._windows_create_lock_handle(tmp_path / "reparse")
         staging_activation._windows_close_handle(123)
