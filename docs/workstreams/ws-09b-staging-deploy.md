@@ -35,10 +35,12 @@ Official references checked on 2026-09-06:
 Application releases never contain a Shopify snapshot or generated catalog database. The
 Windows authorized runner remains the only producer allowed to open the reconciled #47 bundle.
 `scripts/package_staging_generation.py` performs the real-core proof implemented by commit
-`cd24939`; its PR/merge evidence and execution against the current canonical bundle remain
-pending. The script rebuilds the same deterministic SQLite projection, requires the projection
-fingerprint to match, and creates an immutable external package. It prints only
-`VALUE_FREE_RESULT: ACCEPTED|REJECTED`.
+`cd24939`. On 2026-09-07 its protected execution against the current canonical generation
+completed with `VALUE_FREE_RESULT: ACCEPTED`: it proved 291,795 Products and 293,866 Variants,
+rebuilt the same deterministic SQLite projection, matched the projection fingerprint, published
+the immutable external package atomically, and reopened the installed package. No generation was
+activated. The code PR/merge, transfer to the designated operator runner, and a reopen from that
+separate runner remain pending.
 
 The Linux service consumes only these three externally transferred files:
 
@@ -145,6 +147,15 @@ This is not yet a disk-size decision. The exact portable projection/package size
 peak, two retained generations, rollback copy, logs, and safety margin still need measurement on
 the real package. A Blueprint must not select or create a paid disk until that measurement and
 the recurring cost are presented to Jacopo.
+
+The protected 2026-09-07 run measured the deterministic SQLite projection at exactly
+851,685,376 bytes. Periodic process sampling observed at least 1,312.6 MiB working set; this is a
+lower bound, not an instrumented peak. Two projection copies alone therefore require
+1,703,370,752 bytes before manifests, evidence, filesystem overhead, logs, and safety margin.
+The final package stayed outside Git as required, but the successor sandbox could not traverse
+the protected temporary directory created by the originating job. Consequently its exact total
+size and cross-runner transfer/reopen are not claimed here and must be repeated on the designated
+operator runner before any paid-disk decision.
 
 ## Required remaining evidence
 
