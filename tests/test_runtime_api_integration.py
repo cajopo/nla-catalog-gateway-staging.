@@ -489,6 +489,7 @@ def test_current_evidence_binding_rejects_malformed_and_unreadable_state(
     active = case.backend._active
     assert runtime_api._evidence_binding_is_current(object()) is False
     assert runtime_api._evidence_binding_is_current(replace(active, cursor_codec=object())) is False
+    assert runtime_api._evidence_binding_is_current(replace(active, facets=object())) is False
 
     generation = active.verified.generation
     source = replace(generation.source_manifest, parts=(generation.source_manifest.parts[0],))
@@ -681,13 +682,13 @@ def test_runtime_paths_propagate_identical_cancellation(
         monkeypatch.setattr(runtime_api, "search_single_cards", entering_search)
         request = _request(family=RequestFamily.SINGLE, query="Shared magic")
     elif phase == "facets":
-        original_facets = runtime_api.evaluate_facets
+        original_facets = runtime_api.PreparedFacetCatalog.evaluate
 
         def entering_facets(*args: Any, **kwargs: Any) -> Any:
             trigger.active = True
             return original_facets(*args, **kwargs)
 
-        monkeypatch.setattr(runtime_api, "evaluate_facets", entering_facets)
+        monkeypatch.setattr(runtime_api.PreparedFacetCatalog, "evaluate", entering_facets)
         request = _request(in_stock=True)
     else:
         original_rows = CatalogProjection._product_rows

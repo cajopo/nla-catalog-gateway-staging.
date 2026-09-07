@@ -129,13 +129,14 @@ terminal state, and opaque-cursor presence to remain consistent. A concurrent ba
 cannot cause a second selection within the request.
 
 Browse requests without `q` or filters, including a concrete family, use
-`CatalogPaginator` and its SQLite Product-GID keyset. Search uses `search_single_cards`; search and
-filter results are composed through `evaluate_facets`, then paged as an immutable tuple by the same
-numeric Product-GID keyset. `CursorCodecV1` binds the full request, generation, final Product GID,
-expiry, endpoint, and contract version under HMAC. Query/filter cursors are authenticated before
-running either in-memory oracle, so invalid input cannot force a catalog scan. No path uses
-`OFFSET`. Facet counts and search suggestions remain internal in this slice; the wire response is
-only the canonical page plus opaque cursor.
+`CatalogPaginator` and its SQLite Product-GID keyset. A generation prepares the accepted facet
+catalog once during activation; request-time filtering calls that same #10 interface without
+rebuilding or serializing the complete Variant graph. Search results and prepared facet results
+are paged as an immutable tuple by the same numeric Product-GID keyset. `CursorCodecV1` binds the
+full request, generation, final Product GID, expiry, endpoint, and contract version under HMAC.
+Query/filter cursors are authenticated before running either accepted engine, so invalid input
+cannot force a catalog scan. No path uses `OFFSET`. Facet counts and search suggestions remain
+internal in this slice; the wire response is only the canonical page plus opaque cursor.
 
 Errors are serialized only through the frozen `CatalogErrorV1` messages. Request values,
 exception text, SQL, paths, secrets, and signed query material are never copied into the response.

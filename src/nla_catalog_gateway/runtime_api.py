@@ -31,7 +31,7 @@ from nla_catalog_gateway.canonical_search import (
     search_single_cards,
 )
 from nla_catalog_gateway.core_evidence import VerifiedCatalogCoreEvidenceV1
-from nla_catalog_gateway.facets import FacetContractError, evaluate_facets
+from nla_catalog_gateway.facets import FacetContractError, PreparedFacetCatalog
 from nla_catalog_gateway.generation_bundle import VerifiedReconciledGenerationV1
 from nla_catalog_gateway.pagination import (
     AtomicCatalogActivation,
@@ -457,6 +457,7 @@ class _EvidenceBoundGeneration:
     evidence: VerifiedCatalogCoreEvidenceV1 = field(repr=False)
     records: tuple[CatalogProductRecordV1, ...] = field(repr=False)
     items: tuple[CatalogItemV1, ...] = field(repr=False)
+    facets: PreparedFacetCatalog = field(repr=False, compare=False)
     paginator: CatalogPaginator = field(repr=False)
     clock: Callable[[], datetime] = field(repr=False, compare=False)
     binding: tuple[str, str, str, str, str, str] = field(repr=False)
@@ -1529,6 +1530,7 @@ def _new_evidence_bound_generation(
             codec,
             clock=clock,
         )
+        facets = PreparedFacetCatalog(tuple(public_items))
         return _EvidenceBoundGeneration(
             verified=checked,
             projection=reopened,
@@ -1536,6 +1538,7 @@ def _new_evidence_bound_generation(
             evidence=evidence,
             records=records,
             items=tuple(public_items),
+            facets=facets,
             paginator=paginator,
             clock=clock,
             binding=binding,
@@ -1558,6 +1561,7 @@ def _evidence_binding_is_current(generation: _EvidenceBoundGeneration) -> bool:
             or type(projection) is not CatalogProjection
             or type(generation.cursor_codec) is not CursorCodecV1
             or type(evidence) is not VerifiedCatalogCoreEvidenceV1
+            or type(generation.facets) is not PreparedFacetCatalog
             or type(generation.paginator) is not CatalogPaginator
         ):
             return False
@@ -1651,8 +1655,7 @@ def _fetch_evidence_bound_page(
                 control.checkpoint()
                 hit_gids.append(hit.product_gid)
             query_product_gids = tuple(hit_gids)
-    evaluation = evaluate_facets(
-        generation.items,
+    evaluation = generation.facets.evaluate(
         request,
         query_product_gids=query_product_gids,
         checkpoint=control.checkpoint,
