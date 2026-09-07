@@ -143,19 +143,16 @@ The protected source capture retained outside Git currently measures:
 - variants JSONL: 317,704,228 bytes;
 - total source capture: 844,498,426 bytes.
 
-This is not yet a disk-size decision. The exact portable projection/package size, temporary build
-peak, two retained generations, rollback copy, logs, and safety margin still need measurement on
-the real package. A Blueprint must not select or create a paid disk until that measurement and
-the recurring cost are presented to Jacopo.
+This is not yet a disk-size decision. The temporary build peak, filesystem overhead, logs, and
+safety margin still need measurement around the real package. A Blueprint must not select or
+create a paid disk until that measurement and the recurring cost are presented to Jacopo.
 
 The protected 2026-09-07 run measured the deterministic SQLite projection at exactly
-851,685,376 bytes. Periodic process sampling observed at least 1,312.6 MiB working set; this is a
-lower bound, not an instrumented peak. Two projection copies alone therefore require
-1,703,370,752 bytes before manifests, evidence, filesystem overhead, logs, and safety margin.
-The final package stayed outside Git as required, but the successor sandbox could not traverse
-the protected temporary directory created by the originating job. Consequently its exact total
-size and cross-runner transfer/reopen are not claimed here and must be repeated on the designated
-operator runner before any paid-disk decision.
+851,685,376 bytes and the complete three-file package at 851,686,507 bytes. Periodic process
+sampling observed at least 1,312.6 MiB working set; this is a lower bound, not an instrumented
+peak. Two retained packages therefore require 1,703,373,014 bytes before filesystem overhead,
+logs, and safety margin. The package stayed outside Git as required. Its transfer and reopen on
+the designated operator runner remain pending and must precede any paid-disk decision.
 
 ## Required remaining evidence
 
