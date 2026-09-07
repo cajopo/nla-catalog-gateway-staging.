@@ -422,6 +422,14 @@ def test_variant_decode_loop_runs_value_free_checkpoint(tmp_path: Path) -> None:
     assert captured.value is cancellation
     assert calls == 1
 
+    with pagination._readonly_connection(projection.path) as connection:
+        rows = CatalogProjection._variant_rows(
+            connection,
+            ("gid://shopify/Product/1",),
+        )
+    assert tuple(rows) == ("gid://shopify/Product/1",)
+    assert len(rows["gid://shopify/Product/1"]) == 1
+
 
 def test_sqlite_progress_checkpoint_preserves_exception_and_is_removed(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -488,6 +496,30 @@ def test_sqlite_progress_checkpoint_preserves_exception_and_is_removed(
         (True, pagination._SQLITE_PROGRESS_VM_STEPS),
         (False, 0),
     ]
+
+
+def test_sqlite_progress_checkpoint_returns_continue_on_success(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    projection = _projection(tmp_path, (_record("1"),))
+    progress_results: list[int] = []
+
+    class TrackingConnection(sqlite3.Connection):
+        def set_progress_handler(self, progress_handler: Callable[[], int] | None, n: int) -> None:
+            if progress_handler is not None:
+                progress_results.append(progress_handler())
+            super().set_progress_handler(progress_handler, n)
+
+    original_connect = sqlite3.connect
+
+    def tracking_connect(*args: object, **kwargs: object) -> sqlite3.Connection:
+        return original_connect(*args, **kwargs, factory=TrackingConnection)
+
+    monkeypatch.setattr(pagination.sqlite3, "connect", tracking_connect)
+    result = _paginator(projection).fetch_page(_request(), checkpoint=lambda: None)
+
+    assert [item.product_gid for item in result.page.items] == ["gid://shopify/Product/1"]
+    assert progress_results == [0]
 
 
 def test_complete_traversal_over_30000_products_has_no_gap_or_duplicate(
