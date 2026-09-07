@@ -27,7 +27,9 @@ from nla_catalog_gateway.app_proxy_security import (
 from nla_catalog_gateway.canonical_search import (
     CanonicalSearchError,
     SearchMode,
+    SingleCardSearchIndex,
     normalize_search_text,
+    prepare_single_card_search,
     search_single_cards,
 )
 from nla_catalog_gateway.core_evidence import VerifiedCatalogCoreEvidenceV1
@@ -457,6 +459,7 @@ class _EvidenceBoundGeneration:
     evidence: VerifiedCatalogCoreEvidenceV1 = field(repr=False)
     records: tuple[CatalogProductRecordV1, ...] = field(repr=False)
     items: tuple[CatalogItemV1, ...] = field(repr=False)
+    search: SingleCardSearchIndex = field(repr=False, compare=False)
     facets: PreparedFacetCatalog = field(repr=False, compare=False)
     paginator: CatalogPaginator = field(repr=False)
     clock: Callable[[], datetime] = field(repr=False, compare=False)
@@ -1530,6 +1533,7 @@ def _new_evidence_bound_generation(
             codec,
             clock=clock,
         )
+        search = prepare_single_card_search(records)
         facets = PreparedFacetCatalog(tuple(public_items))
         return _EvidenceBoundGeneration(
             verified=checked,
@@ -1538,6 +1542,7 @@ def _new_evidence_bound_generation(
             evidence=evidence,
             records=records,
             items=tuple(public_items),
+            search=search,
             facets=facets,
             paginator=paginator,
             clock=clock,
@@ -1561,6 +1566,7 @@ def _evidence_binding_is_current(generation: _EvidenceBoundGeneration) -> bool:
             or type(projection) is not CatalogProjection
             or type(generation.cursor_codec) is not CursorCodecV1
             or type(evidence) is not VerifiedCatalogCoreEvidenceV1
+            or type(generation.search) is not SingleCardSearchIndex
             or type(generation.facets) is not PreparedFacetCatalog
             or type(generation.paginator) is not CatalogPaginator
         ):
@@ -1637,7 +1643,7 @@ def _fetch_evidence_bound_page(
     query_product_gids: tuple[str, ...] | None = None
     if request.query not in (None, ""):
         search = search_single_cards(
-            generation.records,
+            generation.search,
             game=request.game,
             query=request.query,
             checkpoint=control.checkpoint,
