@@ -68,7 +68,7 @@ The directory contains exactly these seven names and no other entry:
 1. `catalog-records.v1.jsonl`
 2. `dataset-manifest.v1.json`
 3. `products-part-manifest.v1.json`
-4. `reconciliation-summary.v1.json`
+4. `reconciliation-summary.v2.json`
 5. `source-manifest.v2.json`
 6. `taxonomy-report.v1.json`
 7. `variants-part-manifest.v1.json`
@@ -79,7 +79,7 @@ manifest, source manifest, taxonomy report and Variants part manifest. Each entr
 exactly `bytes`, `filename`, `recordCount` and `sha256`. Static JSON artifacts have a
 record count of one; the JSONL count equals `catalogRecordCount`.
 
-The summary must have schema version 1 and retain all three provisional fences:
+The summary must have schema version 2 and retain all three provisional fences:
 
 - `status` is `reconciled-provisional`;
 - `datasetActivation` is `not-performed`; and
@@ -90,6 +90,13 @@ the approved query hash to its part manifest, contains a syntactically valid raw
 terminal-query hash and uses one of the two frozen transport labels. The original raw
 terminal query is not part of this bundle, so its hash is authenticated by the
 separate summary trust root rather than recomputed by this consumer.
+
+`canonicalNameAudit` is either null when no external canonical-name sidecar
+participated (the legacy Shopify-only path), or an exact audit object for an external
+canonical-name sidecar.
+The object binds the independently pinned manifest and mapping hashes plus byte,
+record, matched-key, matched-Product, duplicate-Product and unused-mapping counts.
+Its accounting must reconcile exactly; it never embeds a name, source ID or path.
 
 ## Canonical content contract
 

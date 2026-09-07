@@ -15,22 +15,31 @@ import re
 import sqlite3
 import stat
 import tempfile
-from collections.abc import Callable
-from dataclasses import dataclass, field
+from collections import Counter
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any, BinaryIO, ClassVar, Final
 
 from nla_catalog_gateway import bulk
 from nla_catalog_gateway import runtime_contract as runtime
+from nla_catalog_gateway.canonical_names import (
+    CANONICAL_GAME_ORDER,
+    CanonicalNameRecordV1,
+    CanonicalNamesManifestV1,
+)
 from nla_catalog_gateway.taxonomy import (
     Classification,
     ClassificationReport,
+    Game,
     ProductFacts,
     ProductFamily,
     TaxonomyConfig,
     classify_catalog,
+    product_type_rule,
 )
 
 PART_MANIFEST_SCHEMA_VERSION: Final = 1
@@ -72,6 +81,7 @@ _ROOT_TYPE: Final = {
     SnapshotPart.VARIANTS: "ProductVariant",
 }
 _GENERATION_PATTERN: Final = re.compile(r"sha256:[0-9a-f]{64}\Z")
+_SHA256_PATTERN: Final = re.compile(r"[0-9a-f]{64}\Z")
 _CONCRETE_PATH_TYPE: Final = type(Path())
 _APPROVED_QUERY_SHA256: Final = {
     SnapshotPart.PRODUCTS: "950e1bb757c01d40591437a8b0e5ddbed4476ad8eea39520d0d824b4bfba903a",
@@ -195,6 +205,92 @@ class ReconciliationExpectationV1:
             raise ReconciliationContractError(
                 "expected active published Product count cannot exceed productCount"
             )
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class CanonicalNamesInputV1:
+    """A manifest-pinned canonical-name mapping plus its independent match fence."""
+
+    manifest: CanonicalNamesManifestV1
+    manifest_sha256: str
+    records: Mapping[tuple[Game, str], CanonicalNameRecordV1] = field(repr=False)
+    expected_product_count: int
+
+    def __post_init__(self) -> None:
+        if type(self.manifest) is not CanonicalNamesManifestV1:
+            raise ReconciliationContractError("canonical-name manifest is invalid")
+        if (
+            type(self.manifest_sha256) is not str
+            or _SHA256_PATTERN.fullmatch(self.manifest_sha256) is None
+            or self.manifest.manifest_sha256 != self.manifest_sha256
+        ):
+            raise ReconciliationContractError("canonical-name manifest trust root is invalid")
+        _validated_count(
+            self.expected_product_count,
+            "expected canonical-name Product count",
+        )
+        if not isinstance(self.records, Mapping):
+            raise ReconciliationContractError("canonical-name mapping count is invalid")
+        validated: dict[tuple[Game, str], CanonicalNameRecordV1] = {}
+        try:
+            for key, record in self.records.items():
+                if (
+                    type(record) is not CanonicalNameRecordV1
+                    or key != (record.game, record.source_id)
+                    or key in validated
+                ):
+                    raise ReconciliationContractError("canonical-name mapping is invalid")
+                validated[key] = record
+        except ReconciliationContractError:
+            raise
+        except (RuntimeError, TypeError, ValueError) as exc:
+            raise ReconciliationContractError("canonical-name mapping is invalid") from exc
+        if len(validated) != self.manifest.sidecar.record_count:
+            raise ReconciliationContractError("canonical-name mapping count is invalid")
+
+        game_order = {game: index for index, game in enumerate(CANONICAL_GAME_ORDER)}
+        digest = hashlib.sha256()
+        byte_count = 0
+        per_game: Counter[Game] = Counter()
+        for record in sorted(
+            validated.values(),
+            key=lambda item: (game_order[item.game], len(item.source_id), item.source_id),
+        ):
+            raw = record.to_json_bytes() + b"\n"
+            digest.update(raw)
+            byte_count += len(raw)
+            per_game[record.game] += 1
+        if (
+            digest.hexdigest() != self.manifest.sidecar.sha256
+            or byte_count != self.manifest.sidecar.byte_count
+            or any(per_game[source.game] != source.record_count for source in self.manifest.sources)
+        ):
+            raise ReconciliationContractError("canonical-name mapping evidence does not match")
+        object.__setattr__(self, "records", MappingProxyType(validated))
+
+
+@dataclass(frozen=True, slots=True)
+class CanonicalNameAuditV1:
+    manifest_sha256: str
+    mapping_sha256: str
+    mapping_bytes: int
+    mapping_record_count: int
+    matched_unique_key_count: int
+    matched_product_count: int
+    duplicate_product_excess: int
+    unused_mapping_count: int
+
+    def as_dict(self) -> dict[str, object]:
+        return {
+            "duplicateProductExcess": self.duplicate_product_excess,
+            "manifestSha256": self.manifest_sha256,
+            "mappingBytes": self.mapping_bytes,
+            "mappingRecordCount": self.mapping_record_count,
+            "mappingSha256": self.mapping_sha256,
+            "matchedProductCount": self.matched_product_count,
+            "matchedUniqueKeyCount": self.matched_unique_key_count,
+            "unusedMappingCount": self.unused_mapping_count,
+        }
 
 
 def _validated_expectation(value: object) -> ReconciliationExpectationV1:
@@ -1259,6 +1355,75 @@ def _taxonomy_inputs(connection: sqlite3.Connection) -> tuple[ProductFacts, ...]
     return tuple(facts)
 
 
+_PRODUCT_CANONICAL_JOIN_SQL: Final = """
+SELECT gid, product_type, sync_source_id
+FROM products
+ORDER BY length(gid), gid
+"""
+
+
+def _apply_canonical_names(
+    connection: sqlite3.Connection,
+    facts: tuple[ProductFacts, ...],
+    taxonomy_config: TaxonomyConfig,
+    canonical_names: CanonicalNamesInputV1 | None,
+) -> tuple[tuple[ProductFacts, ...], CanonicalNameAuditV1 | None]:
+    if canonical_names is None:
+        return facts, None
+
+    enriched: list[ProductFacts] = []
+    matched_keys: set[tuple[Game, str]] = set()
+    matched_products = 0
+    cursor = connection.execute(_PRODUCT_CANONICAL_JOIN_SQL)
+    rows = iter(cursor)
+    try:
+        for facts_item in facts:
+            row = next(rows, None)
+            if row is None or row["gid"] != facts_item.product_gid:
+                raise ReconciliationDataError("canonical-name Product order does not reconcile")
+            rule = product_type_rule(row["product_type"], taxonomy_config)
+            if rule is None or rule.family is not ProductFamily.SINGLE:
+                enriched.append(facts_item)
+                continue
+            source_id = row["sync_source_id"]
+            if type(source_id) is not str:
+                raise ReconciliationDataError("structured single lacks its source identity")
+            key = (rule.game, source_id)
+            record = canonical_names.records.get(key)
+            if record is None:
+                raise ReconciliationDataError("structured single lacks its canonical-name mapping")
+            if (
+                facts_item.canonical_card_name is not None
+                and facts_item.canonical_card_name != record.canonical_card_name
+            ):
+                raise ReconciliationDataError("canonical-name sources disagree")
+            enriched.append(replace(facts_item, canonical_card_name=record.canonical_card_name))
+            matched_keys.add(key)
+            matched_products += 1
+        if next(rows, None) is not None:
+            raise ReconciliationDataError("canonical-name Product order does not reconcile")
+    finally:
+        cursor.close()
+    if matched_products != canonical_names.expected_product_count:
+        raise ReconciliationDataError("canonical-name Product count does not match expectation")
+
+    unique_count = len(matched_keys)
+    mapping_count = canonical_names.manifest.sidecar.record_count
+    return (
+        tuple(enriched),
+        CanonicalNameAuditV1(
+            manifest_sha256=canonical_names.manifest_sha256,
+            mapping_sha256=canonical_names.manifest.sidecar.sha256,
+            mapping_bytes=canonical_names.manifest.sidecar.byte_count,
+            mapping_record_count=mapping_count,
+            matched_unique_key_count=unique_count,
+            matched_product_count=matched_products,
+            duplicate_product_excess=matched_products - unique_count,
+            unused_mapping_count=mapping_count - unique_count,
+        ),
+    )
+
+
 _PRODUCT_RUNTIME_SQL: Final = """
 SELECT p.*, r.is_published
 FROM products AS p
@@ -1544,6 +1709,7 @@ class ReconciledCatalogGenerationV1:
     taxonomy_report: ClassificationReport
     records: tuple[runtime.CatalogProductRecordV1, ...]
     dataset_manifest: runtime.DatasetManifestV1
+    canonical_name_audit: CanonicalNameAuditV1 | None = None
 
 
 def reconcile_snapshot_parts(
@@ -1551,10 +1717,20 @@ def reconcile_snapshot_parts(
     *,
     expectation: ReconciliationExpectationV1,
     taxonomy_config: TaxonomyConfig,
+    canonical_names: CanonicalNamesInputV1 | None = None,
 ) -> ReconciledCatalogGenerationV1:
     """Reconcile exactly two immutable parts, then construct taxonomy/runtime evidence."""
 
     expected = _validated_expectation(expectation)
+    if canonical_names is not None:
+        if type(canonical_names) is not CanonicalNamesInputV1:
+            raise ReconciliationContractError("canonical_names must be CanonicalNamesInputV1")
+        canonical_names = CanonicalNamesInputV1(
+            manifest=canonical_names.manifest,
+            manifest_sha256=canonical_names.manifest_sha256,
+            records=canonical_names.records,
+            expected_product_count=canonical_names.expected_product_count,
+        )
     ordered = _ordered_inputs(inputs, expected)
     scans: dict[SnapshotPart, _PartScan] = {}
     for item in ordered:
@@ -1591,6 +1767,12 @@ def reconcile_snapshot_parts(
                     scans[item.manifest.part] = scan
                 counts = _reconcile_database(connection, expected, scans)
                 facts = _taxonomy_inputs(connection)
+                facts, canonical_name_audit = _apply_canonical_names(
+                    connection,
+                    facts,
+                    taxonomy_config,
+                    canonical_names,
+                )
                 try:
                     classifications, report = classify_catalog(facts, taxonomy_config)
                 except Exception as exc:
@@ -1619,6 +1801,7 @@ def reconcile_snapshot_parts(
         taxonomy_report=report,
         records=records,
         dataset_manifest=dataset_manifest,
+        canonical_name_audit=canonical_name_audit,
     )
 
 
@@ -1627,6 +1810,8 @@ __all__ = [
     "NLA_GAME_KEY",
     "NLA_SOURCE_RECORD_TYPE_KEY",
     "BulkOperationTerminalEvidenceV1",
+    "CanonicalNameAuditV1",
+    "CanonicalNamesInputV1",
     "ReconciledCatalogGenerationV1",
     "ReconciledSourceManifestV2",
     "ReconciliationContractError",

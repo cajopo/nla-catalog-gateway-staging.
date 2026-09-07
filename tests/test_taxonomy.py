@@ -18,6 +18,7 @@ from nla_catalog_gateway.taxonomy import (
     classify_product,
     default_config_path,
     load_taxonomy,
+    product_type_rule,
 )
 
 FIXTURE_PATH = Path(__file__).with_name("fixtures") / "synthetic_magic_display_taxonomy.json"
@@ -190,6 +191,18 @@ def test_observed_single_product_types_classify_from_structured_type_only(
     assert result.rule_version == "2026-09-07.1"
     assert result.rule_id == expected_rule_id
     assert result.reason is None
+
+
+def test_product_type_rule_lookup_uses_the_frozen_normalization() -> None:
+    config = load_taxonomy()
+    rule = product_type_rule("  MAGIC   SINGLE  ", config)
+    assert rule is not None
+    assert (rule.game, rule.family) == (Game.MAGIC, ProductFamily.SINGLE)
+    assert product_type_rule("unknown", config) is None
+    with pytest.raises(TaxonomyError, match="product_type"):
+        product_type_rule(None, config)  # type: ignore[arg-type]
+    with pytest.raises(TaxonomyError, match="TaxonomyConfig"):
+        product_type_rule("Magic Single", object())  # type: ignore[arg-type]
 
 
 @pytest.mark.parametrize(

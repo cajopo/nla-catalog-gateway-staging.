@@ -18,12 +18,20 @@ import pytest
 from scripts import reconcile_split_snapshot as cli
 
 from nla_catalog_gateway import runtime_contract
+from nla_catalog_gateway.canonical_names import (
+    CANONICAL_GAME_ORDER,
+    CSV_HEADER,
+    MANIFEST_FILENAME,
+    SIDECAR_FILENAME,
+    build_canonical_name_sidecar,
+)
 from nla_catalog_gateway.reconciliation import SnapshotPartManifestV1
 from nla_catalog_gateway.runtime_contract import (
     CapabilityState,
     CatalogProductRecordV1,
     DatasetManifestV1,
 )
+from nla_catalog_gateway.taxonomy import Game
 
 PROJECT_ROOT = Path(__file__).parents[1]
 PRODUCT_QUERY = PROJECT_ROOT / "graphql" / "catalog_products_snapshot.graphql"
@@ -468,6 +476,7 @@ def synthetic_generation(*, included_count: int = 1, record_bytes: bytes | None 
         records=(
             SyntheticRecord(b'{"record":"synthetic"}' if record_bytes is None else record_bytes),
         ),
+        canonical_name_audit=None,
         dataset_manifest=SimpleNamespace(
             included_product_count=included_count,
             dataset_generation="sha256:" + "d" * 64,
@@ -530,7 +539,7 @@ def test_complete_generation_is_external_deterministic_and_self_accounting(tmp_p
         "catalog-records.v1.jsonl",
         "dataset-manifest.v1.json",
         "products-part-manifest.v1.json",
-        "reconciliation-summary.v1.json",
+        "reconciliation-summary.v2.json",
         "source-manifest.v2.json",
         "taxonomy-report.v1.json",
         "variants-part-manifest.v1.json",
@@ -541,7 +550,7 @@ def test_complete_generation_is_external_deterministic_and_self_accounting(tmp_p
     for filename in expected_files:
         assert (first_output / filename).read_bytes() == (second_output / filename).read_bytes()
 
-    summary_raw = (first_output / "reconciliation-summary.v1.json").read_bytes()
+    summary_raw = (first_output / "reconciliation-summary.v2.json").read_bytes()
     summary = json.loads(summary_raw)
     assert summary == first_summary
     assert summary["status"] == "reconciled-provisional"
@@ -596,6 +605,127 @@ def test_complete_generation_is_external_deterministic_and_self_accounting(tmp_p
         assert "partialDataUrl" not in all_keys(value)
 
 
+def make_canonical_sidecar(tmp_path: Path) -> tuple[Path, Any]:
+    sources: dict[Game, Path] = {}
+    for index, game in enumerate(CANONICAL_GAME_ORDER, start=1):
+        path = tmp_path / f"{game.value}.csv"
+        path.write_text(
+            ",".join(CSV_HEADER)
+            + "\n"
+            + ",".join((str(index), f"Name {index}", *("",) * 6))
+            + "\n",
+            encoding="utf-8",
+            newline="",
+        )
+        sources[game] = path
+    sidecar_directory = tmp_path / "canonical-sidecar"
+    manifest = build_canonical_name_sidecar(
+        sources,
+        output_directory=sidecar_directory,
+        generator_code_sha="d" * 40,
+    )
+    return sidecar_directory, manifest
+
+
+def canonical_expectation_document(manifest: Any) -> dict[str, object]:
+    expectation = expectation_document()
+    expectation.update(
+        {
+            "schemaVersion": 2,
+            "canonicalNameManifestSha256": manifest.manifest_sha256,
+            "canonicalNameRecordCount": manifest.sidecar.record_count,
+            "expectedCanonicalNameProductCount": 0,
+        }
+    )
+    return expectation
+
+
+def test_cli_pins_and_audits_the_canonical_name_sidecar(tmp_path: Path) -> None:
+    inputs = make_inputs(tmp_path)
+    sidecar_directory, manifest = make_canonical_sidecar(tmp_path)
+    write_json(inputs.expectation_path, canonical_expectation_document(manifest))
+
+    summary = cli.run_reconciliation(
+        **inputs.kwargs(tmp_path / "generation-with-canonical-names"),
+        canonical_names_jsonl=sidecar_directory / SIDECAR_FILENAME,
+        canonical_names_manifest=sidecar_directory / MANIFEST_FILENAME,
+    )
+
+    assert summary["canonicalNameAudit"] == {
+        "duplicateProductExcess": 0,
+        "manifestSha256": manifest.manifest_sha256,
+        "mappingBytes": manifest.sidecar.byte_count,
+        "mappingRecordCount": 4,
+        "mappingSha256": manifest.sidecar.sha256,
+        "matchedProductCount": 0,
+        "matchedUniqueKeyCount": 0,
+        "unusedMappingCount": 4,
+    }
+
+
+def test_canonical_name_expectation_shape_is_strict(tmp_path: Path) -> None:
+    sidecar_directory, manifest = make_canonical_sidecar(tmp_path)
+    del sidecar_directory
+    path = tmp_path / "expectation-v2.json"
+
+    incomplete = expectation_document()
+    incomplete["schemaVersion"] = 2
+    write_json(path, incomplete)
+    with pytest.raises(cli.ReconciliationCliError, match="invalid fields"):
+        cli._load_expectation(path)
+
+    for field, value, message in (
+        ("canonicalNameManifestSha256", "invalid", "trust root"),
+        ("canonicalNameRecordCount", -1, "counts"),
+        ("expectedCanonicalNameProductCount", -1, "counts"),
+    ):
+        document = canonical_expectation_document(manifest)
+        document[field] = value
+        write_json(path, document)
+        with pytest.raises(cli.ReconciliationCliError, match=message):
+            cli._load_expectation(path)
+
+    with pytest.raises(cli.ReconciliationCliError, match="schemaVersion"):
+        cli._require_schema_version({"schemaVersion": 2}, "terminal")
+
+
+def test_canonical_name_cli_pairing_and_trust_fences_fail_closed(tmp_path: Path) -> None:
+    inputs = make_inputs(tmp_path)
+    sidecar_directory, manifest = make_canonical_sidecar(tmp_path)
+    sidecar_path = sidecar_directory / SIDECAR_FILENAME
+    manifest_path = sidecar_directory / MANIFEST_FILENAME
+
+    with pytest.raises(cli.ReconciliationCliError, match="provided together"):
+        cli.run_reconciliation(
+            **inputs.kwargs(tmp_path / "unpaired"),
+            canonical_names_jsonl=sidecar_path,
+        )
+
+    write_json(inputs.expectation_path, canonical_expectation_document(manifest))
+    with pytest.raises(cli.ReconciliationCliError, match="do not agree"):
+        cli.run_reconciliation(**inputs.kwargs(tmp_path / "missing-sidecar"))
+
+    wrong_count = canonical_expectation_document(manifest)
+    wrong_count["canonicalNameRecordCount"] = manifest.sidecar.record_count + 1
+    write_json(inputs.expectation_path, wrong_count)
+    with pytest.raises(cli.ReconciliationCliError, match="record count"):
+        cli.run_reconciliation(
+            **inputs.kwargs(tmp_path / "wrong-count"),
+            canonical_names_jsonl=sidecar_path,
+            canonical_names_manifest=manifest_path,
+        )
+
+    write_json(inputs.expectation_path, canonical_expectation_document(manifest))
+    raw = sidecar_path.read_bytes()
+    sidecar_path.write_bytes(raw.replace(b"Name 1", b"Other1", 1))
+    with pytest.raises(cli.ReconciliationCliError, match="evidence is invalid"):
+        cli.run_reconciliation(
+            **inputs.kwargs(tmp_path / "tampered-sidecar"),
+            canonical_names_jsonl=sidecar_path,
+            canonical_names_manifest=manifest_path,
+        )
+
+
 def test_main_emits_only_safe_success_metadata(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -617,7 +747,7 @@ def test_main_emits_only_safe_success_metadata(
     assert message["outputCreated"] is True
     assert (
         message["summarySha256"]
-        == hashlib.sha256((output / "reconciliation-summary.v1.json").read_bytes()).hexdigest()
+        == hashlib.sha256((output / "reconciliation-summary.v2.json").read_bytes()).hexdigest()
     )
     assert message["status"] == "ok"
     assert str(output) not in captured.out
@@ -672,8 +802,8 @@ def test_control_document_bounds_and_generated_json_fail_closed(tmp_path: Path) 
         cli._canonical_json_bytes({"bad": object()})
 
 
-@pytest.mark.parametrize("version", [True, 0, 2])
-def test_control_schema_version_is_exact_integer_one(tmp_path: Path, version: object) -> None:
+@pytest.mark.parametrize("version", [True, 0, 3])
+def test_control_schema_version_is_supported_integer(tmp_path: Path, version: object) -> None:
     path = tmp_path / "expectation.json"
     document = expectation_document()
     document["schemaVersion"] = version

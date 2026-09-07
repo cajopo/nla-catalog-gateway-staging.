@@ -6,12 +6,21 @@ import sqlite3
 import stat
 from dataclasses import replace
 from pathlib import Path
+from types import MappingProxyType
 
 import pytest
 
 from nla_catalog_gateway import reconciliation as reconciliation
+from nla_catalog_gateway.canonical_names import (
+    CANONICAL_GAME_ORDER,
+    CanonicalNameRecordV1,
+    CanonicalNameSidecarEvidenceV1,
+    CanonicalNamesManifestV1,
+    CanonicalNameSourceEvidenceV1,
+)
 from nla_catalog_gateway.reconciliation import (
     BulkOperationTerminalEvidenceV1,
+    CanonicalNamesInputV1,
     ReconciliationContractError,
     ReconciliationDataError,
     ReconciliationExpectationV1,
@@ -293,6 +302,189 @@ def _inputs(
     )
 
 
+def _canonical_names_input(
+    *,
+    game: Game = Game.MAGIC,
+    source_id: str = "9007199254745001",
+    name: str = "Canonical synthetic card",
+    expected_products: int = 2,
+) -> CanonicalNamesInputV1:
+    record = CanonicalNameRecordV1(game, source_id, name)
+    sidecar_raw = record.to_json_bytes() + b"\n"
+    sources = tuple(
+        CanonicalNameSourceEvidenceV1(
+            game=item,
+            sha256=hashlib.sha256(item.value.encode()).hexdigest(),
+            byte_count=1,
+            record_count=int(item is game),
+        )
+        for item in CANONICAL_GAME_ORDER
+    )
+    manifest = CanonicalNamesManifestV1(
+        generator_code_sha="c" * 40,
+        sources=sources,
+        sidecar=CanonicalNameSidecarEvidenceV1(
+            sha256=hashlib.sha256(sidecar_raw).hexdigest(),
+            byte_count=len(sidecar_raw),
+            record_count=1,
+        ),
+    )
+    return CanonicalNamesInputV1(
+        manifest=manifest,
+        manifest_sha256=manifest.manifest_sha256,
+        records=MappingProxyType({(game, source_id): record}),
+        expected_product_count=expected_products,
+    )
+
+
+def test_canonical_name_input_contract_rejects_forged_values() -> None:
+    valid = _canonical_names_input()
+    with pytest.raises(ReconciliationContractError, match="manifest is invalid"):
+        replace(valid, manifest=object())  # type: ignore[arg-type]
+    with pytest.raises(ReconciliationContractError, match="trust root"):
+        replace(valid, manifest_sha256="0" * 64)
+    with pytest.raises(ReconciliationContractError, match="mapping count"):
+        replace(valid, records=MappingProxyType({}))
+    with pytest.raises(ReconciliationContractError, match="mapping count"):
+        replace(valid, records=object())  # type: ignore[arg-type]
+    broken_mapping = dict(valid.records)
+
+    class BrokenItems(dict[object, object]):
+        def items(self) -> object:
+            raise RuntimeError("synthetic iteration failure")
+
+    with pytest.raises(ReconciliationContractError, match="mapping is invalid"):
+        replace(valid, records=BrokenItems(broken_mapping))  # type: ignore[arg-type]
+    bad_record = next(iter(valid.records.values()))
+    with pytest.raises(ReconciliationContractError, match="mapping is invalid"):
+        replace(valid, records=MappingProxyType({(Game.POKEMON, bad_record.source_id): bad_record}))
+    forged_name = CanonicalNameRecordV1(
+        bad_record.game,
+        bad_record.source_id,
+        "Different untrusted name",
+    )
+    with pytest.raises(ReconciliationContractError, match="evidence does not match"):
+        replace(
+            valid,
+            records=MappingProxyType({(forged_name.game, forged_name.source_id): forged_name}),
+        )
+    with pytest.raises(ReconciliationContractError, match="Product count"):
+        replace(valid, expected_product_count=-1)
+    mutable = dict(valid.records)
+    copied = replace(valid, records=mutable)
+    mutable.clear()
+    assert len(copied.records) == 1
+
+
+def test_reconciliation_rejects_a_mistyped_canonical_name_input(tmp_path: Path) -> None:
+    with pytest.raises(ReconciliationContractError, match="CanonicalNamesInputV1"):
+        reconcile_snapshot_parts(
+            _inputs(tmp_path),
+            expectation=_expectation(),
+            taxonomy_config=load_taxonomy(),
+            canonical_names=object(),  # type: ignore[arg-type]
+        )
+
+
+class _CanonicalRowsCursor:
+    def __init__(self, rows: list[dict[str, object]]) -> None:
+        self._rows = iter(rows)
+        self.closed = False
+
+    def __iter__(self) -> _CanonicalRowsCursor:
+        return self
+
+    def __next__(self) -> dict[str, object]:
+        return next(self._rows)
+
+    def close(self) -> None:
+        self.closed = True
+
+
+class _CanonicalRowsConnection:
+    def __init__(self, rows: list[dict[str, object]]) -> None:
+        self.cursor = _CanonicalRowsCursor(rows)
+
+    def execute(self, _query: str) -> _CanonicalRowsCursor:
+        return self.cursor
+
+
+@pytest.mark.parametrize(
+    ("facts", "rows", "message"),
+    [
+        (
+            (ProductFacts(_gid("Product", PRODUCT_ONE)),),
+            [
+                {
+                    "gid": _gid("Product", PRODUCT_TWO),
+                    "product_type": "Magic Single",
+                    "sync_source_id": "9007199254745001",
+                }
+            ],
+            "order does not reconcile",
+        ),
+        (
+            (ProductFacts(_gid("Product", PRODUCT_ONE)),),
+            [
+                {
+                    "gid": _gid("Product", PRODUCT_ONE),
+                    "product_type": "Magic Single",
+                    "sync_source_id": None,
+                }
+            ],
+            "lacks its source identity",
+        ),
+        (
+            (),
+            [
+                {
+                    "gid": _gid("Product", PRODUCT_ONE),
+                    "product_type": "Magic Display",
+                    "sync_source_id": "9007199254745001",
+                }
+            ],
+            "order does not reconcile",
+        ),
+    ],
+)
+def test_canonical_name_join_internal_accounting_is_fail_closed(
+    facts: tuple[ProductFacts, ...],
+    rows: list[dict[str, object]],
+    message: str,
+) -> None:
+    connection = _CanonicalRowsConnection(rows)
+    with pytest.raises(ReconciliationDataError, match=message):
+        reconciliation._apply_canonical_names(
+            connection,  # type: ignore[arg-type]
+            facts,
+            load_taxonomy(),
+            _canonical_names_input(),
+        )
+    assert connection.cursor.closed is True
+
+
+def test_canonical_name_join_leaves_non_single_products_unchanged() -> None:
+    facts = (ProductFacts(_gid("Product", PRODUCT_ONE), product_type="Magic Display"),)
+    connection = _CanonicalRowsConnection(
+        [
+            {
+                "gid": _gid("Product", PRODUCT_ONE),
+                "product_type": "Magic Display",
+                "sync_source_id": "9007199254745001",
+            }
+        ]
+    )
+    enriched, audit = reconciliation._apply_canonical_names(
+        connection,  # type: ignore[arg-type]
+        facts,
+        load_taxonomy(),
+        _canonical_names_input(expected_products=0),
+    )
+    assert enriched == facts
+    assert audit is not None
+    assert audit.unused_mapping_count == 1
+
+
 def test_reconciliation_is_order_independent_and_projects_exact_large_gids(
     tmp_path: Path,
 ) -> None:
@@ -350,6 +542,83 @@ def test_reconciliation_is_order_independent_and_projects_exact_large_gids(
         assert item.manifest.error_code is None
         assert item.manifest.url_present is True
         assert item.manifest.capture_fence_max_seconds == reconciliation.CAPTURE_FENCE_MAX_SECONDS
+
+
+def test_canonical_name_join_preserves_duplicate_shopify_products(tmp_path: Path) -> None:
+    products, variants = _rows()
+    for row in products:
+        if row["__typename"] == "Product":
+            row["productType"] = "Magic Single"
+    result = reconcile_snapshot_parts(
+        _inputs(tmp_path, products=products, variants=variants),
+        expectation=_expectation(),
+        taxonomy_config=load_taxonomy(),
+        canonical_names=_canonical_names_input(),
+    )
+
+    assert [record.canonical_card_name for record in result.records] == [
+        "Canonical synthetic card",
+        "Canonical synthetic card",
+    ]
+    assert all(record.product_family is ProductFamily.SINGLE for record in result.records)
+    assert result.canonical_name_audit is not None
+    assert result.canonical_name_audit.as_dict() == {
+        "duplicateProductExcess": 1,
+        "manifestSha256": result.canonical_name_audit.manifest_sha256,
+        "mappingBytes": result.canonical_name_audit.mapping_bytes,
+        "mappingRecordCount": 1,
+        "mappingSha256": result.canonical_name_audit.mapping_sha256,
+        "matchedProductCount": 2,
+        "matchedUniqueKeyCount": 1,
+        "unusedMappingCount": 0,
+    }
+
+
+@pytest.mark.parametrize(
+    ("canonical_names", "message"),
+    [
+        (_canonical_names_input(game=Game.POKEMON), "lacks its canonical-name mapping"),
+        (_canonical_names_input(expected_products=1), "Product count does not match"),
+    ],
+)
+def test_canonical_name_join_fails_closed(
+    tmp_path: Path,
+    canonical_names: CanonicalNamesInputV1,
+    message: str,
+) -> None:
+    products, variants = _rows()
+    for row in products:
+        if row["__typename"] == "Product":
+            row["productType"] = "Magic Single"
+    with pytest.raises(ReconciliationDataError, match=message):
+        reconcile_snapshot_parts(
+            _inputs(tmp_path, products=products, variants=variants),
+            expectation=_expectation(),
+            taxonomy_config=load_taxonomy(),
+            canonical_names=canonical_names,
+        )
+
+
+def test_canonical_name_join_rejects_a_disagreeing_shopify_metafield(tmp_path: Path) -> None:
+    products, variants = _rows()
+    for row in products:
+        if row["__typename"] == "Product":
+            row["productType"] = "Magic Single"
+    products.append(
+        _metafield(
+            _gid("Product", PRODUCT_ONE),
+            9007199254747999,
+            "canonical_card_name",
+            "Different Shopify name",
+        )
+    )
+    with pytest.raises(ReconciliationDataError, match="sources disagree"):
+        reconcile_snapshot_parts(
+            _inputs(tmp_path, products=products, variants=variants),
+            expectation=_expectation(),
+            taxonomy_config=load_taxonomy(),
+            canonical_names=_canonical_names_input(),
+        )
 
 
 def test_capture_fence_rejects_nonoverlap_and_oversized_union(tmp_path: Path) -> None:
