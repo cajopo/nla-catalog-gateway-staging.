@@ -62,6 +62,7 @@ _VOLUME_NAME_GUID = 0x1
 _VOLUME_NAME_BUFFER_CHARS = 32_768
 _STREAM_INFO_INITIAL_BYTES = 4_096
 _STREAM_INFO_MAX_BYTES = 1024 * 1024
+_NATIVE_READ_BUFFER_BYTES = 1024 * 1024
 _ERROR_INSUFFICIENT_BUFFER = 122
 _ERROR_MORE_DATA = 234
 _ERROR_HANDLE_EOF = 38
@@ -342,7 +343,11 @@ def _native_binary_file(
             _O_BINARY | (os.O_RDWR if writable else os.O_RDONLY),
         )
         raw_handle = 0
-        return os.fdopen(descriptor, "r+b" if writable else "rb", buffering=0)
+        return os.fdopen(
+            descriptor,
+            "r+b" if writable else "rb",
+            buffering=0 if writable else _NATIVE_READ_BUFFER_BYTES,
+        )
     except (AttributeError, OSError, ValueError) as exc:
         if descriptor is not None:
             os.close(descriptor)
