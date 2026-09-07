@@ -142,9 +142,12 @@ canonical page plus opaque cursor.
 The synthetic service integration traverses 30,001 Products through 301 HTTP-boundary requests
 with no duplicate or missing Product GID, including the 25,000 boundary. On the same prepared
 generation, an exact search and a full-catalog inventory filter each complete within the default
-two-second request deadline. Test-only monkeypatches open only the three documented static gates;
-the real App Proxy verifier, evidence-bound backend, concrete capability gate, cursor codec,
-search index, facet catalog, and service boundary remain in the exercised path.
+two-second request deadline. This timing/traversal test uses pytest-cov's `no_cover` marker so
+instrumentation does not distort the production request budget; the ordinary runtime suite covers
+the same implementation at 100% statement and branch coverage. Test-only monkeypatches open only
+the three documented static gates; the real App Proxy verifier, evidence-bound backend, concrete
+capability gate, cursor codec, search index, facet catalog, and service boundary remain in the
+exercised path.
 
 Errors are serialized only through the frozen `CatalogErrorV1` messages. Request values,
 exception text, SQL, paths, secrets, and signed query material are never copied into the response.

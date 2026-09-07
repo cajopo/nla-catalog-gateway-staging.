@@ -652,6 +652,7 @@ def test_gate_rejects_foreign_lease_and_binding_mismatch_is_value_free(
     )
 
 
+@pytest.mark.no_cover
 def test_service_traverses_over_30000_and_keeps_search_and_filter_under_two_seconds(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
