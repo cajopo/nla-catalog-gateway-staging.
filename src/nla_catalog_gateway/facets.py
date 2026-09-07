@@ -9,8 +9,8 @@ selected by that workstream rather than relying on an invented matcher here.
 from __future__ import annotations
 
 import re
-from collections.abc import Callable
-from dataclasses import dataclass, replace
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass, field, replace
 from enum import StrEnum
 from types import MappingProxyType
 from urllib.parse import parse_qsl, quote, urlencode
@@ -130,6 +130,76 @@ class FacetEvaluation:
             if facet.dimension is dimension:
                 return facet
         raise FacetContractError("facet is not exposed for this request family")
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class _PreparedFacetItem:
+    item: CatalogItemV1 = field(repr=False)
+    gid_key: tuple[int, str]
+    in_stock: bool
+
+
+class PreparedFacetCatalog:
+    """Validate immutable catalog facts once, then evaluate bounded requests."""
+
+    __slots__ = ("_item_by_gid", "_rows")
+
+    def __init__(
+        self,
+        items: tuple[CatalogItemV1, ...],
+        *,
+        checkpoint: Callable[[], None] | None = None,
+    ) -> None:
+        if checkpoint is not None and not callable(checkpoint):
+            raise FacetContractError("facet checkpoint must be callable")
+        _run_checkpoint(checkpoint)
+        canonical_items, item_by_gid = _validated_item_index(items, checkpoint=checkpoint)
+        rows: list[_PreparedFacetItem] = []
+        for item in canonical_items:
+            _run_checkpoint(checkpoint)
+            rows.append(
+                _PreparedFacetItem(
+                    item=item,
+                    gid_key=_product_gid_sort_key(item.product_gid),
+                    in_stock=_has_positive_inventory_fact(item),
+                )
+            )
+        if checkpoint is None:
+            rows.sort(key=lambda row: row.gid_key)
+        else:
+
+            def checkpointed_row_key(row: _PreparedFacetItem) -> tuple[int, str]:
+                checkpoint()
+                return row.gid_key
+
+            rows.sort(key=checkpointed_row_key)
+        self._rows = tuple(rows)
+        self._item_by_gid = MappingProxyType(dict(item_by_gid))
+        _run_checkpoint(checkpoint)
+
+    def evaluate(
+        self,
+        request: CatalogRequestV1,
+        *,
+        query_product_gids: tuple[str, ...] | None = None,
+        checkpoint: Callable[[], None] | None = None,
+    ) -> FacetEvaluation:
+        if checkpoint is not None and not callable(checkpoint):
+            raise FacetContractError("facet checkpoint must be callable")
+        _run_checkpoint(checkpoint)
+        canonical_request = _validated_request(request)
+        query_scope = _validated_query_scope(
+            self._item_by_gid,
+            canonical_request,
+            query_product_gids,
+            checkpoint=checkpoint,
+        )
+        return _evaluate_prepared_facets(
+            self._rows,
+            canonical_request,
+            query_scope,
+            checkpoint=checkpoint,
+        )
 
 
 UNSUPPORTED_FILTER_FIELDS = MappingProxyType(
@@ -283,51 +353,54 @@ def evaluate_facets(
     exactly when ``q`` is non-empty and is deliberately supplied by the search oracle.
     """
 
-    if checkpoint is not None and not callable(checkpoint):
-        raise FacetContractError("facet checkpoint must be callable")
-    _run_checkpoint(checkpoint)
-    request = _validated_request(request)
-    items, item_by_gid = _validated_item_index(items, checkpoint=checkpoint)
-    query_scope = _validated_query_scope(
-        item_by_gid,
+    prepared = PreparedFacetCatalog(items, checkpoint=checkpoint)
+    return prepared.evaluate(
         request,
-        query_product_gids,
+        query_product_gids=query_product_gids,
         checkpoint=checkpoint,
     )
-    filtered = _matching_items(
-        items,
+
+
+def _evaluate_prepared_facets(
+    rows: tuple[_PreparedFacetItem, ...],
+    request: CatalogRequestV1,
+    query_scope: frozenset[str] | None,
+    *,
+    checkpoint: Callable[[], None] | None,
+) -> FacetEvaluation:
+    filtered_rows = _matching_prepared_rows(
+        rows,
         request,
         query_scope,
         excluded=None,
         checkpoint=checkpoint,
     )
-
-    family_base = _matching_items(
-        items,
+    family_base = _matching_prepared_rows(
+        rows,
         request,
         query_scope,
         excluded=FacetDimension.PRODUCT_FAMILY,
         checkpoint=checkpoint,
     )
     family_totals = dict.fromkeys(_PUBLIC_FAMILIES, 0)
-    for item in family_base:
+    for row in family_base:
         _run_checkpoint(checkpoint)
-        family_totals[item.product_family] += 1
+        family_totals[row.item.product_family] += 1
     family_counts = tuple(
         FacetValueCount(family.value, family_totals[family]) for family in _PUBLIC_FAMILIES
     )
 
-    stock_base = _matching_items(
-        items,
+    stock_base = _matching_prepared_rows(
+        rows,
         request,
         query_scope,
         excluded=FacetDimension.IN_STOCK,
         checkpoint=checkpoint,
     )
     positive_inventory_count = 0
-    for item in stock_base:
+    for row in stock_base:
         _run_checkpoint(checkpoint)
-        positive_inventory_count += _has_positive_inventory_fact(item)
+        positive_inventory_count += row.in_stock
     stock_counts = (
         FacetValueCount("true", positive_inventory_count),
         FacetValueCount("false", len(stock_base) - positive_inventory_count),
@@ -338,8 +411,8 @@ def evaluate_facets(
     ]
 
     if request.product_family is RequestFamily.SEALED:
-        subtype_base = _matching_items(
-            items,
+        subtype_base = _matching_prepared_rows(
+            rows,
             request,
             query_scope,
             excluded=FacetDimension.PRODUCT_SUBTYPE,
@@ -347,14 +420,13 @@ def evaluate_facets(
         )
         subtype_totals: dict[str, int] = {}
         missing_subtype_count = 0
-        for item in subtype_base:
+        for row in subtype_base:
             _run_checkpoint(checkpoint)
-            if item.product_subtype is None:
+            subtype = row.item.product_subtype
+            if subtype is None:
                 missing_subtype_count += 1
             else:
-                subtype_totals[item.product_subtype] = (
-                    subtype_totals.get(item.product_subtype, 0) + 1
-                )
+                subtype_totals[subtype] = subtype_totals.get(subtype, 0) + 1
         if request.filters.product_subtype is not None:
             subtype_totals.setdefault(request.filters.product_subtype, 0)
         if checkpoint is None:
@@ -370,16 +442,54 @@ def evaluate_facets(
         for subtype in ordered_subtypes:
             _run_checkpoint(checkpoint)
             subtype_values.append(FacetValueCount(subtype, subtype_totals[subtype]))
-        subtype_counts = tuple(subtype_values)
         facets.append(
             ContextualFacet(
                 FacetDimension.PRODUCT_SUBTYPE,
-                subtype_counts,
+                tuple(subtype_values),
                 missing_value_count=missing_subtype_count,
             )
         )
     _run_checkpoint(checkpoint)
-    return FacetEvaluation(filtered, tuple(facets))
+    return FacetEvaluation(tuple(row.item for row in filtered_rows), tuple(facets))
+
+
+def _matching_prepared_rows(
+    rows: tuple[_PreparedFacetItem, ...],
+    request: CatalogRequestV1,
+    query_scope: frozenset[str] | None,
+    *,
+    excluded: FacetDimension | None,
+    checkpoint: Callable[[], None] | None,
+) -> tuple[_PreparedFacetItem, ...]:
+    matches: list[_PreparedFacetItem] = []
+    for row in rows:
+        _run_checkpoint(checkpoint)
+        item = row.item
+        if item.game is not request.game:
+            continue
+        if query_scope is not None and item.product_gid not in query_scope:
+            continue
+        if (
+            excluded is not FacetDimension.PRODUCT_FAMILY
+            and request.product_family is not RequestFamily.ALL
+            and item.product_family.value != request.product_family.value
+        ):
+            continue
+        if (
+            excluded is not FacetDimension.IN_STOCK
+            and request.filters.in_stock is not None
+            and row.in_stock is not request.filters.in_stock
+        ):
+            continue
+        if (
+            excluded is not FacetDimension.PRODUCT_SUBTYPE
+            and request.filters.product_subtype is not None
+            and item.product_subtype != request.filters.product_subtype
+        ):
+            continue
+        matches.append(row)
+    _run_checkpoint(checkpoint)
+    return tuple(matches)
 
 
 def has_positive_inventory(item: CatalogItemV1) -> bool:
@@ -461,7 +571,7 @@ def _validated_item_index(
 
 
 def _validated_query_scope(
-    item_by_gid: dict[str, CatalogItemV1],
+    item_by_gid: Mapping[str, CatalogItemV1],
     request: CatalogRequestV1,
     query_product_gids: tuple[str, ...] | None,
     *,
@@ -489,54 +599,6 @@ def _validated_query_scope(
             raise FacetContractError("query context must not contain cross-game Products")
         result.add(gid)
     return frozenset(result)
-
-
-def _matching_items(
-    items: tuple[CatalogItemV1, ...],
-    request: CatalogRequestV1,
-    query_scope: frozenset[str] | None,
-    *,
-    excluded: FacetDimension | None,
-    checkpoint: Callable[[], None] | None = None,
-) -> tuple[CatalogItemV1, ...]:
-    matches = []
-    for item in items:
-        _run_checkpoint(checkpoint)
-        if item.game is not request.game:
-            continue
-        if query_scope is not None and item.product_gid not in query_scope:
-            continue
-        if (
-            excluded is not FacetDimension.PRODUCT_FAMILY
-            and request.product_family is not RequestFamily.ALL
-            and item.product_family.value != request.product_family.value
-        ):
-            continue
-        if (
-            excluded is not FacetDimension.IN_STOCK
-            and request.filters.in_stock is not None
-            and _has_positive_inventory_fact(item) is not request.filters.in_stock
-        ):
-            continue
-        if (
-            excluded is not FacetDimension.PRODUCT_SUBTYPE
-            and request.filters.product_subtype is not None
-            and item.product_subtype != request.filters.product_subtype
-        ):
-            continue
-        matches.append(item)
-    if checkpoint is None:
-        matches.sort(key=lambda item: _product_gid_sort_key(item.product_gid))
-    else:
-
-        def checkpointed_sort_key(item: CatalogItemV1) -> tuple[int, str]:
-            checkpoint()
-            return _product_gid_sort_key(item.product_gid)
-
-        matches.sort(key=checkpointed_sort_key)
-    result = tuple(matches)
-    _run_checkpoint(checkpoint)
-    return result
 
 
 def _run_checkpoint(checkpoint: Callable[[], None] | None) -> None:

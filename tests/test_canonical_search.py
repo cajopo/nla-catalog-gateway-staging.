@@ -4,6 +4,7 @@ import json
 import traceback
 from dataclasses import replace
 from pathlib import Path
+from time import perf_counter
 from typing import Any
 
 import pytest
@@ -16,9 +17,11 @@ from nla_catalog_gateway.canonical_search import (
     CanonicalSearchError,
     MatchTier,
     SearchMode,
+    SingleCardSearchIndex,
     SingleCardSuggestion,
     _validated_records,
     normalize_search_text,
+    prepare_single_card_search,
     report_missing_canonical_names,
     search_single_cards,
 )
@@ -245,6 +248,167 @@ def test_empty_normalized_query_routes_to_browse_without_running_search(
     assert result.match_tier is None
     assert result.hits == ()
     assert result.suggestions == ()
+
+
+def test_prepared_index_matches_the_frozen_oracle_and_serializes_only_at_activation(
+    records: tuple[CatalogProductRecordV1, ...],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cases = (
+        (Game.MAGIC, "lightning bolt"),
+        (Game.MAGIC, "colossus"),
+        (Game.MAGIC, "steel col"),
+        (Game.MAGIC, "fallback trap"),
+        (Game.MAGIC, "%"),
+        (Game.POKEMON, "shared hero"),
+        (Game.YUGIOH, "shared hero"),
+        (Game.ONE_PIECE, "monkey.d.luffy"),
+        (Game.MAGIC, " \t\n "),
+    )
+    expected = tuple(search_single_cards(records, game=game, query=query) for game, query in cases)
+
+    serialization_calls = 0
+    original_to_json_bytes = CatalogProductRecordV1.to_json_bytes
+
+    def counted_to_json_bytes(record: CatalogProductRecordV1) -> bytes:
+        nonlocal serialization_calls
+        serialization_calls += 1
+        return original_to_json_bytes(record)
+
+    monkeypatch.setattr(CatalogProductRecordV1, "to_json_bytes", counted_to_json_bytes)
+    prepared = prepare_single_card_search(records)
+
+    assert type(prepared) is SingleCardSearchIndex
+    assert serialization_calls == len(records)
+    actual = tuple(search_single_cards(prepared, game=game, query=query) for game, query in cases)
+    assert actual == expected
+    assert prepared.search(game=Game.MAGIC, query="lightning bolt") == expected[0]
+    assert serialization_calls == len(records)
+
+
+def test_prepared_index_construction_and_requests_remain_fail_closed_and_cancellable(
+    records: tuple[CatalogProductRecordV1, ...],
+) -> None:
+    with pytest.raises(CanonicalSearchError, match="created from runtime v1 records"):
+        SingleCardSearchIndex()  # type: ignore[call-arg]
+
+    unbound = object.__new__(SingleCardSearchIndex)
+    with pytest.raises(CanonicalSearchError, match="prepared search index is invalid"):
+        search_single_cards(unbound, game=Game.MAGIC, query="bolt")
+
+    build_cancelled = RequestCancelled("build cancelled")
+    build_calls = 0
+
+    def build_checkpoint() -> object:
+        nonlocal build_calls
+        build_calls += 1
+        if build_calls == 3:
+            raise build_cancelled
+        return object()
+
+    with pytest.raises(RequestCancelled) as build_error:
+        prepare_single_card_search(
+            records,
+            checkpoint=build_checkpoint,  # type: ignore[arg-type]
+        )
+    assert build_error.value is build_cancelled
+    assert build_calls == 3
+
+    successful_checkpoint_calls = 0
+
+    def successful_checkpoint() -> object:
+        nonlocal successful_checkpoint_calls
+        successful_checkpoint_calls += 1
+        return object()
+
+    prepared = prepare_single_card_search(
+        records,
+        checkpoint=successful_checkpoint,  # type: ignore[arg-type]
+    )
+    assert successful_checkpoint_calls > len(records)
+
+    wrong_entry_type = object.__new__(SingleCardSearchIndex)
+    object.__setattr__(wrong_entry_type, "_games", (object(),) * len(Game))
+    object.__setattr__(wrong_entry_type, "_seal", prepared._seal)
+    with pytest.raises(CanonicalSearchError, match="prepared search index is invalid"):
+        wrong_entry_type.search(game=Game.MAGIC, query="bolt")
+    with pytest.raises(CanonicalSearchError, match="prepared search index is invalid"):
+        wrong_entry_type.search(game=Game.MAGIC, query=" \t\n ")
+
+    wrong_game_order = object.__new__(SingleCardSearchIndex)
+    object.__setattr__(wrong_game_order, "_games", tuple(reversed(prepared._games)))
+    object.__setattr__(wrong_game_order, "_seal", prepared._seal)
+    with pytest.raises(CanonicalSearchError, match="prepared search index is invalid"):
+        wrong_game_order.search(game=Game.MAGIC, query="bolt")
+    with pytest.raises(CanonicalSearchError, match="prepared search index is invalid"):
+        wrong_game_order.search(game=Game.MAGIC, query=" \t\n ")
+
+    with pytest.raises(CanonicalSearchError, match="canonical Game"):
+        prepared.search(game="magic", query="bolt")  # type: ignore[arg-type]
+    with pytest.raises(CanonicalSearchError, match="query exceeds"):
+        prepared.search(game=Game.MAGIC, query="x" * (MAX_QUERY_CODEPOINTS + 1))
+
+    request_cancelled = RequestCancelled("request cancelled")
+    request_calls = 0
+
+    def request_checkpoint() -> object:
+        nonlocal request_calls
+        request_calls += 1
+        if request_calls == 7:
+            raise request_cancelled
+        return object()
+
+    with pytest.raises(RequestCancelled) as request_error:
+        prepared.search(
+            game=Game.MAGIC,
+            query="not present",
+            checkpoint=request_checkpoint,  # type: ignore[arg-type]
+        )
+    assert request_error.value is request_cancelled
+    assert request_calls == 7
+
+
+def test_prepared_contains_search_over_30000_records_finishes_within_two_seconds(
+    records: tuple[CatalogProductRecordV1, ...],
+) -> None:
+    template = next(record for record in records if record.product_gid.endswith("/10"))
+    template_variant = template.variants[0]
+    record_count = 30_001
+    large_records: list[CatalogProductRecordV1] = []
+    for offset in range(record_count):
+        product_id = 1_000_000 + offset
+        product_gid = f"gid://shopify/Product/{product_id}"
+        canonical_name = (
+            "Rare Target Fragment Card"
+            if offset == record_count - 1
+            else f"Synthetic Indexed Card {offset:05d}"
+        )
+        large_records.append(
+            replace(
+                template,
+                product_gid=product_gid,
+                handle=f"synthetic-indexed-{product_id}",
+                canonical_card_name=canonical_name,
+                variants=(
+                    replace(
+                        template_variant,
+                        product_gid=product_gid,
+                        variant_gid=f"gid://shopify/ProductVariant/{product_id}",
+                        inventory_item_gid=f"gid://shopify/InventoryItem/{product_id}",
+                    ),
+                ),
+            )
+        )
+
+    prepared = prepare_single_card_search(tuple(large_records))
+    started = perf_counter()
+    result = prepared.search(game=Game.MAGIC, query="target fragment")
+    elapsed = perf_counter() - started
+
+    assert len(large_records) > 30_000
+    assert result.match_tier is MatchTier.CONTAINS
+    assert tuple(hit.product_gid for hit in result.hits) == ("gid://shopify/Product/1030000",)
+    assert elapsed < 2.0
 
 
 def test_checkpoint_return_value_is_ignored_without_changing_results(

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from time import perf_counter
 from typing import Any
 
 import pytest
@@ -11,6 +12,7 @@ from nla_catalog_gateway.facets import (
     FacetDimension,
     FacetEvaluation,
     FacetValueCount,
+    PreparedFacetCatalog,
     evaluate_facets,
     has_positive_inventory,
     inventory_fact_label,
@@ -332,6 +334,39 @@ def test_subtype_facet_returns_every_value_including_rare_beyond_top_100() -> No
     assert result.result_count == 1
 
 
+def test_prepared_catalog_reuses_validation_for_over_30k_high_cardinality_items(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    catalog = tuple(
+        _item(
+            index,
+            family=ProductFamily.SEALED,
+            subtype=f"type-{index % 105:03d}",
+            inventory=index % 2,
+        )
+        for index in range(1, 30_002)
+    )
+    prepared = PreparedFacetCatalog(catalog)
+
+    def forbidden_revalidation(_item: CatalogItemV1) -> CatalogItemV1:
+        raise AssertionError("prepared requests must not rebuild the validated item graph")
+
+    monkeypatch.setattr(facets, "_validated_item", forbidden_revalidation)
+    started = perf_counter()
+    result = prepared.evaluate(
+        _request(
+            family=RequestFamily.SEALED,
+            in_stock=True,
+            subtype="type-104",
+        )
+    )
+    elapsed = perf_counter() - started
+
+    assert result.result_count == 142
+    assert len(result.facet(FacetDimension.PRODUCT_SUBTYPE).values) == 105
+    assert elapsed < 2.0
+
+
 def test_query_scope_is_explicit_empty_safe_and_cross_game_fail_closed() -> None:
     catalog = _catalog()
     request = _request(query="resolved elsewhere", in_stock=True)
@@ -505,7 +540,7 @@ def test_checkpoint_cancellation_propagates_unchanged_without_partial_result() -
     assert calls == 10
 
 
-def test_matching_item_sort_checkpoint_propagates_cancellation_unchanged() -> None:
+def test_prepared_item_sort_checkpoint_propagates_cancellation_unchanged() -> None:
     catalog = _catalog()
     cancellation = RuntimeError("request cancelled")
     calls = 0
@@ -513,19 +548,13 @@ def test_matching_item_sort_checkpoint_propagates_cancellation_unchanged() -> No
     def checkpoint() -> None:
         nonlocal calls
         calls += 1
-        if calls == len(catalog) + 2:
+        if calls == 2 * len(catalog) + 2:
             raise cancellation
 
     with pytest.raises(RuntimeError, match="request cancelled") as captured:
-        facets._matching_items(
-            catalog,
-            _request(),
-            None,
-            excluded=None,
-            checkpoint=checkpoint,
-        )
+        PreparedFacetCatalog(catalog, checkpoint=checkpoint)
     assert captured.value is cancellation
-    assert calls == len(catalog) + 2
+    assert calls == 2 * len(catalog) + 2
 
 
 def test_query_scope_loop_is_cancellable_and_checkpoint_must_be_callable() -> None:
@@ -554,6 +583,9 @@ def test_query_scope_loop_is_cancellable_and_checkpoint_must_be_callable() -> No
 
     with pytest.raises(FacetContractError, match="checkpoint must be callable"):
         evaluate_facets(catalog, _request(), checkpoint=object())  # type: ignore[arg-type]
+    prepared = PreparedFacetCatalog(catalog)
+    with pytest.raises(FacetContractError, match="checkpoint must be callable"):
+        prepared.evaluate(_request(), checkpoint=object())  # type: ignore[arg-type]
 
 
 def test_inventory_and_price_labels_use_only_v1_facts() -> None:

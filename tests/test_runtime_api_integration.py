@@ -4,6 +4,7 @@ import sqlite3
 from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
+from time import perf_counter
 from types import SimpleNamespace
 from typing import Any
 
@@ -239,6 +240,64 @@ def test_proxy_authorizer_rejects_invalid_dependency_and_untrusted_outputs(
         adapter.verify(raw_query=b"redacted", request_path="/proxy/catalog", control=_control())
 
 
+def test_proxy_authorizer_seals_its_verified_instance_and_composition_binding(
+    tmp_path: Path,
+) -> None:
+    verifier = proxy_helpers._verifier()
+    adapter = AppProxyVerifierAuthorizer(verifier)
+
+    class PermissiveVerifier:
+        def verify(self, **_kwargs: Any) -> Any:
+            return runtime_api.VerifiedAppProxyRequest(
+                proxy_helpers._TEST_SHOP,
+                proxy_helpers._STOREFRONT_PREFIX,
+            )
+
+    with pytest.raises(AttributeError):
+        adapter._verifier = PermissiveVerifier()  # type: ignore[attr-defined]
+    with pytest.raises(AttributeError):
+        object.__setattr__(adapter, "_verifier", PermissiveVerifier())
+
+    replacement = proxy_helpers._verifier(
+        config=proxy_helpers._config(shared_secret=b"replacement-key"),
+    )
+    with pytest.raises(RuntimeApiContractError, match="already bound"):
+        adapter.__init__(replacement)
+
+    identity = adapter.verify(
+        raw_query=proxy_helpers._signed_query(),
+        request_path="/proxy/catalog",
+        control=_control(),
+    )
+    assert identity.shop_domain == proxy_helpers._TEST_SHOP
+
+    case = _bound_case(tmp_path, "sealed-authorizer", evidence_helpers._records(), "a" * 64)
+    assert runtime_api._runtime_composition_is_evidence_bound(
+        adapter,
+        case.backend,
+        case.gate,
+    )
+
+    unbound = object.__new__(AppProxyVerifierAuthorizer)
+    assert runtime_api._bound_app_proxy_verifier(object()) is None
+    with pytest.raises(RuntimeApiContractError, match="verifier is invalid"):
+        runtime_api._register_authorizer_verifier(  # type: ignore[arg-type]
+            unbound,
+            object(),
+        )
+    assert not runtime_api._runtime_composition_is_evidence_bound(
+        unbound,
+        case.backend,
+        case.gate,
+    )
+    with pytest.raises(ProxyVerifierUnavailable):
+        unbound.verify(
+            raw_query=proxy_helpers._signed_query(),
+            request_path="/proxy/catalog",
+            control=_control(),
+        )
+
+
 def test_bound_backend_browses_searches_and_filters_real_synthetic_catalog(
     tmp_path: Path,
 ) -> None:
@@ -313,10 +372,20 @@ def test_portable_staging_generation_reaches_the_evidence_gate_without_reconcili
     lease = backend.acquire(control=control)
 
     assert type(lease._generation.verified) is staging_generation.VerifiedStagingGenerationV1
+    assert type(lease._generation.search) is runtime_api.SingleCardSearchIndex
+    assert type(lease._generation.facets) is runtime_api.PreparedFacetCatalog
     assert gate.ready(lease, control=control) is True
     request = _request(family=RequestFamily.SEALED, page_size=1)
     gate.require_catalog(lease, request, control=control)
     assert _gids(lease.fetch_page(request, None, control=control)) == ("gid://shopify/Product/4",)
+
+    searched = _request(
+        family=RequestFamily.SINGLE,
+        query="Shared magic",
+        in_stock=True,
+    )
+    gate.require_catalog(lease, searched, control=control)
+    assert _gids(lease.fetch_page(searched, None, control=control)) == ("gid://shopify/Product/1",)
 
 
 def test_portable_activation_rejects_tamper_without_replacing_the_active_generation(
@@ -504,6 +573,8 @@ def test_current_evidence_binding_rejects_malformed_and_unreadable_state(
     active = case.backend._active
     assert runtime_api._evidence_binding_is_current(object()) is False
     assert runtime_api._evidence_binding_is_current(replace(active, cursor_codec=object())) is False
+    assert runtime_api._evidence_binding_is_current(replace(active, search=object())) is False
+    assert runtime_api._evidence_binding_is_current(replace(active, facets=object())) is False
 
     generation = active.verified.generation
     source = replace(generation.source_manifest, parts=(generation.source_manifest.parts[0],))
@@ -664,6 +735,174 @@ def test_gate_rejects_foreign_lease_and_binding_mismatch_is_value_free(
     )
 
 
+@pytest.mark.no_cover
+def test_service_traverses_over_30000_and_keeps_search_and_filter_under_two_seconds(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Close #33 at the real service boundary without promoting shipped gates."""
+
+    record_count = 30_001
+    target_id = record_count
+    target_name = "Runtime Exact Target"
+    template = bundle_helpers._product("1")
+    template_variant = template.variants[0]
+    records_list = []
+    for product_id in range(1, record_count + 1):
+        product_gid = f"gid://shopify/Product/{product_id}"
+        inventory = 0 if product_id == target_id else 2
+        records_list.append(
+            replace(
+                template,
+                product_gid=product_gid,
+                handle=f"runtime-card-{product_id}",
+                commercial_title=f"Runtime Card {product_id}",
+                canonical_card_name=(
+                    target_name
+                    if product_id == target_id
+                    else f"Synthetic Runtime Card {product_id:05d}"
+                ),
+                powertools_source_id=str(product_id),
+                sync_source_id=str(product_id),
+                total_inventory=inventory,
+                variants=(
+                    replace(
+                        template_variant,
+                        product_gid=product_gid,
+                        variant_gid=f"gid://shopify/ProductVariant/{product_id}",
+                        inventory_item_gid=f"gid://shopify/InventoryItem/{product_id}",
+                        sku=f"RUNTIME-{product_id}",
+                        inventory_quantity=inventory,
+                    ),
+                ),
+            )
+        )
+    records = tuple(records_list)
+    _, _, generation = bundle_helpers._generation(records)
+    verified = VerifiedReconciledGenerationV1(generation, "a" * 64)
+    projection = build_catalog_projection(
+        tmp_path / "runtime-30001.sqlite3",
+        manifest=generation.dataset_manifest,
+        records=records,
+    )
+    evidence = core_evidence._new_evidence(
+        shop_domain=bundle_helpers.SHOP,
+        summary_sha256=verified.summary_sha256,
+        dataset_generation=generation.dataset_manifest.dataset_generation,
+        catalog_content_sha256=generation.dataset_manifest.catalog_content_sha256,
+        projection_fingerprint=projection._file_fingerprint.content_sha256,
+        code_sha=CODE_SHA,
+    )
+    backend = EvidenceBoundCatalogBackend(
+        verified,
+        projection,
+        CursorCodecV1(CURSOR_KEY, ttl_seconds=1_800),
+        evidence,
+        expected_code_sha=CODE_SHA,
+        clock=lambda: CURSOR_NOW,
+    )
+    gate = EvidenceBoundCapabilityGate(backend)
+    verifier = proxy_helpers._verifier(
+        config=proxy_helpers._config(
+            allowed_shops=frozenset({bundle_helpers.SHOP}),
+        )
+    )
+    authorizer = AppProxyVerifierAuthorizer(verifier)
+    endpoint = "/proxy/catalog"
+    service = runtime_api.RuntimeCatalogService(
+        expected_shop_domain=bundle_helpers.SHOP,
+        backend=backend,
+        authorizer=authorizer,
+        capability_gate=gate,
+        endpoint_path=endpoint,
+    )
+    signed_pairs = [
+        (name, bundle_helpers.SHOP if name == "shop" else value)
+        for name, value in proxy_helpers._base_pairs()
+    ]
+    raw_query = proxy_helpers._signed_query(signed_pairs)
+
+    monkeypatch.setattr(CatalogRequestV1, "require_executable", lambda _self: None)
+    monkeypatch.setattr(
+        runtime_api.CatalogPageV1,
+        "require_output_capability",
+        lambda _self: None,
+    )
+    monkeypatch.setattr(runtime_api, "_contract_output_is_verified", lambda: True)
+    assert runtime_api._runtime_composition_is_evidence_bound(authorizer, backend, gate)
+
+    def call(
+        request: CatalogRequestV1,
+        cursor: str | None = None,
+    ) -> tuple[runtime_api.CatalogResponseEnvelopeV1, float]:
+        body = CatalogRequestEnvelopeV1(request, cursor).to_json_bytes()
+        http_request = runtime_api.RuntimeHttpRequest(
+            method="POST",
+            path=endpoint,
+            raw_query=raw_query,
+            headers=(
+                (b"content-type", b"application/json"),
+                (b"content-length", str(len(body)).encode("ascii")),
+            ),
+            body_chunks=(body,),
+        )
+        started = perf_counter()
+        response = service.catalog(http_request)
+        elapsed = perf_counter() - started
+        assert response.status == 200
+        return runtime_api.CatalogResponseEnvelopeV1.from_json_bytes(response.body), elapsed
+
+    browse = _request(page_size=100)
+    cursor: str | None = None
+    seen_cursors: set[str] = set()
+    traversed: list[str] = []
+    for _page_number in range(302):
+        envelope, _elapsed = call(browse, cursor)
+        traversed.extend(item.product_gid for item in envelope.page.items)
+        cursor = envelope.next_cursor
+        if cursor is None:
+            break
+        assert cursor not in seen_cursors
+        seen_cursors.add(cursor)
+    else:
+        pytest.fail("service traversal did not terminate")
+
+    assert len(traversed) == record_count
+    assert len(set(traversed)) == record_count
+    assert traversed[24_998:25_001] == [
+        "gid://shopify/Product/24999",
+        "gid://shopify/Product/25000",
+        "gid://shopify/Product/25001",
+    ]
+    assert traversed[-1] == f"gid://shopify/Product/{target_id}"
+
+    searched, search_elapsed = call(
+        _request(
+            family=RequestFamily.SINGLE,
+            query=target_name,
+            page_size=100,
+        )
+    )
+    assert tuple(item.product_gid for item in searched.page.items) == (
+        f"gid://shopify/Product/{target_id}",
+    )
+    assert searched.next_cursor is None
+    assert search_elapsed < 2.0
+
+    filtered, filter_elapsed = call(
+        _request(
+            family=RequestFamily.SINGLE,
+            in_stock=False,
+            page_size=100,
+        )
+    )
+    assert tuple(item.product_gid for item in filtered.page.items) == (
+        f"gid://shopify/Product/{target_id}",
+    )
+    assert filtered.next_cursor is None
+    assert filter_elapsed < 2.0
+
+
 class _TriggeredCancellation:
     def __init__(self, error: RequestCancelled) -> None:
         self.active = False
@@ -696,13 +935,13 @@ def test_runtime_paths_propagate_identical_cancellation(
         monkeypatch.setattr(runtime_api, "search_single_cards", entering_search)
         request = _request(family=RequestFamily.SINGLE, query="Shared magic")
     elif phase == "facets":
-        original_facets = runtime_api.evaluate_facets
+        original_facets = runtime_api.PreparedFacetCatalog.evaluate
 
         def entering_facets(*args: Any, **kwargs: Any) -> Any:
             trigger.active = True
             return original_facets(*args, **kwargs)
 
-        monkeypatch.setattr(runtime_api, "evaluate_facets", entering_facets)
+        monkeypatch.setattr(runtime_api.PreparedFacetCatalog, "evaluate", entering_facets)
         request = _request(in_stock=True)
     else:
         original_rows = CatalogProjection._product_rows

@@ -129,13 +129,25 @@ terminal state, and opaque-cursor presence to remain consistent. A concurrent ba
 cannot cause a second selection within the request.
 
 Browse requests without `q` or filters, including a concrete family, use
-`CatalogPaginator` and its SQLite Product-GID keyset. Search uses `search_single_cards`; search and
-filter results are composed through `evaluate_facets`, then paged as an immutable tuple by the same
-numeric Product-GID keyset. `CursorCodecV1` binds the full request, generation, final Product GID,
-expiry, endpoint, and contract version under HMAC. Query/filter cursors are authenticated before
-running either in-memory oracle, so invalid input cannot force a catalog scan. No path uses
-`OFFSET`. Facet counts and search suggestions remain internal in this slice; the wire response is
-only the canonical page plus opaque cursor.
+`CatalogPaginator` and its SQLite Product-GID keyset. A generation prepares both the accepted #9
+search index and #10 facet catalog once during activation. Request-time search and filtering reuse
+those immutable facts without rebuilding or serializing the complete Product/Variant graph.
+Search results and prepared facet results are paged as an immutable tuple by the same numeric
+Product-GID keyset. `CursorCodecV1` binds the full request, generation, final Product GID, expiry,
+endpoint, and contract version under HMAC. Query/filter cursors are authenticated before running
+either accepted engine, so invalid input cannot force a catalog scan. No path uses `OFFSET`.
+Facet counts and search suggestions remain internal in this slice; the wire response is only the
+canonical page plus opaque cursor.
+
+The synthetic service integration traverses 30,001 Products through 301 HTTP-boundary requests
+with no duplicate or missing Product GID, including the 25,000 boundary. On the same prepared
+generation, an exact search and a full-catalog inventory filter each complete within the default
+two-second request deadline. This timing/traversal test uses pytest-cov's `no_cover` marker so
+instrumentation does not distort the production request budget; the ordinary runtime suite covers
+the same implementation at 100% statement and branch coverage. Test-only monkeypatches open only
+the three documented static gates; the real App Proxy verifier, evidence-bound backend, concrete
+capability gate, cursor codec, search index, facet catalog, and service boundary remain in the
+exercised path.
 
 Errors are serialized only through the frozen `CatalogErrorV1` messages. Request values,
 exception text, SQL, paths, secrets, and signed query material are never copied into the response.
