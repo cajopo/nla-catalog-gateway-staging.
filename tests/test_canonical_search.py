@@ -332,12 +332,16 @@ def test_prepared_index_construction_and_requests_remain_fail_closed_and_cancell
     object.__setattr__(wrong_entry_type, "_seal", prepared._seal)
     with pytest.raises(CanonicalSearchError, match="prepared search index is invalid"):
         wrong_entry_type.search(game=Game.MAGIC, query="bolt")
+    with pytest.raises(CanonicalSearchError, match="prepared search index is invalid"):
+        wrong_entry_type.search(game=Game.MAGIC, query=" \t\n ")
 
     wrong_game_order = object.__new__(SingleCardSearchIndex)
     object.__setattr__(wrong_game_order, "_games", tuple(reversed(prepared._games)))
     object.__setattr__(wrong_game_order, "_seal", prepared._seal)
     with pytest.raises(CanonicalSearchError, match="prepared search index is invalid"):
         wrong_game_order.search(game=Game.MAGIC, query="bolt")
+    with pytest.raises(CanonicalSearchError, match="prepared search index is invalid"):
+        wrong_game_order.search(game=Game.MAGIC, query=" \t\n ")
 
     with pytest.raises(CanonicalSearchError, match="canonical Game"):
         prepared.search(game="magic", query="bolt")  # type: ignore[arg-type]
