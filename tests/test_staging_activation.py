@@ -648,9 +648,17 @@ def test_secure_lock_open_covers_posix_and_windows_failure_cleanup(
         )
         with pytest.raises(OSError):
             staging_activation._windows_create_lock_handle(tmp_path / "reparse")
+        create_file.result = 123
+        assert staging_activation._windows_create_lock_handle(tmp_path / "lock") == 123
         staging_activation._windows_close_handle(123)
     assert create_file.calls
     assert close_handle.calls
+
+    with monkeypatch.context() as context:
+        context.setattr(staging_activation.os, "name", "nt")
+        context.setattr(staging_activation, "_open_windows_lock_file", lambda _path: sentinel)
+        assert staging_activation._open_operator_lock(posix_path) is sentinel
+        assert staging_activation._fsync_directory(tmp_path) is None
 
     closed: list[int] = []
     conversion_failure = SimpleNamespace(
@@ -663,10 +671,24 @@ def test_secure_lock_open_covers_posix_and_windows_failure_cleanup(
             "import_module",
             lambda _name: conversion_failure,
         )
+        context.setattr(staging_activation.os, "O_BINARY", 0, raising=False)
         context.setattr(staging_activation, "_windows_close_handle", closed.append)
         with pytest.raises(OSError):
             staging_activation._open_windows_lock_file(tmp_path / "conversion-failure")
     assert closed == [456]
+
+    opened = object()
+    conversion_success = SimpleNamespace(open_osfhandle=lambda *_args: 789)
+    with monkeypatch.context() as context:
+        context.setattr(staging_activation, "_windows_create_lock_handle", lambda _path: 456)
+        context.setattr(
+            staging_activation.importlib,
+            "import_module",
+            lambda _name: conversion_success,
+        )
+        context.setattr(staging_activation.os, "O_BINARY", 0, raising=False)
+        context.setattr(staging_activation, "_binary_file_from_descriptor", lambda _fd: opened)
+        assert staging_activation._open_windows_lock_file(tmp_path / "success") is opened
 
     descriptor_closes: list[int] = []
     with monkeypatch.context() as context:
