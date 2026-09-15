@@ -2,6 +2,13 @@
 
 Issue: #48
 
+Current extension (#67, 2026-09-15): standalone proofs described below stay
+ephemeral. The internal measurement runner now accepts `retain_projection=True`
+only as an explicit packaging opt-in. It returns the verified projection handle
+after all existing checks pass; any failed proof still cleans the projection.
+Packaging owns subsequent failure cleanup and publishes these exact bytes instead
+of rebuilding. Report schema/bindings and public proof behavior are unchanged.
+
 This workstream is a local, read-only, value-free acceptance gate over one
 `VerifiedReconciledGenerationV1`. It independently derives the expected public
 Product GIDs, exercises all four games and all supported request families through

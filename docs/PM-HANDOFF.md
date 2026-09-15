@@ -1,5 +1,20 @@
 # PM handoff — Next Level Arena catalog gateway
 
+## Latest packaging handoff — 2026-09-15 (#67)
+
+Applicata una semplificazione concreta dell'audit: il packaging costruisce il DB una
+sola volta e consegna proprio quello verificato, senza ripetere la costruzione.
+Nessuna prova di completezza, ricerca o integrità rimossa. I 122 test mirati passano;
+i due moduli modificati sono coperti al 100%. Review indipendente APPROVE; altre 233
+regressioni passano, compreso il traversal HTTP su 30.001 prodotti. CI del nuovo SHA
+ancora richiesta. La CI del parent #66 è stata cancellata al limite di 15 minuti
+durante la suite grande: non è verde e non autorizza merge.
+Nessun pacchetto reale nuovo, deploy o intervento Shopify. Gli export grezzi nelle
+cartelle temporanee storiche risultano assenti: servirà recuperarli o riacquisirli
+in sola lettura. Il vecchio pacchetto non equivale a dati attuali.
+L'app Shopify collegata non restituisce precedenti Bulk riutilizzabili; altre app
+possono avere una cronologia diversa. Nessun nuovo export è stato ancora avviato.
+
 ## Latest data handoff — 2026-09-15 (#65)
 
 Recuperati i quattro CSV originali: non serve ricaricarli. Il nuovo candidato porta

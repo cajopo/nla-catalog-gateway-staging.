@@ -1,8 +1,8 @@
 """Value-free acceptance evidence for the existing real catalog cores.
 
 This module is an integration gate, not a serving or capability boundary. It
-materializes one caller-selected projection only long enough to exercise the
-existing pagination implementation, and removes that projection before returning.
+materializes one caller-selected projection to exercise the existing cores.
+Standalone proofs remove it; packaging may retain the exact successful artifact.
 """
 
 from __future__ import annotations
@@ -98,6 +98,7 @@ class _OperationalMeasurements:
 class _VerificationResult:
     evidence: VerifiedCatalogCoreEvidenceV1
     measurements: _OperationalMeasurements
+    projection: CatalogProjection | None = None
 
 
 def _report_bytes(result: _VerificationResult) -> bytes:
@@ -555,7 +556,11 @@ def _verify(
     verified: VerifiedReconciledGenerationV1,
     projection_path: Path,
     code_sha: str,
+    *,
+    retain_projection: bool = False,
 ) -> _VerificationResult:
+    if type(retain_projection) is not bool:
+        raise CatalogCoreEvidenceError(_ERROR)
     if type(verified) is not VerifiedReconciledGenerationV1:
         raise CatalogCoreEvidenceError(_ERROR)
     if type(projection_path) is not _CONCRETE_PATH_TYPE or not projection_path.is_absolute():
@@ -585,6 +590,7 @@ def _verify(
     shop_domain = parts[0].shop_domain
 
     projection = None
+    completed = False
     try:
         started = time.perf_counter_ns()
         projection = build_catalog_projection(
@@ -617,7 +623,7 @@ def _verify(
             raise CatalogCoreEvidenceError(_ERROR)
         fingerprint = reopened._file_fingerprint.content_sha256
         manifest = generation.dataset_manifest
-        return _VerificationResult(
+        result = _VerificationResult(
             evidence=_new_evidence(
                 shop_domain=shop_domain,
                 summary_sha256=checked.summary_sha256,
@@ -636,9 +642,12 @@ def _verify(
                 search_query_count=search_query_count,
                 facet_evaluation_count=facet_evaluation_count,
             ),
+            projection=reopened if retain_projection else None,
         )
+        completed = True
+        return result
     finally:
-        if projection is not None:
+        if projection is not None and not (retain_projection and completed):
             _remove_projection(projection.path)
 
 
@@ -647,9 +656,15 @@ def _verify_with_measurements(
     *,
     projection_path: Path,
     code_sha: str,
+    retain_projection: bool = False,
 ) -> _VerificationResult:
+    """Optionally hand the exact successful projection to its packaging owner.
+
+    Failed proofs still remove their projection. The owner must clean retained
+    output if a later packaging step fails; standalone proof stays ephemeral.
+    """
     try:
-        result = _verify(verified, projection_path, code_sha)
+        result = _verify(verified, projection_path, code_sha, retain_projection=retain_projection)
     except Exception:
         rejected = True
     else:

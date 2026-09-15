@@ -2,7 +2,11 @@
 
 ## Current goal overlay — 2026-09-15
 
-Current action: #65 / `agent/source-card-codes` on #64. Recovered source CSVs remove
+Current action: #67 / `agent/staging-single-build` on #66 (`fbe3cfc`). Package the exact
+core-verified projection with one build, preserving every gate. This is a bounded
+audit simplification, not a rewrite. See `ws-09c-single-build-package.md`.
+
+Previous action: #65 / `agent/source-card-codes` on #64. Recovered source CSVs remove
 the source-location blocker. Carry collector metadata through the existing verified
 join and SQL/API path; see `ws-01h-card-metadata.md`. Full goal stays unchanged.
 

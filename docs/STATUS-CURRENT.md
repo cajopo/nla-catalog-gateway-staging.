@@ -1,5 +1,26 @@
 # NLA catalog gateway — current status
 
+## Current packaging simplification — 2026-09-15 (#67)
+
+- Branch `agent/staging-single-build` on source-metadata head `fbe3cfc` (#66).
+- Packaging builds once and retains the exact projection that passed every core
+  check. Standalone proofs remain ephemeral; failed proofs still remove output.
+- 122 focused tests pass; both changed implementation modules have 100% coverage.
+  Tests assert one build, unchanged file identity/fingerprint, rejection of bytes
+  changed after proof, and cleanup after proof/publication failures.
+- Independent review APPROVE (22 checks independently passed); 233 additional runtime,
+  sync-publication and activation regressions pass, including the 30,001-product HTTP
+  traversal. Ruff over all 57 Python files and package build pass; exact-head CI pending.
+- Parent #66 CodeQL passed but CI run `35018638110` was cancelled at the 15-minute
+  quality-job limit during the large search suite. Parent is not mergeable; no bypass.
+  No new real package or deployment.
+- Rechecked historical raw/reconciled/canonical temporary directories: no files.
+  The historical staging package and recovered original CSVs remain distinct inputs;
+  no stale package is relabeled as a current verified catalog.
+- Shopify read-only export inventory returned no bulk operations for the connected app
+  (not a claim about operations belonging to other apps); fresh acquisition remains open.
+- See `docs/workstreams/ws-09c-single-build-package.md`. Full storefront goal stays open.
+
 ## Current source metadata candidate — 2026-09-15 (#65)
 
 - Branch `agent/source-card-codes`, parent `94d95ad` (#64) now CI/CodeQL green.

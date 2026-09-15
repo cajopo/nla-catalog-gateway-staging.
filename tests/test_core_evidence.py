@@ -190,6 +190,52 @@ def test_evidence_has_no_public_constructor_or_pickle_reduction() -> None:
     _assert_fixed_error(lambda: evidence.__reduce_ex__(5))
 
 
+def test_packaging_can_retain_only_the_exact_successful_projection(tmp_path: Path) -> None:
+    path = tmp_path / "retained.sqlite3"
+    result = core_evidence._verify_with_measurements(
+        _verified(), projection_path=path, code_sha=CODE_SHA, retain_projection=True
+    )
+    assert result.projection is not None
+    assert result.projection.path == path
+    assert result.projection._file_fingerprint.content_sha256 == (
+        result.evidence.projection_fingerprint
+    )
+    assert not path.stat().st_mode & (stat.S_IWUSR | stat.S_IWGRP | stat.S_IWOTH)
+    report = json.loads(core_evidence._report_bytes(result))
+    assert report["bindings"]["projectionFingerprint"] == result.evidence.projection_fingerprint
+    assert "projection" not in report
+
+
+@pytest.mark.parametrize("retain", [None, 0, 1, "true"])
+def test_retention_option_requires_boolean(tmp_path: Path, retain: object) -> None:
+    path = tmp_path / "invalid-retention.sqlite3"
+    _assert_fixed_error(
+        lambda: core_evidence._verify_with_measurements(
+            _verified(), projection_path=path, code_sha=CODE_SHA, retain_projection=retain
+        )
+    )
+    assert not path.exists()
+
+
+@pytest.mark.parametrize("stage", ["pagination", "search", "facets", "sync"])
+def test_retained_projection_is_removed_on_any_failed_core(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, stage: str
+) -> None:
+    path = tmp_path / "failed-core.sqlite3"
+
+    def reject(*_args: object) -> None:
+        assert path.exists()
+        raise RuntimeError("sensitive")
+
+    monkeypatch.setattr(core_evidence, "_verify_" + stage, reject)
+    _assert_fixed_error(
+        lambda: core_evidence._verify_with_measurements(
+            _verified(), projection_path=path, code_sha=CODE_SHA, retain_projection=True
+        )
+    )
+    assert not path.exists()
+
+
 @pytest.mark.parametrize("value", ["bad", "gid://shopify/Product/0", object()])
 def test_gid_key_rejects_noncanonical_values(value: object) -> None:
     _assert_fixed_error(lambda: core_evidence._gid_key(value))  # type: ignore[arg-type]
