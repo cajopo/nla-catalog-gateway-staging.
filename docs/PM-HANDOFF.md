@@ -1,6 +1,19 @@
 # PM handoff — Next Level Arena catalog gateway
 
-## Current handoff — 2026-09-15
+## Latest runtime handoff — 2026-09-15 (#62)
+
+`agent/runtime-verified-output` is based on `162edb4` (#61, now fully CI green).
+Concrete service output/readiness uses existing evidence-bound authorization; no static
+global enable switch. Default/unsigned/obsolete-proof paths still deny. Proof schema v2
+checks real SQL semantics against source records; package filenames remain v1, but old
+proof contents are rejected. Removed unused prepared search/facet/item copies; retained
+single-name bounds in projection validation. See the current runtime workstream document.
+Review approved after a query-normalization P2 fix; 368 focused tests pass, changed
+modules at 100% coverage, plus the separate 30,001-product signed service traversal.
+Build, preflight and scoped Ruff pass; exact-head remote CI still required.
+No real package acceptance, provider deployment or clone integration. The full goal stays open.
+
+## Previous search handoff — 2026-09-15
 
 Issue #60 is implementing the actual name-or-code substring requirement on
 `agent/search-name-code-v2`, based on unmerged #57. Runtime result pagination now uses

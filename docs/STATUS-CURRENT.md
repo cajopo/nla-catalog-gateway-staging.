@@ -1,6 +1,21 @@
 # NLA catalog gateway — current status
 
-## Current working update — 2026-09-15 (#60)
+## Current runtime candidate — 2026-09-15 (#62)
+
+- Branch `agent/runtime-verified-output`, based on `162edb4` (#61). No merge/deployment.
+- The concrete authenticated service now relies on its verified generation gate, instead
+  of three unconditional static denials. Default/missing dependencies still fail closed.
+- Core proof schema v2 checks current SQL search/suggestions; obsolete proof reports are
+  rejected. Runtime assembly no longer builds unused search/facet/public-item copies.
+- Signed HTTP/ASGI and readiness tests exercise actual gates without activation overrides.
+  Independent review found and resolved one sampled-query-normalization P2. 368 focused
+  regressions pass; four changed modules have 100% coverage. The 30,001-product signed
+  service traversal passes without activation overrides. No real-package activation claimed.
+- The preceding `162edb4` is now fully CI/CodeQL green (runs `35006893228`/`35006893235`).
+- Printed codes, real package rebuild/acceptance, clone, durable sync, deployment and E2E
+  still remain. Source CSV location is still awaiting input. Shopify/PowerTools/MAIN untouched.
+
+## Previous search checkpoint — 2026-09-15 (#60)
 
 - Main is `22787055bbfa676b6700af0611fe5530186d3d5e`; dependency PRs through #57
   remain open. The search branch is `agent/search-name-code-v2`, based on #57

@@ -13,19 +13,16 @@ import secrets
 import stat
 import time
 import unicodedata
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
-from nla_catalog_gateway.canonical_search import (
-    MatchTier,
-    report_missing_canonical_names,
-    search_single_cards,
-)
+from nla_catalog_gateway.canonical_search import report_missing_canonical_names
 from nla_catalog_gateway.facets import FacetDimension, FacetEvaluation, evaluate_facets
 from nla_catalog_gateway.generation_bundle import VerifiedReconciledGenerationV1
 from nla_catalog_gateway.pagination import (
     AtomicCatalogActivation,
     CatalogPaginator,
+    CatalogProjection,
     CursorCodecV1,
     build_catalog_projection,
 )
@@ -45,6 +42,7 @@ _CODE_SHA_PATTERN = re.compile(r"[0-9a-f]{40}\Z")
 _PRODUCT_GID_PATTERN = re.compile(r"gid://shopify/Product/([1-9][0-9]*)\Z")
 _ERROR = "catalog core evidence verification failed"
 _PAGE_SIZE = 100
+CORE_VERIFICATION_VERSION = 2
 _PUBLIC_FAMILIES = (
     ProductFamily.SINGLE,
     ProductFamily.SEALED,
@@ -72,6 +70,7 @@ class VerifiedCatalogCoreEvidenceV1:
     catalog_content_sha256: str = field(repr=False)
     projection_fingerprint: str = field(repr=False)
     code_sha: str = field(repr=False)
+    verification_version: int = field(repr=False)
 
     def __new__(cls, *_args: object, **_kwargs: object) -> VerifiedCatalogCoreEvidenceV1:
         raise CatalogCoreEvidenceError(_ERROR)
@@ -106,6 +105,12 @@ def _report_bytes(result: _VerificationResult) -> bytes:
 
     if type(result) is not _VerificationResult:
         raise ValueError
+    if (
+        type(result.evidence) is not VerifiedCatalogCoreEvidenceV1
+        or type(result.evidence.verification_version) is not int
+        or result.evidence.verification_version != CORE_VERIFICATION_VERSION
+    ):
+        raise ValueError
     measurements = result.measurements
     if type(measurements) is not _OperationalMeasurements:
         raise ValueError
@@ -139,7 +144,7 @@ def _report_bytes(result: _VerificationResult) -> bytes:
             "durationNanoseconds": durations,
             "operationCounts": counts,
             "result": "ACCEPTED",
-            "schemaVersion": 1,
+            "schemaVersion": CORE_VERIFICATION_VERSION,
         },
         allow_nan=False,
         ensure_ascii=False,
@@ -227,7 +232,11 @@ def _expected_normalized_name(value: str) -> str:
     return " ".join(unicodedata.normalize("NFKC", value).casefold().split())
 
 
-def _verify_search(records: tuple[CatalogProductRecordV1, ...]) -> int:
+def _verify_search(
+    records: tuple[CatalogProductRecordV1, ...],
+    paginator: CatalogPaginator,
+    projection: CatalogProjection,
+) -> int:
     by_gid = {record.product_gid: record for record in records}
     if len(by_gid) != len(records):
         raise CatalogCoreEvidenceError(_ERROR)
@@ -262,42 +271,86 @@ def _verify_search(records: tuple[CatalogProductRecordV1, ...]) -> int:
         )
         if not searchable:
             raise CatalogCoreEvidenceError(_ERROR)
-        groups: dict[str, list[CatalogProductRecordV1]] = {}
-        for record in searchable:
-            normalized = _expected_normalized_name(record.canonical_card_name or "")
-            groups.setdefault(normalized, []).append(record)
-        samples = [
-            searchable[index] for index in sorted({0, len(searchable) // 2, len(searchable) - 1})
-        ]
-        multi_print = next((group[0] for group in groups.values() if len(group) > 1), None)
-        if multi_print is not None:
-            samples.append(multi_print)
-        seen_queries: set[str] = set()
-        for selected in samples:
-            normalized_selected = _expected_normalized_name(selected.canonical_card_name or "")
-            if normalized_selected in seen_queries:
+        facts = tuple(
+            (
+                record,
+                _expected_normalized_name(record.canonical_card_name or ""),
+                tuple(
+                    _expected_normalized_name(code)
+                    for variant in record.variants
+                    for code in (variant.sku, variant.barcode)
+                    if code
+                ),
+                any(variant.inventory_quantity > 0 for variant in record.variants),
+            )
+            for record in searchable
+        )
+        samples = [facts[index] for index in sorted({0, len(facts) // 2, len(facts) - 1})]
+        queries = {name[:256] for _, name, _, _ in samples}
+        queries.update(name[-4:] for _, name, _, _ in samples)
+        queries.update(code[:256] for _, _, codes, _ in samples for code in codes[:1])
+        for raw_query in sorted(queries):
+            query = _expected_normalized_name(raw_query)
+            if not query:
                 continue
-            seen_queries.add(normalized_selected)
-            expected_hit_gids = tuple(
-                record.product_gid
-                for record in sorted(searchable, key=lambda record: _gid_key(record.product_gid))
-                if _expected_normalized_name(record.canonical_card_name or "")
-                == normalized_selected
-            )
-            result = search_single_cards(
-                records,
-                game=game,
-                query=selected.canonical_card_name or "",
-            )
-            query_count += 1
-            actual_hits = tuple((hit.product_gid, hit.match_tier) for hit in result.hits)
-            expected_hits = tuple((gid, MatchTier.EXACT) for gid in expected_hit_gids)
-            if (
-                result.match_tier is not MatchTier.EXACT
-                or len(actual_hits) != len(set(actual_hits))
-                or actual_hits != expected_hits
-            ):
-                raise CatalogCoreEvidenceError(_ERROR)
+            for stock in (None, False, True):
+                request = replace(
+                    _request(game, RequestFamily.SINGLE),
+                    query=raw_query,
+                    filters=CatalogFiltersV1(in_stock=stock, product_subtype=None),
+                )
+                expected = [
+                    fact
+                    for fact in facts
+                    if (query in fact[1] or any(query in code for code in fact[2]))
+                    and (stock is None or fact[3] is stock)
+                ]
+                actual_gids: list[str] = []
+                cursor = None
+                for _ in range(max(1, (len(expected) + _PAGE_SIZE - 1) // _PAGE_SIZE)):
+                    page = paginator.fetch_page(request, cursor=cursor)
+                    actual_gids.extend(item.product_gid for item in page.page.items)
+                    cursor = page.next_cursor
+                    if cursor is None:
+                        break
+                if cursor is not None or actual_gids != [fact[0].product_gid for fact in expected]:
+                    raise CatalogCoreEvidenceError(_ERROR)
+                groups: dict[str, list[tuple[str, bool]]] = {}
+                for record, name, _, available in expected:
+                    groups.setdefault(name, []).append(
+                        (record.canonical_card_name or "", available)
+                    )
+                names = sorted(
+                    groups,
+                    key=lambda name: (
+                        0 if name == query else 1 if name.startswith(query) else 2,
+                        name,
+                    ),
+                )[:10]
+                expected_suggestions = tuple(
+                    (
+                        min(name for name, _ in groups[key]),
+                        key,
+                        len(groups[key]),
+                        sum(available for _, available in groups[key]),
+                    )
+                    for key in names
+                )
+                suggestions = projection.suggest(request, limit=10)
+                if (
+                    tuple(
+                        (
+                            s.canonical_card_name,
+                            s.normalized_card_name,
+                            s.print_count,
+                            s.available_print_count,
+                        )
+                        for s in suggestions
+                    )
+                    != expected_suggestions
+                ):
+                    raise CatalogCoreEvidenceError(_ERROR)
+                query_count += 1
     return query_count
 
 
@@ -477,6 +530,7 @@ def _new_evidence(
     object.__setattr__(evidence, "catalog_content_sha256", catalog_content_sha256)
     object.__setattr__(evidence, "projection_fingerprint", projection_fingerprint)
     object.__setattr__(evidence, "code_sha", code_sha)
+    object.__setattr__(evidence, "verification_version", CORE_VERIFICATION_VERSION)
     return evidence
 
 
@@ -536,7 +590,7 @@ def _verify(
         pagination_page_count = _verify_pagination(paginator, expected_by_request)
         pagination_traversal_nanoseconds = time.perf_counter_ns() - started
         started = time.perf_counter_ns()
-        search_query_count = _verify_search(records)
+        search_query_count = _verify_search(records, paginator, projection)
         search_query_nanoseconds = time.perf_counter_ns() - started
         started = time.perf_counter_ns()
         facet_evaluation_count = _verify_facets(records)

@@ -27,13 +27,14 @@ from nla_catalog_gateway.app_proxy_security import (
 from nla_catalog_gateway.canonical_search import (
     MAX_CANONICAL_NAME_CODEPOINTS,
     CanonicalSearchError,
-    SingleCardSearchIndex,
     SingleCardSuggestion,
     normalize_search_text,
-    prepare_single_card_search,
 )
-from nla_catalog_gateway.core_evidence import VerifiedCatalogCoreEvidenceV1
-from nla_catalog_gateway.facets import FacetContractError, PreparedFacetCatalog
+from nla_catalog_gateway.core_evidence import (
+    CORE_VERIFICATION_VERSION,
+    VerifiedCatalogCoreEvidenceV1,
+)
+from nla_catalog_gateway.facets import FacetContractError
 from nla_catalog_gateway.generation_bundle import VerifiedReconciledGenerationV1
 from nla_catalog_gateway.pagination import (
     AtomicCatalogActivation,
@@ -50,9 +51,7 @@ from nla_catalog_gateway.pagination import (
 )
 from nla_catalog_gateway.runtime_contract import (
     CONTRACT_VERSION,
-    DEFAULT_CAPABILITIES_V1,
     MAX_CONTRACT_BYTES,
-    CapabilityState,
     CatalogErrorCode,
     CatalogErrorV1,
     CatalogItemV1,
@@ -64,7 +63,6 @@ from nla_catalog_gateway.runtime_contract import (
     RuntimeContractError,
 )
 from nla_catalog_gateway.staging_generation import VerifiedStagingGenerationV1
-from nla_catalog_gateway.taxonomy import ProductFamily
 
 MAX_REQUEST_BODY_BYTES = 64 * 1024
 MAX_RESPONSE_BODY_BYTES = MAX_CONTRACT_BYTES
@@ -100,7 +98,6 @@ _CURSOR_RE = re.compile(r"[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\Z")
 _GENERATION_RE = re.compile(r"sha256:[0-9a-f]{64}\Z")
 _SHA256_RE = re.compile(r"[0-9a-f]{64}\Z")
 _CODE_SHA_RE = re.compile(r"[0-9a-f]{40}\Z")
-_PRODUCT_GID_RE = re.compile(r"gid://shopify/Product/([1-9][0-9]*)\Z")
 _HEADER_NAME_RE = re.compile(rb"[!#$%&'*+\-.^_`|~0-9A-Za-z]+\Z")
 _SHOP_RE = re.compile(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.myshopify\.com\Z")
 
@@ -462,9 +459,6 @@ class _EvidenceBoundGeneration:
     cursor_codec: CursorCodecV1 = field(repr=False)
     evidence: VerifiedCatalogCoreEvidenceV1 = field(repr=False)
     records: tuple[CatalogProductRecordV1, ...] = field(repr=False)
-    items: tuple[CatalogItemV1, ...] = field(repr=False)
-    search: SingleCardSearchIndex = field(repr=False, compare=False)
-    facets: PreparedFacetCatalog = field(repr=False, compare=False)
     paginator: CatalogPaginator = field(repr=False)
     clock: Callable[[], datetime] = field(repr=False, compare=False)
     binding: tuple[str, str, str, str, str, str] = field(repr=False)
@@ -1171,8 +1165,6 @@ class RuntimeCatalogService:
                 self._capability_gate,
             ):
                 return _health_response(503, "not_ready")
-            if not _contract_output_is_verified():
-                return _health_response(503, "not_ready")
             lease = self._acquire(control)
             try:
                 _, lease_shop = _lease_identity(lease)
@@ -1361,11 +1353,6 @@ class RuntimeCatalogService:
         request: CatalogRequestV1,
         control: RequestControl,
     ) -> None:
-        try:
-            request.require_executable()
-        except RuntimeContractError as exc:
-            control.checkpoint()
-            raise CatalogBackendFailure(CatalogErrorCode.UNSUPPORTED_CAPABILITY) from exc
         try:
             result = self._capability_gate.require_catalog(lease, request, control=control)
         except CatalogBackendFailure:
@@ -1616,16 +1603,6 @@ def _validated_headers(headers: Any, limits: RuntimeLimits) -> int | None:
     return content_length
 
 
-def _product_gid_key(product_gid: str) -> tuple[int, str]:
-    if type(product_gid) is not str:
-        raise RuntimeApiContractError("catalog Product GID is invalid")
-    match = _PRODUCT_GID_RE.fullmatch(product_gid)
-    if match is None:
-        raise RuntimeApiContractError("catalog Product GID is invalid")
-    digits = match.group(1)
-    return len(digits), digits
-
-
 def _canonical_request(request: object) -> bool:
     if type(request) is not CatalogRequestV1:
         return False
@@ -1761,6 +1738,8 @@ def _assemble_evidence_bound_generation(
         type(projection) is not CatalogProjection
         or type(cursor_codec) is not CursorCodecV1
         or type(evidence) is not VerifiedCatalogCoreEvidenceV1
+        or type(evidence.verification_version) is not int
+        or evidence.verification_version != CORE_VERIFICATION_VERSION
         or type(manifest) is not DatasetManifestV1
         or type(records) is not tuple
         or type(expected_code_sha) is not str
@@ -1806,28 +1785,17 @@ def _assemble_evidence_bound_generation(
         or _SHA256_RE.fullmatch(binding[4]) is None
     ):
         raise RuntimeApiContractError("catalog runtime binding is invalid")
-    public_items = [
-        CatalogItemV1.from_product_record(record)
-        for record in records
-        if record.publishable and record.product_family is not ProductFamily.UNCLASSIFIED
-    ]
-    public_items.sort(key=lambda item: _product_gid_key(item.product_gid))
     paginator = CatalogPaginator(
         AtomicCatalogActivation(reopened),
         codec,
         clock=clock,
     )
-    search = prepare_single_card_search(records)
-    facets = PreparedFacetCatalog(tuple(public_items))
     return _EvidenceBoundGeneration(
         verified=verified,
         projection=reopened,
         cursor_codec=codec,
         evidence=evidence,
         records=records,
-        items=tuple(public_items),
-        search=search,
-        facets=facets,
         paginator=paginator,
         clock=clock,
         binding=binding,
@@ -1845,8 +1813,8 @@ def _evidence_binding_is_current(generation: _EvidenceBoundGeneration) -> bool:
             type(projection) is not CatalogProjection
             or type(generation.cursor_codec) is not CursorCodecV1
             or type(evidence) is not VerifiedCatalogCoreEvidenceV1
-            or type(generation.search) is not SingleCardSearchIndex
-            or type(generation.facets) is not PreparedFacetCatalog
+            or type(evidence.verification_version) is not int
+            or evidence.verification_version != CORE_VERIFICATION_VERSION
             or type(generation.paginator) is not CatalogPaginator
         ):
             return False
@@ -1991,7 +1959,6 @@ def _validated_result(
         raise _OutputContractFailure
     try:
         page = CatalogPageV1.from_json_bytes(value.page.to_json_bytes())
-        page.require_output_capability()
         request_bytes = request.to_json_bytes()
         page_request_bytes = page.request.to_json_bytes()
         next_cursor = _validated_cursor(value.next_cursor, cursor_char_limit)
@@ -2054,16 +2021,6 @@ def _error_response(status: int, code: CatalogErrorCode) -> RuntimeHttpResponse:
 def _health_response(status: int, state: str) -> RuntimeHttpResponse:
     body = _canonical_json_bytes({"contractVersion": CONTRACT_VERSION, "status": state})
     return RuntimeHttpResponse(status=status, headers=_JSON_HEADERS, body=body)
-
-
-def _contract_output_is_verified() -> bool:
-    try:
-        return all(
-            DEFAULT_CAPABILITIES_V1.feature_state(name) is CapabilityState.VERIFIED
-            for name in ("activeIndex", "catalogOutput", "cursorCodec")
-        )
-    except Exception:
-        return False
 
 
 def _release_lease(

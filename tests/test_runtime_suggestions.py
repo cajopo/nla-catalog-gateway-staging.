@@ -11,6 +11,7 @@ import test_app_proxy_security as proxy
 import test_generation_bundle as bundle
 import test_runtime_api as api
 import test_runtime_api_integration as integration
+import test_runtime_server as asgi
 from nla_catalog_gateway import runtime_api
 from nla_catalog_gateway.canonical_search import SingleCardSuggestion
 from nla_catalog_gateway.pagination import CatalogProjection
@@ -24,7 +25,7 @@ from nla_catalog_gateway.runtime_api import (
     RuntimeCatalogService,
     RuntimeHttpRequest,
 )
-from nla_catalog_gateway.runtime_contract import CatalogRequestV1, ProductStatus, RequestFamily
+from nla_catalog_gateway.runtime_contract import ProductStatus, RequestFamily
 from nla_catalog_gateway.taxonomy import Game
 
 
@@ -159,7 +160,7 @@ def test_reject_unsolicited_or_missing_backend_suggestions(requested):
 
 
 @pytest.fixture
-def http_case(tmp_path, monkeypatch):
+def http_case(tmp_path):
     def card(number, name, stock=0):
         record = bundle._product(str(number))
         return replace(
@@ -189,12 +190,13 @@ def http_case(tmp_path, monkeypatch):
         authorizer=AppProxyVerifierAuthorizer(verifier),
         endpoint_path="/proxy/catalog",
     )
-    # Only static activation gates are overridden, not App Proxy or evidence validation.
-    monkeypatch.setattr(CatalogRequestV1, "require_executable", lambda _self: None)
-    monkeypatch.setattr(runtime_api.CatalogPageV1, "require_output_capability", lambda _self: None)
+    # Real runtime gates, App Proxy signatures and evidence-bound leases: no overrides.
+    assert service.readiness().status == 200
+    case.service = service
     signed = proxy._signed_query(
         [(name, bundle.SHOP if name == "shop" else value) for name, value in proxy._base_pairs()]
     )
+    case.signed_query = signed
 
     def call(request, cursor=None, *, raw_query=signed, include_suggestions=None):
         if include_suggestions is None:
@@ -213,6 +215,45 @@ def http_case(tmp_path, monkeypatch):
         )
 
     return case, call
+
+
+@pytest.mark.parametrize("version", [1, 2.0, True])
+def test_runtime_rejects_obsolete_or_invalid_evidence_version(http_case, version):
+    case, call = http_case
+    object.__setattr__(case.evidence, "verification_version", version)
+    assert case.service.readiness().status == 503
+    assert call(_request()).status == 503
+    with pytest.raises(RuntimeApiContractError):
+        case.backend.activate(case.verified, case.projection, case.codec, case.evidence)
+
+
+def test_asgi_serves_verified_catalog_without_gate_overrides(http_case):
+    case, _ = http_case
+    app = asgi.create_runtime_app(case.service, app_proxy_path="/proxy/catalog")
+    assert asgi._status(asgi._invoke(app, method="GET", path="/readyz")) == 200
+    body = CatalogRequestEnvelopeV1(
+        _request("SET-019"), None, include_suggestions=True
+    ).to_json_bytes()
+    sent = asgi._invoke(
+        app,
+        path="/proxy/catalog",
+        query=case.signed_query,
+        headers=((b"content-type", b"application/json"),),
+        messages=({"type": "http.request", "body": body},),
+    )
+    assert asgi._status(sent) == 200
+    response = CatalogResponseEnvelopeV1.from_json_bytes(asgi._body(sent))
+    assert response.page.returned_product_count == 4
+    assert sum(s.print_count for s in response.suggestions) == 4
+    assert sum(s.available_print_count for s in response.suggestions) == 1
+    unsigned = asgi._invoke(
+        app,
+        path="/proxy/catalog",
+        headers=((b"content-type", b"application/json"),),
+        messages=({"type": "http.request", "body": body},),
+    )
+    assert asgi._status(unsigned) == 401
+    assert asgi._status(asgi._invoke(app, path="/catalog", query=case.signed_query)) == 400
 
 
 def test_http_suggestions_same_scope_counts_and_first_page_only(http_case):

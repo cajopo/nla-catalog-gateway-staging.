@@ -2,7 +2,10 @@
 
 Read-only catalog infrastructure for the Next Level Arena Shopify storefront.
 
-This repository is being rebuilt through isolated workstreams. The current foundation intentionally contains no production catalog API and no Shopify credentials or data artifacts. Runtime features enter only through their dedicated pull requests after the platform pipeline is green.
+This repository is being rebuilt through isolated workstreams. The current candidate contains
+an authenticated, read-only catalog runtime; it requires an external verified generation and
+host-only configuration. No deployment, Shopify credentials or catalog artifacts are included.
+See `docs/STATUS-CURRENT.md` for candidate/PR state and uncompleted deliveries.
 
 ## Approved system boundary
 

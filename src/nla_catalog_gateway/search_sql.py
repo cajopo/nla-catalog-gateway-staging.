@@ -10,6 +10,7 @@ import json
 import sqlite3
 
 from nla_catalog_gateway.canonical_search import (
+    MAX_CANONICAL_NAME_CODEPOINTS,
     MAX_QUERY_CODEPOINTS,
     CanonicalSearchError,
     SingleCardSuggestion,
@@ -20,6 +21,18 @@ from nla_catalog_gateway.runtime_contract import CatalogProductRecordV1, Catalog
 
 def search_facts(record: CatalogProductRecordV1) -> tuple[str, str, int]:
     """Derive reproducible search columns from an already validated Product."""
+    name = record.canonical_card_name or ""
+    normalized_name = normalize_search_text(name)
+    if (
+        record.publishable
+        and record.product_family.value == "single"
+        and (
+            not normalized_name
+            or len(name) > MAX_CANONICAL_NAME_CODEPOINTS
+            or len(normalized_name) > MAX_CANONICAL_NAME_CODEPOINTS
+        )
+    ):
+        raise CanonicalSearchError("public single canonical name is missing or exceeds its limit")
     codes = set()
     for variant in record.variants:
         for code in (variant.sku, variant.barcode):
@@ -32,7 +45,7 @@ def search_facts(record: CatalogProductRecordV1) -> tuple[str, str, int]:
             if normalized:
                 codes.add(normalized)
     return (
-        normalize_search_text(record.canonical_card_name or ""),
+        normalized_name,
         json.dumps(sorted(codes), ensure_ascii=False, separators=(",", ":")),
         int(any(variant.inventory_quantity > 0 for variant in record.variants)),
     )

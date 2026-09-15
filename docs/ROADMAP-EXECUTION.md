@@ -2,6 +2,11 @@
 
 ## Current goal overlay — 2026-09-15
 
+Current work is #62 (`agent/runtime-verified-output`) on #61: make the verified runtime
+servable through the existing authenticated path, certify current SQL behavior and remove
+unused bootstrap copies. Real package acceptance/deployment are not implied. See current
+status and runtime workstream for proof-version migration and tests.
+
 Work resumes with #60 on `agent/search-name-code-v2`: SQLite literal name/code search and
 suggestions, sold-out cards and complete keyset traversal. Remaining: verified printed-code
 data, clone UI, runtime activation, durable updates, staging and E2E. Suggestions are now

@@ -101,6 +101,9 @@ def test_create_app_loads_pinned_generation_from_host_only_configuration(
     sent = asyncio.run(_invoke_health(app, "/livez"))
     assert sent[0]["status"] == 200
     assert sent[1]["body"] == b'{"contractVersion":1,"status":"live"}'
+    ready = asyncio.run(_invoke_health(app, "/readyz"))
+    assert ready[0]["status"] == 200
+    assert ready[1]["body"] == b'{"contractVersion":1,"status":"ready"}'
 
 
 def test_default_optional_limits_and_process_environment_are_supported(
