@@ -221,7 +221,13 @@ class _Backend:
         self.outcome = outcome
         self.calls = 0
 
-    def acquire(self, *, control: RequestControl) -> _Lease:
+    def acquire(
+        self,
+        *,
+        control: RequestControl,
+        request: CatalogRequestV1 | None = None,
+        cursor: str | None = None,
+    ) -> _Lease:
         control.checkpoint()
         self.calls += 1
         if isinstance(self.outcome, BaseException):
@@ -723,7 +729,13 @@ def test_two_concurrent_requests_each_keep_their_acquired_generation(
             self.active = lease_a
             self.lock = threading.Lock()
 
-        def acquire(self, *, control: RequestControl) -> _Lease:
+        def acquire(
+            self,
+            *,
+            control: RequestControl,
+            request: CatalogRequestV1 | None = None,
+            cursor: str | None = None,
+        ) -> _Lease:
             control.checkpoint()
             with self.lock:
                 return self.active

@@ -77,6 +77,7 @@ MAX_HEADER_BYTES = 32 * 1024
 MAX_BODY_CHUNKS = 128
 DEFAULT_REQUEST_TIMEOUT_MS = 2_000
 MAX_PUBLIC_SUGGESTIONS = 10
+MAX_CURSOR_GENERATIONS = 8
 
 _MAX_REQUEST_TIMEOUT_MS = 30_000
 _MAX_RAW_QUERY_BYTES = 64 * 1024
@@ -343,7 +344,13 @@ class CatalogGenerationLease(Protocol):
 class CatalogBackend(Protocol):
     """Future adapter that atomically acquires one immutable generation lease."""
 
-    def acquire(self, *, control: RequestControl) -> CatalogGenerationLease: ...
+    def acquire(
+        self,
+        *,
+        control: RequestControl,
+        request: CatalogRequestV1 | None = None,
+        cursor: str | None = None,
+    ) -> CatalogGenerationLease: ...
 
 
 class RuntimeCapabilityGate(Protocol):
@@ -377,7 +384,13 @@ class DenyAllProxyAuthorizer:
 class UnavailableCatalogBackend:
     """Safe default until the accepted #7 projection adapter is available."""
 
-    def acquire(self, *, control: RequestControl) -> CatalogGenerationLease:
+    def acquire(
+        self,
+        *,
+        control: RequestControl,
+        request: CatalogRequestV1 | None = None,
+        cursor: str | None = None,
+    ) -> CatalogGenerationLease:
         del control
         raise CatalogBackendFailure(CatalogErrorCode.DATASET_UNAVAILABLE)
 
@@ -464,6 +477,18 @@ class _EvidenceBoundGeneration:
     binding: tuple[str, str, str, str, str, str] = field(repr=False)
 
 
+@dataclass(slots=True)
+class _CursorRetention:
+    generation: _EvidenceBoundGeneration = field(repr=False)
+    leases: int = 0
+    expires_at: datetime | None = None
+
+
+def _cursor_generation_key(generation: _EvidenceBoundGeneration) -> tuple[object, ...]:
+    codec = generation.cursor_codec
+    return generation.binding, codec.secret, codec.ttl_seconds
+
+
 class EvidenceBoundCatalogBackend:
     """Atomically select one complete, immutable evidence-bound generation."""
 
@@ -471,6 +496,7 @@ class EvidenceBoundCatalogBackend:
         "_activation_token",
         "_active",
         "_clock",
+        "_cursor_generations",
         "_expected_code_sha",
         "_lock",
         "_token",
@@ -492,6 +518,7 @@ class EvidenceBoundCatalogBackend:
         self._activation_token = object()
         self._expected_code_sha = expected_code_sha
         self._clock = runtime_clock
+        self._cursor_generations: dict[tuple[object, ...], _CursorRetention] = {}
         self._active = _new_evidence_bound_generation(
             verified,
             projection,
@@ -527,6 +554,7 @@ class EvidenceBoundCatalogBackend:
         backend._activation_token = object()
         backend._expected_code_sha = expected_code_sha
         backend._clock = runtime_clock
+        backend._cursor_generations = {}
         backend._active = candidate
         return backend
 
@@ -557,8 +585,7 @@ class EvidenceBoundCatalogBackend:
             clock=self._clock,
         )
         with self._lock:
-            self._active = candidate
-            self._activation_token = object()
+            self._install_candidate(candidate)
 
     def activate_if_current(
         self,
@@ -584,8 +611,7 @@ class EvidenceBoundCatalogBackend:
                 or candidate.binding[0] != self._active.binding[0]
             ):
                 raise RuntimeApiContractError("catalog runtime binding is invalid")
-            self._active = candidate
-            self._activation_token = object()
+            self._install_candidate(candidate)
 
     def activate_staging_generation(
         self,
@@ -601,18 +627,104 @@ class EvidenceBoundCatalogBackend:
             clock=self._clock,
         )
         with self._lock:
-            self._active = candidate
-            self._activation_token = object()
+            self._install_candidate(candidate)
 
-    def acquire(self, *, control: RequestControl) -> EvidenceBoundCatalogLease:
+    def _now(self) -> datetime:
+        now = self._clock()
+        if type(now) is not datetime or now.tzinfo is not UTC:
+            raise PaginationContractError("pagination clock must return a UTC datetime")
+        return now
+
+    def _prune_cursor_generations(self, now: datetime) -> None:
+        # Only release memory/keys. Package files are never deleted here.
+        expired = [
+            key
+            for key, slot in self._cursor_generations.items()
+            if slot.leases == 0 and (slot.expires_at is None or slot.expires_at <= now)
+        ]
+        for key in expired:
+            del self._cursor_generations[key]
+
+    def _install_candidate(self, candidate: _EvidenceBoundGeneration) -> None:
+        # Caller owns the backend lock. Never evict a still-usable cursor to activate.
+        self._prune_cursor_generations(self._now())
+        if (
+            _cursor_generation_key(candidate) not in self._cursor_generations
+            and len(self._cursor_generations) >= MAX_CURSOR_GENERATIONS
+        ):
+            raise RuntimeApiContractError("catalog cursor retention capacity is exhausted")
+        self._active = candidate
+        self._activation_token = object()
+
+    def _select_cursor_generation(
+        self, cursor: str, request: CatalogRequestV1, now: datetime
+    ) -> _EvidenceBoundGeneration:
+        candidates = [
+            self._active,
+            *(slot.generation for slot in self._cursor_generations.values()),
+        ]
+        authenticated = False
+        for generation in candidates:
+            try:
+                context = generation.cursor_codec.decode(cursor, expected_request=request, now=now)
+            except (CursorContextMismatchError, CursorExpiredError):
+                raise
+            except InvalidCursorError:
+                continue
+            authenticated = True
+            if context.dataset_generation == generation.binding[2]:
+                return generation
+        if authenticated:
+            raise StaleGenerationError("cursor dataset generation is unavailable")
+        raise InvalidCursorError("cursor token is invalid")
+
+    def _release_cursor_lease(self, slot: _CursorRetention) -> None:
+        with self._lock:
+            slot.leases -= 1
+
+    def _retain_cursor(self, slot: _CursorRetention, expires_at: str) -> None:
+        expires = datetime.fromisoformat(expires_at.replace("Z", "+00:00"))
+        with self._lock:
+            if slot.expires_at is None or expires > slot.expires_at:
+                slot.expires_at = expires
+
+    def acquire(
+        self,
+        *,
+        control: RequestControl,
+        request: CatalogRequestV1 | None = None,
+        cursor: str | None = None,
+    ) -> EvidenceBoundCatalogLease:
         if type(control) is not RequestControl:
             raise CatalogBackendFailure(CatalogErrorCode.TEMPORARILY_UNAVAILABLE)
         control.checkpoint()
-        with self._lock:
-            lease = EvidenceBoundCatalogLease(
-                backend_token=self._token,
-                generation=self._active,
-            )
+        try:
+            with self._lock:
+                now = self._now()
+                self._prune_cursor_generations(now)
+                generation = self._active
+                if cursor is not None:
+                    if request is None:
+                        raise InvalidCursorError("cursor request is missing")
+                    generation = self._select_cursor_generation(cursor, request, now)
+                key = _cursor_generation_key(generation)
+                slot = self._cursor_generations.get(key)
+                if slot is None:
+                    if len(self._cursor_generations) >= MAX_CURSOR_GENERATIONS:
+                        raise PaginationContractError(
+                            "catalog cursor retention capacity is exhausted"
+                        )
+                    slot = _CursorRetention(generation)
+                    self._cursor_generations[key] = slot
+                slot.leases += 1
+                lease = EvidenceBoundCatalogLease(
+                    backend_token=self._token,
+                    generation=generation,
+                    on_close=lambda: self._release_cursor_lease(slot),
+                    on_cursor=lambda expires: self._retain_cursor(slot, expires),
+                )
+        except Exception as exc:
+            raise CatalogBackendFailure(_catalog_execution_error_code(exc)) from None
         try:
             control.checkpoint()
         except BaseException:
@@ -624,13 +736,22 @@ class EvidenceBoundCatalogBackend:
 class EvidenceBoundCatalogLease:
     """One pinned generation; close is idempotent and prevents later reads."""
 
-    __slots__ = ("_backend_token", "_closed", "_generation", "_lock")
+    __slots__ = ("_backend_token", "_closed", "_generation", "_lock", "_on_close", "_on_cursor")
 
-    def __init__(self, *, backend_token: object, generation: _EvidenceBoundGeneration) -> None:
+    def __init__(
+        self,
+        *,
+        backend_token: object,
+        generation: _EvidenceBoundGeneration,
+        on_close: Callable[[], None],
+        on_cursor: Callable[[str], None],
+    ) -> None:
         self._backend_token = backend_token
         self._generation = generation
         self._lock = threading.Lock()
         self._closed = False
+        self._on_close = on_close
+        self._on_cursor = on_cursor
 
     @property
     def dataset_generation(self) -> str:
@@ -670,12 +791,17 @@ class EvidenceBoundCatalogLease:
                 failure_code = None
             if failure_code is not None:
                 raise CatalogBackendFailure(failure_code)
+            context = result.page.next_cursor_context
+            if context is not None:
+                self._on_cursor(context.expires_at)
             control.checkpoint()
             return result
 
     def close(self) -> None:
         with self._lock:
-            self._closed = True
+            if not self._closed:
+                self._closed = True
+                self._on_close()
 
     def _authorized_generation(self, backend_token: object) -> _EvidenceBoundGeneration | None:
         with self._lock:
@@ -1245,7 +1371,7 @@ class RuntimeCatalogService:
             cursor_char_limit=self._limits.max_cursor_chars,
         )
         control.checkpoint()
-        lease = self._acquire(control)
+        lease = self._acquire(control, request=envelope.request, cursor=envelope.cursor)
         try:
             lease_generation, lease_shop = _lease_identity(lease)
             if lease_shop != self._expected_shop_domain:
@@ -1331,9 +1457,15 @@ class RuntimeCatalogService:
             raise RuntimeApiContractError("request body length is invalid")
         return b"".join(parts)
 
-    def _acquire(self, control: RequestControl) -> CatalogGenerationLease:
+    def _acquire(
+        self,
+        control: RequestControl,
+        *,
+        request: CatalogRequestV1 | None = None,
+        cursor: str | None = None,
+    ) -> CatalogGenerationLease:
         try:
-            lease = self._backend.acquire(control=control)
+            lease = self._backend.acquire(control=control, request=request, cursor=cursor)
         except CatalogBackendFailure:
             control.checkpoint()
             raise
