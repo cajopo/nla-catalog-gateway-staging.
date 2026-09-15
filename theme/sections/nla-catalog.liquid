@@ -1,0 +1,18 @@
+<section class="nla-catalog-section">
+  <h1>{{ 'nla_catalog.title' | t }}</h1>
+  {% render 'nla-catalog-search', instance_id: section.id, mode: 'page', endpoint: section.settings.endpoint %}
+</section>
+
+{% stylesheet %}
+  .nla-catalog-section { max-width: 1440px; margin: 0 auto; padding: 24px 16px; background: #0d0e12; color: #f6f8fb; }
+{% endstylesheet %}
+
+{% schema %}
+{
+  "name": "t:nla_catalog.name",
+  "settings": [
+    { "type": "text", "id": "endpoint", "label": "t:nla_catalog.endpoint", "info": "t:nla_catalog.endpoint_help" }
+  ],
+  "presets": [{ "name": "t:nla_catalog.name" }]
+}
+{% endschema %}

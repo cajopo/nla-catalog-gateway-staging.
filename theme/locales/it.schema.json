@@ -1,0 +1,6 @@
+{
+  "nla_catalog": {
+    "name": "Catalogo NLA", "endpoint": "Percorso App Proxy",
+    "endpoint_help": "Percorso /apps/ del gateway staging verificato sullo stesso dominio. Lascia vuoto finché non è collegato."
+  }
+}

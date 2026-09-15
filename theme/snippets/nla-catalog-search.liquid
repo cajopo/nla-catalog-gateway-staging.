@@ -1,0 +1,354 @@
+{% doc %}
+Renders game-scoped gateway search without native predictive-search fallback.
+@param {string} instance_id - Unique instance identifier.
+@param {string} [mode] - Header or page presentation.
+@param {string} [endpoint] - Configured same-origin App Proxy path.
+{% enddoc %}
+
+<nla-catalog-search
+  data-mode="{{ mode | default: 'page' | escape }}"
+  data-endpoint="{{ endpoint | escape }}"
+  data-search-url="{{ routes.search_url }}"
+  data-root-url="{{ routes.root_url }}"
+  data-currency="{{ shop.currency | escape }}"
+>
+  <form role="search" hidden>
+    <div class="nla-catalog__bar">
+      <label>
+        <span>{{ 'nla_catalog.game' | t }}</span>
+        <select name="game" required>
+          <option value="">{{ 'nla_catalog.choose_game' | t }}</option>
+          <option value="magic">{{ 'nla_catalog.magic' | t }}</option>
+          <option value="pokemon">{{ 'nla_catalog.pokemon' | t }}</option>
+          <option value="yugioh">{{ 'nla_catalog.yugioh' | t }}</option>
+          <option value="one-piece">{{ 'nla_catalog.one_piece' | t }}</option>
+        </select>
+      </label>
+      <label class="nla-catalog__query">
+        <span>{{ 'nla_catalog.search_label' | t }}</span>
+        <input name="q" type="search" maxlength="256" autocomplete="off" spellcheck="false"
+          role="combobox" aria-autocomplete="list" aria-expanded="false"
+          aria-controls="NlaSuggestions-{{ instance_id | escape }}"
+          placeholder="{{ 'nla_catalog.placeholder' | t | escape }}">
+      </label>
+      <button type="submit">{{ 'nla_catalog.search' | t }}</button>
+    </div>
+    <label class="nla-catalog__stock">
+      <input name="stock" type="checkbox"> {{ 'nla_catalog.stock_only' | t }}
+    </label>
+    <ul id="NlaSuggestions-{{ instance_id | escape }}" class="nla-catalog__suggestions"
+      role="listbox" aria-label="{{ 'nla_catalog.suggestions' | t | escape }}" hidden></ul>
+  </form>
+  <p class="nla-catalog__status" role="status" aria-live="polite" aria-atomic="true"></p>
+  <div class="nla-catalog__recovery" hidden>
+    <button type="button" data-action="retry">{{ 'nla_catalog.retry' | t }}</button>
+    <button type="button" data-action="restart">{{ 'nla_catalog.restart' | t }}</button>
+  </div>
+  <div class="nla-catalog__page" hidden>
+    <h2 class="nla-catalog__heading" tabindex="-1"></h2>
+    <p>{{ 'nla_catalog.price_notice' | t }}</p>
+    <ul class="nla-catalog__results" role="list"></ul>
+    <nav aria-label="{{ 'nla_catalog.pagination' | t | escape }}">
+      <button type="button" data-action="first" hidden>{{ 'nla_catalog.first' | t }}</button>
+      <button type="button" data-action="next" hidden>{{ 'nla_catalog.next' | t }}</button>
+    </nav>
+  </div>
+  <div class="nla-catalog__messages" hidden>
+    <span data-message="loading">{{ 'nla_catalog.loading' | t }}</span>
+    <span data-message="empty">{{ 'nla_catalog.empty' | t }}</span>
+    <span data-message="results">{{ 'nla_catalog.results' | t }}</span>
+    <span data-message="suggestions">{{ 'nla_catalog.suggestions' | t }}</span>
+    <span data-message="unavailable">{{ 'nla_catalog.unavailable' | t }}</span>
+    <span data-message="unconfigured">{{ 'nla_catalog.unconfigured' | t }}</span>
+    <span data-message="restart">{{ 'nla_catalog.changed' | t }}</span>
+    <span data-message="invalid">{{ 'nla_catalog.invalid' | t }}</span>
+    <span data-message="sold_out">{{ 'nla_catalog.sold_out' | t }}</span>
+    <span data-message="in_stock">{{ 'nla_catalog.in_stock' | t }}</span>
+    <span data-message="unknown_price">{{ 'nla_catalog.unknown_price' | t }}</span>
+    <span data-message="image_notice">{{ 'nla_catalog.image_notice' | t }}</span>
+  </div>
+  <noscript><p>{{ 'nla_catalog.javascript_required' | t }}</p></noscript>
+</nla-catalog-search>
+
+{% stylesheet %}
+  nla-catalog-search { display: block; position: relative; min-width: 0; color: #f6f8fb; font: inherit; }
+  nla-catalog-search [hidden] { display: none !important; }
+  nla-catalog-search * { box-sizing: border-box; }
+  nla-catalog-search form { margin: 0; }
+  .nla-catalog__bar { display: flex; align-items: end; gap: 12px; }
+  .nla-catalog__bar label { display: grid; gap: 6px; min-width: 0; font-size: 14px; }
+  .nla-catalog__query { flex: 1; }
+  nla-catalog-search input[type="search"], nla-catalog-search select, nla-catalog-search button {
+    min-height: 44px; border: 1px solid #646a78; border-radius: 8px; padding: 10px 12px;
+    background: #15171d; color: #f6f8fb; font: inherit; max-width: 100%;
+  }
+  nla-catalog-search button { cursor: pointer; }
+  nla-catalog-search button:disabled { cursor: wait; opacity: .6; }
+  nla-catalog-search :focus-visible { outline: 3px solid #22c2f4; outline-offset: 3px; }
+  .nla-catalog__stock { display: flex; align-items: center; gap: 8px; min-height: 44px; }
+  .nla-catalog__stock input { width: 20px; height: 20px; }
+  .nla-catalog__suggestions { position: absolute; z-index: 80; left: 0; right: 0; margin: 0;
+    padding: 6px; max-height: 45vh; overflow: auto; list-style: none; background: #15171d;
+    border: 1px solid #22c2f4; border-radius: 8px; box-shadow: 0 12px 24px #0008; }
+  .nla-catalog__suggestions li { padding: 12px; cursor: pointer; overflow-wrap: anywhere; }
+  .nla-catalog__suggestions [aria-selected="true"], .nla-catalog__suggestions li:hover { background: #303846; }
+  .nla-catalog__status { min-height: 24px; margin: 8px 0; overflow-wrap: anywhere; }
+  .nla-catalog__page { margin-top: 24px; }
+  .nla-catalog__results { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+    gap: 16px; list-style: none; margin: 20px 0; padding: 0; }
+  .nla-catalog__results li { padding: 16px; border: 1px solid #535a68; border-radius: 12px;
+    background: #15171d; overflow-wrap: anywhere; }
+  .nla-catalog__results a { display: block; color: #8addfa; font-weight: 700; text-decoration: underline; }
+  .nla-catalog__results p { margin: 12px 0 0; }
+  .nla-catalog__page nav, .nla-catalog__recovery { display: flex; flex-wrap: wrap; gap: 12px; }
+  @media (max-width: 600px) {
+    .nla-catalog__bar { flex-wrap: wrap; }
+    .nla-catalog__bar label { flex-basis: 100%; }
+    .nla-catalog__bar button { width: 100%; }
+    .nla-catalog__results { grid-template-columns: minmax(0, 1fr); }
+  }
+{% endstylesheet %}
+
+{% javascript %}
+  if (!customElements.get('nla-catalog-search')) {
+    customElements.define('nla-catalog-search', class extends HTMLElement {
+      connectedCallback() {
+        if (this.events) return;
+        this.events = new AbortController();
+        this.sequence = 0;
+        this.form = this.querySelector('form');
+        this.game = this.form.elements.game;
+        this.input = this.form.elements.q;
+        this.stock = this.form.elements.stock;
+        this.list = this.querySelector('[role="listbox"]');
+        this.status = this.querySelector('[role="status"]');
+        this.page = this.querySelector('.nla-catalog__page');
+        this.results = this.querySelector('.nla-catalog__results');
+        this.recovery = this.querySelector('.nla-catalog__recovery');
+        this.heading = this.querySelector('h2');
+        this.form.hidden = false;
+        const on = (target, type, handler) => target.addEventListener(type, handler, { signal: this.events.signal });
+        on(this.form, 'submit', event => { event.preventDefault(); this.submit(); });
+        on(this.input, 'input', event => {
+          this.cancel(); this.hideSuggestions();
+          this.page.hidden = true;
+          if (!event.isComposing) this.timer = setTimeout(() => this.load({ suggest: true }), 250);
+        });
+        on(this.input, 'compositionend', () => {
+          this.cancel(); this.timer = setTimeout(() => this.load({ suggest: true }), 250);
+        });
+        on(this.game, 'change', () => {
+          this.cancel(); this.page.hidden = true; this.hideSuggestions();
+          if (this.dataset.mode === 'header') this.load({ suggest: true }); else this.submit();
+        });
+        on(this.stock, 'change', () => {
+          this.cancel(); this.hideSuggestions();
+          if (this.dataset.mode === 'header') this.load({ suggest: true }); else this.submit();
+        });
+        on(this.input, 'keydown', event => this.keydown(event));
+        on(this, 'focusout', event => {
+          if (!this.contains(event.relatedTarget)) {
+            clearTimeout(this.timer);
+            if (this.lastLoad?.suggest) this.cancel();
+            this.hideSuggestions();
+          }
+        });
+        on(this.list, 'pointerdown', event => event.preventDefault());
+        on(this.list, 'click', event => {
+          const item = event.target.closest('[role="option"]');
+          if (item) this.choose(Number(item.dataset.index));
+        });
+        on(this, 'click', event => {
+          const action = event.target.closest('[data-action]')?.dataset.action;
+          if (action === 'next') this.load({ cursor: this.nextCursor, generation: this.generation, navigate: true, saved: this.pageRequest });
+          if (action === 'first' || action === 'restart') this.submit();
+          if (action === 'retry' && this.lastLoad) this.load(this.lastLoad);
+        });
+        on(window, 'popstate', () => this.restore());
+        this.restore();
+      }
+
+      disconnectedCallback() {
+        this.cancel(); this.events?.abort(); this.events = null;
+      }
+
+      message(key) { return this.querySelector(`[data-message="${key}"]`).textContent; }
+
+      cancel() {
+        clearTimeout(this.timer); this.controller?.abort(); this.sequence += 1;
+      }
+
+      hideSuggestions() {
+        this.list.hidden = true; this.list.replaceChildren(); this.selected = -1;
+        this.input.setAttribute('aria-expanded', 'false'); this.input.removeAttribute('aria-activedescendant');
+      }
+
+      request() {
+        return { contractVersion: 1, game: this.game.value, productFamily: 'single', q: this.input.value.trim() || null,
+          filters: { inStock: this.stock.checked ? true : null, productSubtype: null }, pageSize: 24, sort: 'product_gid_asc' };
+      }
+
+      restore() {
+        this.cancel(); this.hideSuggestions();
+        this.page.hidden = true; this.recovery.hidden = true; this.results.replaceChildren();
+        this.nextCursor = null; this.generation = null; this.pageRequest = null; this.status.textContent = '';
+        const state = new URL(location.href).searchParams;
+        this.game.value = state.get('game') || '';
+        this.input.value = state.get('q') || '';
+        this.stock.checked = state.get('stock') === '1';
+        if (this.dataset.mode !== 'header') this.load({ cursor: state.get('cursor'), generation: state.get('generation') });
+      }
+
+      url(request, cursor = null, generation = null) {
+        const url = new URL(this.dataset.searchUrl, location.origin);
+        url.searchParams.set('view', 'nla-catalog'); url.searchParams.set('game', request.game);
+        if (request.q) url.searchParams.set('q', request.q);
+        if (request.filters.inStock) url.searchParams.set('stock', '1');
+        if (cursor) { url.searchParams.set('cursor', cursor); url.searchParams.set('generation', generation); }
+        const preview = new URL(location.href).searchParams.get('preview_theme_id');
+        if (preview) url.searchParams.set('preview_theme_id', preview);
+        return url;
+      }
+
+      submit() {
+        this.cancel(); this.hideSuggestions();
+        if (!this.form.reportValidity()) return;
+        if (this.dataset.mode === 'header') location.assign(this.url(this.request()));
+        else this.load({ navigate: true });
+      }
+
+      keydown(event) {
+        if (event.key === 'Escape') { this.cancel(); this.hideSuggestions(); return; }
+        const items = Array.from(this.list.children);
+        if (!items.length) return;
+        if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+          event.preventDefault();
+          this.selected = this.selected === -1
+            ? (event.key === 'ArrowDown' ? 0 : items.length - 1)
+            : (this.selected + (event.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length;
+          items.forEach((item, index) => item.setAttribute('aria-selected', String(index === this.selected)));
+          this.input.setAttribute('aria-activedescendant', items[this.selected].id);
+          items[this.selected].scrollIntoView({ block: 'nearest' });
+        }
+        if (event.key === 'Enter' && this.selected >= 0) { event.preventDefault(); this.choose(this.selected); }
+      }
+
+      choose(index) {
+        this.input.value = this.suggestions[index].canonicalCardName;
+        this.hideSuggestions(); this.submit();
+      }
+
+      async load(options = {}) {
+        this.cancel();
+        const sequence = this.sequence;
+        const request = options.saved || this.request();
+        if (!['magic', 'pokemon', 'yugioh', 'one-piece'].includes(request.game)) {
+          this.status.textContent = this.game.options[0].textContent; return;
+        }
+        if (options.suggest && !request.q) return;
+        this.lastLoad = options;
+        this.recovery.hidden = true;
+        if (!options.suggest) { this.page.hidden = true; this.status.textContent = this.message('loading'); }
+        let timer;
+        try {
+          const endpoint = new URL(this.dataset.endpoint, location.origin);
+          if (!this.dataset.endpoint || endpoint.origin !== location.origin || !endpoint.pathname.startsWith('/apps/') || endpoint.search || endpoint.hash) throw new Error('unconfigured');
+          if ((request.q?.length || 0) > 256 || (options.cursor?.length || 0) > 16384 || Boolean(options.cursor) !== Boolean(options.generation)) throw new Error('invalid');
+          const controller = new AbortController(); this.controller = controller;
+          timer = setTimeout(() => controller.abort(), 8000);
+          const body = { contractVersion: 1, cursor: options.cursor || null, request };
+          if (request.q && !body.cursor) body.includeSuggestions = true;
+          const response = await fetch(endpoint, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+            body: JSON.stringify(body), credentials: 'same-origin', signal: controller.signal, redirect: 'error', cache: 'no-store' });
+          const data = await response.json();
+          if (sequence !== this.sequence) return;
+          if (!response.ok) {
+            const code = data.error?.code || data.code;
+            throw new Error(['restart_required', 'invalid_cursor', 'cursor_context_mismatch'].includes(code) ? 'restart' : 'unavailable');
+          }
+          this.validate(data, body, options.generation);
+          if (options.suggest) {
+            if (this.contains(document.activeElement)) this.renderSuggestions(data.suggestions || []);
+          }
+          else {
+            this.hideSuggestions();
+            this.renderPage(data, request);
+            this.pageRequest = request; this.generation = data.page.datasetGeneration; this.nextCursor = data.nextCursor;
+            this.querySelector('[data-action="next"]').hidden = !data.nextCursor;
+            this.querySelector('[data-action="first"]').hidden = !options.cursor;
+            if (options.navigate) history.pushState(null, '', this.url(request, options.cursor, this.generation));
+            this.page.hidden = false;
+            if (options.navigate) this.heading.focus({ preventScroll: true });
+          }
+        } catch (error) {
+          if (sequence !== this.sequence) return;
+          const key = ['restart', 'invalid', 'unconfigured'].includes(error.message) ? error.message : 'unavailable';
+          this.hideSuggestions(); this.status.textContent = this.message(key); this.recovery.hidden = false;
+          this.querySelector('[data-action="retry"]').hidden = key === 'restart';
+          this.querySelector('[data-action="restart"]').hidden = key !== 'restart';
+        } finally { clearTimeout(timer); }
+      }
+
+      validate(data, body, generation) {
+        const page = data.page;
+        const same = (actual, expected) => Object.keys(expected).every(key =>
+          typeof expected[key] === 'object' && expected[key] !== null ? same(actual?.[key] || {}, expected[key]) : actual?.[key] === expected[key]);
+        if (data.contractVersion !== 1 || page?.contractVersion !== 1 || !same(page.request, body.request)
+          || !/^sha256:[a-f0-9]{64}$/.test(page.datasetGeneration) || (generation && page.datasetGeneration !== generation)
+          || !Array.isArray(page.items) || page.items.length > 24 || page.returnedProductCount !== page.items.length
+          || typeof page.hasNextPage !== 'boolean' || page.hasNextPage !== (data.nextCursor !== null)
+          || (data.nextCursor !== null && (typeof data.nextCursor !== 'string' || !data.nextCursor || data.nextCursor.length > 16384 || data.nextCursor === body.cursor))) throw new Error('unavailable');
+        const ids = new Set();
+        for (const item of page.items) {
+          if (!/^gid:\/\/shopify\/Product\/[1-9][0-9]*$/.test(item.productGid) || ids.has(item.productGid)
+            || item.game !== body.request.game || item.productFamily !== 'single' || typeof item.handle !== 'string' || !item.handle
+            || typeof item.canonicalCardName !== 'string' || typeof item.commercialTitle !== 'string'
+            || !Array.isArray(item.variants) || !item.variants.length) throw new Error('unavailable');
+          ids.add(item.productGid);
+          for (const variant of item.variants) {
+            if (typeof variant.priceText !== 'string' || !/^(0|[1-9][0-9]*)(\.[0-9]+)?$/.test(variant.priceText)
+              || !Number.isSafeInteger(variant.inventoryQuantity)) throw new Error('unavailable');
+          }
+        }
+        if (body.includeSuggestions && !Array.isArray(data.suggestions)) throw new Error('unavailable');
+        if (data.suggestions !== undefined && (!Array.isArray(data.suggestions) || data.suggestions.length > 10
+          || data.suggestions.some(item => typeof item.canonicalCardName !== 'string' || !item.canonicalCardName.trim()
+            || item.canonicalCardName.length > 1024 || !Number.isSafeInteger(item.matchingProductCount) || item.matchingProductCount < 1
+            || !Number.isSafeInteger(item.availableProductCount) || item.availableProductCount < 0 || item.availableProductCount > item.matchingProductCount))) throw new Error('unavailable');
+      }
+
+      renderSuggestions(suggestions) {
+        this.hideSuggestions(); this.suggestions = suggestions;
+        suggestions.forEach((item, index) => {
+          const li = document.createElement('li'); li.id = `${this.list.id}-${index}`; li.dataset.index = index;
+          li.setAttribute('role', 'option'); li.setAttribute('aria-selected', 'false');
+          li.textContent = `${item.canonicalCardName} (${item.matchingProductCount})${item.availableProductCount === 0 ? ' — ' + this.message('sold_out') : ''}`;
+          this.list.append(li);
+        });
+        this.list.hidden = !suggestions.length; this.input.setAttribute('aria-expanded', String(Boolean(suggestions.length)));
+        this.status.textContent = suggestions.length ? `${this.message('suggestions')}: ${suggestions.length}` : this.message('empty');
+      }
+
+      renderPage(data, request) {
+        const nodes = data.page.items.map(item => {
+          const li = document.createElement('li'); li.dataset.productGid = item.productGid;
+          const link = document.createElement('a'); link.textContent = item.commercialTitle;
+          const root = this.dataset.rootUrl.endsWith('/') ? this.dataset.rootUrl : this.dataset.rootUrl + '/';
+          link.href = root + 'products/' + encodeURIComponent(item.handle); li.append(link);
+          const append = text => { const p = document.createElement('p'); p.textContent = text; li.append(p); };
+          append(this.message('image_notice'));
+          append(this.message(item.variants.some(variant => variant.inventoryQuantity > 0) ? 'in_stock' : 'sold_out'));
+          const prices = item.variants.map(variant => variant.priceText);
+          const scale = Math.max(...prices.map(price => (price.split('.')[1] || '').length));
+          const value = price => { const [whole, decimal = ''] = price.split('.'); return BigInt(whole + decimal.padEnd(scale, '0')); };
+          const price = prices.reduce((a, b) => value(a) <= value(b) ? a : b);
+          append(value(price) > 0n ? `${price} ${this.dataset.currency}` : this.message('unknown_price'));
+          return li;
+        });
+        this.results.replaceChildren(...nodes);
+        this.heading.textContent = `${this.message('results')} — ${this.game.selectedOptions[0].textContent}${request.q ? ': ' + request.q : ''}`;
+        this.status.textContent = nodes.length ? `${this.message('results')}: ${nodes.length}` : this.message('empty');
+      }
+    });
+  }
+{% endjavascript %}

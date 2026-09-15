@@ -1,5 +1,16 @@
 # PM handoff — Next Level Arena catalog gateway
 
+## Latest clone UI handoff — 2026-09-15 (#14)
+
+Ripresa sul percorso cliente, senza riscrittura generale. Il candidato locale contiene un
+solo componente Liquid riutilizzabile: selettore gioco, suggerimenti, esauriti e paginazione
+con URL. Clone identificato in sola lettura e ancora UNPUBLISHED; nessun upload/MAIN.
+Runtime #63 verde in CI e CodeQL. Validazione Shopify: 7 file validi; test browser: 18 PASS.
+Corretti tre P2 di stato/focus e un P3 di tastiera; re-review indipendente APPROVE.
+Pronto per la PR dedicata; nessuna installazione clone o verifica E2E reale ancora dichiarata.
+Non è ancora il sito funzionante: mancano endpoint reale, installazione clone, dati/codici
+e immagini completi, aggiornamenti persistenti ed E2E. Dettagli in `ws-10-theme-clone.md`.
+
 ## Latest runtime handoff — 2026-09-15 (#62)
 
 `agent/runtime-verified-output` is based on `162edb4` (#61, now fully CI green).
