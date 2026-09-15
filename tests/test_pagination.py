@@ -919,15 +919,14 @@ def test_sql_is_keyset_only_and_all_data_values_are_bound() -> None:
     assert all("?" in sql for sql in sql_values)
 
 
-def test_request_scope_rejects_search_filters_and_forged_types(
+def test_request_scope_rejects_non_single_search_and_forged_types(
     tmp_path: Path,
 ) -> None:
     projection = _projection(tmp_path, (_record("1"),))
     paginator = _paginator(projection)
     with pytest.raises(UnsupportedPaginationRequestError, match="search"):
         paginator.fetch_page(_request(query="bolt"))
-    with pytest.raises(UnsupportedPaginationRequestError, match="filters"):
-        paginator.fetch_page(_request(in_stock=True))
+    assert paginator.fetch_page(_request(in_stock=True)).page.returned_product_count == 1
     with pytest.raises(PaginationContractError, match="CatalogRequestV1"):
         paginator.fetch_page(object())  # type: ignore[arg-type]
 

@@ -1,6 +1,16 @@
 # NLA catalog gateway — execution roadmap
 
-Last reconciled: 2026-09-01T02:59:58+02:00
+## Current goal overlay — 2026-09-15
+
+Work resumes with #60 on `agent/search-name-code-v2`: SQLite literal name/code search and
+suggestions, sold-out cards and complete keyset traversal. Remaining: verified printed-code
+data, public suggestions, clone UI, runtime activation, durable updates, staging and E2E.
+Dependency PRs through #57 remain unmerged; live remains Jacopo's #18 gate. STATUS-CURRENT
+and the #60 workstream distinguish executable evidence from pending work.
+
+The roadmap below is historical.
+
+Last reconciled (historical): 2026-09-01T02:59:58+02:00
 
 ## Dependency order
 

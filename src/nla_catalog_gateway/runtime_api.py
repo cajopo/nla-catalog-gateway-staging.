@@ -26,11 +26,9 @@ from nla_catalog_gateway.app_proxy_security import (
 )
 from nla_catalog_gateway.canonical_search import (
     CanonicalSearchError,
-    SearchMode,
     SingleCardSearchIndex,
     normalize_search_text,
     prepare_single_card_search,
-    search_single_cards,
 )
 from nla_catalog_gateway.core_evidence import VerifiedCatalogCoreEvidenceV1
 from nla_catalog_gateway.facets import FacetContractError, PreparedFacetCatalog
@@ -59,7 +57,6 @@ from nla_catalog_gateway.runtime_contract import (
     CatalogPageV1,
     CatalogProductRecordV1,
     CatalogRequestV1,
-    CursorContextV1,
     DatasetManifestV1,
     RequestFamily,
     RuntimeContractError,
@@ -1821,118 +1818,12 @@ def _fetch_evidence_bound_page(
     if not _canonical_request(request):
         raise CatalogBackendFailure(CatalogErrorCode.UNSUPPORTED_CAPABILITY)
     control.checkpoint()
-    if request.query in (None, "") and not request.filters.nonempty:
-        result = generation.paginator.fetch_page(
-            request,
-            cursor=cursor,
-            checkpoint=control.checkpoint,
-        )
-        return CatalogLeaseResult(result.page, result.next_cursor)
-
-    now = generation.clock()
-    if cursor is None:
-        context = CursorContextV1.from_request(
-            request,
-            generation.binding[2],
-            last_product_gid=None,
-            expires_at=generation.cursor_codec.expires_at(now),
-        )
-    else:
-        context = generation.cursor_codec.decode(
-            cursor,
-            expected_request=request,
-            expected_generation=generation.binding[2],
-            now=now,
-        )
-    control.checkpoint()
-    query_product_gids: tuple[str, ...] | None = None
-    if request.query not in (None, ""):
-        search = search_single_cards(
-            generation.search,
-            game=request.game,
-            query=request.query,
-            checkpoint=control.checkpoint,
-        )
-        if search.mode is SearchMode.BROWSE:
-            browse_gids: list[str] = []
-            for item in generation.items:
-                control.checkpoint()
-                if item.game is request.game and item.product_family is ProductFamily.SINGLE:
-                    browse_gids.append(item.product_gid)
-            query_product_gids = tuple(browse_gids)
-        else:
-            hit_gids: list[str] = []
-            for hit in search.hits:
-                control.checkpoint()
-                hit_gids.append(hit.product_gid)
-            query_product_gids = tuple(hit_gids)
-    evaluation = generation.facets.evaluate(
+    result = generation.paginator.fetch_page(
         request,
-        query_product_gids=query_product_gids,
+        cursor=cursor,
         checkpoint=control.checkpoint,
     )
-    return _keyset_tuple_page(
-        generation,
-        request,
-        context,
-        evaluation.items,
-        control=control,
-    )
-
-
-def _keyset_tuple_page(
-    generation: _EvidenceBoundGeneration,
-    request: CatalogRequestV1,
-    context: CursorContextV1,
-    items: tuple[CatalogItemV1, ...],
-    *,
-    control: RequestControl,
-) -> CatalogLeaseResult:
-    control.checkpoint()
-    after_key = (
-        None if context.last_product_gid is None else _product_gid_key(context.last_product_gid)
-    )
-    page_items: list[CatalogItemV1] = []
-    has_next_page = False
-    for item in items:
-        control.checkpoint()
-        item_key = _product_gid_key(item.product_gid)
-        if after_key is not None and item_key <= after_key:
-            continue
-        if len(page_items) == request.page_size:
-            has_next_page = True
-            break
-        page_items.append(item)
-    returned_variant_count = 0
-    for item in page_items:
-        control.checkpoint()
-        returned_variant_count += len(item.variants)
-    immutable_items = tuple(page_items)
-    next_context = (
-        CursorContextV1.from_request(
-            request,
-            generation.binding[2],
-            last_product_gid=immutable_items[-1].product_gid,
-            expires_at=context.expires_at,
-        )
-        if has_next_page
-        else None
-    )
-    page = CatalogPageV1(
-        dataset_generation=generation.binding[2],
-        request=request,
-        request_context_sha256=context.request_context_sha256,
-        items=immutable_items,
-        returned_product_count=len(immutable_items),
-        returned_variant_count=returned_variant_count,
-        has_next_page=has_next_page,
-        next_cursor_context=next_context,
-    )
-    page.validate_for_context(context)
-    control.checkpoint()
-    next_cursor = None if next_context is None else generation.cursor_codec.encode(next_context)
-    control.checkpoint()
-    return CatalogLeaseResult(page, next_cursor)
+    return CatalogLeaseResult(result.page, result.next_cursor)
 
 
 def _catalog_execution_error_code(error: Exception) -> CatalogErrorCode:

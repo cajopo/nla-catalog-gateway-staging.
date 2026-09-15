@@ -1,5 +1,25 @@
 # PM handoff — Next Level Arena catalog gateway
 
+## Current handoff — 2026-09-15
+
+Issue #60 is implementing the actual name-or-code substring requirement on
+`agent/search-name-code-v2`, based on unmerged #57. Runtime result pagination now uses
+SQLite for search and stock filters as well as plain browse; literal matching does not
+discard substring hits when an exact match exists. Sold-out products remain included.
+Suggestions are implemented at the database boundary, not yet on the public API/theme.
+SKU/barcode data are available in the record contract; printed collector codes still
+need a verified source join. No real dataset acceptance, deployment, clone integration
+or full sync completion is claimed. Independent review approved after one P2 fix. Final
+focused checks: 66 pagination/search cases at 100% module coverage, 149 runtime cases and
+78 contract cases. Full CI is pending. No Shopify writes.
+
+The historical staging SQLite package was recovered. Fresh read-only coverage shows
+291,787 public singles all with SKU and none with barcode. SKU format is not equivalent
+to the printed code; source CSVs were requested. Initial SQL suite: 20 passed, including
+30,001 code-only sold-out results without gaps. Runtime-contract suite: 78 passed.
+
+The older block below is historical and must not be copied as current status.
+
 Updated 2026-09-01T02:59:58+02:00.
 
 Copyable update:
