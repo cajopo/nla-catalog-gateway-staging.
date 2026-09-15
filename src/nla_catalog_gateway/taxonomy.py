@@ -13,6 +13,8 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import Any
 
+from nla_catalog_gateway.card_metadata import CardMetadataV1
+
 SUPPORTED_SCHEMA_VERSION = 1
 PRODUCT_GID_PATTERN = re.compile(r"gid://shopify/Product/[1-9][0-9]*\Z")
 PRODUCT_ID_TOKEN_PATTERN = re.compile(
@@ -59,6 +61,7 @@ class ProductFacts:
     source_record_type: str | None = None
     commercial_title: str = ""
     canonical_card_name: str | None = None
+    card_metadata: CardMetadataV1 | None = None
 
 
 @dataclass(frozen=True, slots=True)

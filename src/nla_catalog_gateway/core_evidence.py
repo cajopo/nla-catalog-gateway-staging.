@@ -280,6 +280,12 @@ def _verify_search(
                     for variant in record.variants
                     for code in (variant.sku, variant.barcode)
                     if code
+                )
+                + (
+                    (_expected_normalized_name(record.card_metadata.collector_number),)
+                    if record.card_metadata is not None
+                    and record.card_metadata.collector_number is not None
+                    else ()
                 ),
                 any(variant.inventory_quantity > 0 for variant in record.variants),
             )
@@ -289,6 +295,11 @@ def _verify_search(
         queries = {name[:256] for _, name, _, _ in samples}
         queries.update(name[-4:] for _, name, _, _ in samples)
         queries.update(code[:256] for _, _, codes, _ in samples for code in codes[:1])
+        queries.update(
+            _expected_normalized_name(record.card_metadata.collector_number)[:256]
+            for record, _, _, _ in samples
+            if record.card_metadata is not None and record.card_metadata.collector_number
+        )
         for raw_query in sorted(queries):
             query = _expected_normalized_name(raw_query)
             if not query:

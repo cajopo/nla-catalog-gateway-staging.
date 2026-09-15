@@ -1,5 +1,16 @@
 # PM handoff — Next Level Arena catalog gateway
 
+## Latest data handoff — 2026-09-15 (#65)
+
+Recuperati i quattro CSV originali: non serve ricaricarli. Il nuovo candidato porta
+numero carta, espansione e rarità fino all'API tramite ID verificati; numero carta
+ricercabile con suggerimenti, esauriti inclusi. Nessun codice composto inventato.
+Corretti tre problemi emersi su dati reali/review; 485 test passano e re-review APPROVE.
+Tutti i 332.667 record dei quattro CSV vengono letti; CI del nuovo head ancora richiesta.
+Passata anche la prova di 30.001 risultati cercati solo per numero carta, tutti esauriti.
+Parent PR #64 ora CI/CodeQL verde. Il percorso reale clone/staging resta da completare.
+Dettagli: `ws-01h-card-metadata.md`.
+
 ## Latest clone UI handoff — 2026-09-15 (#14)
 
 Ripresa sul percorso cliente, senza riscrittura generale. Il candidato locale contiene un

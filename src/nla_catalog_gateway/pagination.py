@@ -220,7 +220,7 @@ _EXPECTED_SCHEMA_SQL = {
 
 _FIRST_PAGE_ALL_SQL = """
 SELECT product_gid, handle, commercial_title, canonical_card_name,
-       game, product_family, product_subtype
+       game, product_family, product_subtype, product_record_json
 FROM products
 WHERE is_public = 1 AND game = ?
 ORDER BY product_gid_length, product_gid_digits
@@ -229,7 +229,7 @@ LIMIT ?
 
 _NEXT_PAGE_ALL_SQL = """
 SELECT product_gid, handle, commercial_title, canonical_card_name,
-       game, product_family, product_subtype
+       game, product_family, product_subtype, product_record_json
 FROM products
 WHERE is_public = 1 AND game = ?
   AND (product_gid_length, product_gid_digits) > (?, ?)
@@ -239,7 +239,7 @@ LIMIT ?
 
 _FIRST_PAGE_FAMILY_SQL = """
 SELECT product_gid, handle, commercial_title, canonical_card_name,
-       game, product_family, product_subtype
+       game, product_family, product_subtype, product_record_json
 FROM products
 WHERE is_public = 1 AND game = ? AND product_family = ?
 ORDER BY product_gid_length, product_gid_digits
@@ -248,7 +248,7 @@ LIMIT ?
 
 _NEXT_PAGE_FAMILY_SQL = """
 SELECT product_gid, handle, commercial_title, canonical_card_name,
-       game, product_family, product_subtype
+       game, product_family, product_subtype, product_record_json
 FROM products
 WHERE is_public = 1 AND game = ? AND product_family = ?
   AND (product_gid_length, product_gid_digits) > (?, ?)
@@ -788,7 +788,7 @@ class CatalogProjection:
                 parameters += (len(after_digits), after_digits)
             # Only fixed predicates are assembled; query/filter/cursor values stay bound.
             sql = f"""SELECT product_gid, handle, commercial_title, canonical_card_name,
-                             game, product_family, product_subtype
+                             game, product_family, product_subtype, product_record_json
                       FROM products WHERE {where}
                       ORDER BY product_gid_length, product_gid_digits LIMIT ?"""  # noqa: S608
             return connection.execute(sql, (*parameters, limit)).fetchall()
@@ -907,6 +907,9 @@ class CatalogProjection:
             product_family=ProductFamily(row["product_family"]),
             product_subtype=row["product_subtype"],
             variants=variants,
+            card_metadata=CatalogProductRecordV1.from_json_bytes(
+                row["product_record_json"]
+            ).card_metadata,
         )
 
 

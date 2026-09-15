@@ -18,13 +18,14 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import Any, BinaryIO, ClassVar
 
+from nla_catalog_gateway.card_metadata import CardMetadataV1, optional_card_metadata
 from nla_catalog_gateway.taxonomy import Game
 
 SCHEMA_VERSION = 1
 SIDECAR_FILENAME = "canonical-names.v1.jsonl"
 MANIFEST_FILENAME = "canonical-names-manifest.v1.json"
 MAX_MANIFEST_BYTES = 64 * 1024
-MAX_RECORD_BYTES = 8 * 1024
+MAX_RECORD_BYTES = 24 * 1024
 MAX_SOURCE_BYTES = 512 * 1024 * 1024
 MAX_CANONICAL_NAME_CODEPOINTS = 1024
 MAX_SOURCE_ID_DIGITS = 64
@@ -178,6 +179,7 @@ class CanonicalNameRecordV1:
     game: Game
     source_id: str
     canonical_card_name: str
+    card_metadata: CardMetadataV1 | None = None
 
     FIELDS: ClassVar[frozenset[str]] = frozenset({"canonicalCardName", "game", "sourceId"})
 
@@ -186,13 +188,18 @@ class CanonicalNameRecordV1:
             raise CanonicalNamesError("canonical-name game is invalid")
         _validated_source_id(self.source_id)
         _validated_name(self.canonical_card_name)
+        if self.card_metadata is not None and type(self.card_metadata) is not CardMetadataV1:
+            raise CanonicalNamesError("canonical-name card metadata is invalid")
 
-    def as_dict(self) -> dict[str, str]:
-        return {
+    def as_dict(self) -> dict[str, object]:
+        result: dict[str, object] = {
             "canonicalCardName": self.canonical_card_name,
             "game": self.game.value,
             "sourceId": self.source_id,
         }
+        if self.card_metadata is not None:
+            result["cardMetadata"] = self.card_metadata.as_dict()
+        return result
 
     def to_json_bytes(self) -> bytes:
         return _canonical_json_bytes(self.as_dict())
@@ -203,11 +210,13 @@ class CanonicalNameRecordV1:
             value = _strict_json(raw, context="canonical-name record", max_bytes=MAX_RECORD_BYTES)
             if type(value) is not dict:
                 raise CanonicalNamesError("canonical-name record must be an object")
-            _require_exact_keys(value, set(cls.FIELDS), "canonical-name record")
+            fields = cls.FIELDS | ({"cardMetadata"} if "cardMetadata" in value else set())
+            _require_exact_keys(value, set(fields), "canonical-name record")
             record = cls(
                 game=Game(value["game"]),
                 source_id=value["sourceId"],
                 canonical_card_name=value["canonicalCardName"],
+                card_metadata=optional_card_metadata(value),
             )
             if record.to_json_bytes() != raw:
                 raise CanonicalNamesError("canonical-name record is not canonical JSON")
@@ -466,11 +475,21 @@ def _load_csv_source(path: Path, game: Game) -> tuple[list[CanonicalNameRecordV1
                     game=game,
                     source_id=source_id,
                     canonical_card_name=row[1],
+                    card_metadata=(
+                        CardMetadataV1(
+                            collector_number=row[2] or None,
+                            expansion_code=row[5] or None,
+                            expansion_name=row[4] or None,
+                            rarity=row[3] or None,
+                        )
+                        if any(row[2:6])
+                        else None
+                    ),
                 )
             )
     except CanonicalNamesError:
         raise
-    except (csv.Error, StopIteration, UnicodeDecodeError) as exc:
+    except (csv.Error, StopIteration, ValueError) as exc:
         raise CanonicalNamesError("canonical-name CSV is invalid") from exc
     records.sort(key=lambda record: (len(record.source_id), record.source_id))
     return records, raw

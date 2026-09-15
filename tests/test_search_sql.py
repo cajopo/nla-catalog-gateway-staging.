@@ -13,6 +13,7 @@ import pytest
 
 import nla_catalog_gateway.pagination as pagination
 from nla_catalog_gateway.canonical_search import CanonicalSearchError
+from nla_catalog_gateway.card_metadata import CardMetadataV1
 from nla_catalog_gateway.pagination import (
     CatalogProjection,
     CursorCodecV1,
@@ -284,10 +285,23 @@ def test_search_columns_are_verified_against_source_records(projection, column, 
         CatalogProjection.open(projection.path)
 
 
-def test_literal_search_traverses_30001_with_indexed_keyset(tmp_path):
-    projection = _projection(
-        tmp_path, tuple(card(n, "Shared card", code="TEST-001") for n in range(1, 30002))
+@pytest.mark.parametrize("code_source", ["sku", "collector"])
+def test_literal_search_traverses_30001_with_indexed_keyset(tmp_path, code_source):
+    records = tuple(
+        card(n, "Shared card", code="TEST-001" if code_source == "sku" else None)
+        for n in range(1, 30002)
     )
+    if code_source == "collector":
+        records = tuple(
+            replace(
+                record,
+                sync_source_id=str(n),
+                powertools_source_id=str(n),
+                card_metadata=CardMetadataV1("TEST-001", None, None, None),
+            )
+            for n, record in enumerate(records, 1)
+        )
+    projection = _projection(tmp_path, records)
     paginator = _paginator(projection)
     selected = request("st-00")  # Code-only match, every record sold out.
     cursor = None

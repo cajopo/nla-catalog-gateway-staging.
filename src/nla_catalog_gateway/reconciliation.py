@@ -1397,7 +1397,13 @@ def _apply_canonical_names(
                 and facts_item.canonical_card_name != record.canonical_card_name
             ):
                 raise ReconciliationDataError("canonical-name sources disagree")
-            enriched.append(replace(facts_item, canonical_card_name=record.canonical_card_name))
+            enriched.append(
+                replace(
+                    facts_item,
+                    canonical_card_name=record.canonical_card_name,
+                    card_metadata=record.card_metadata,
+                )
+            )
             matched_keys.add(key)
             matched_products += 1
         if next(rows, None) is not None:
@@ -1508,6 +1514,9 @@ def _runtime_records(
                 tracks_inventory=bool(product["tracks_inventory"]),
                 updated_at=product["updated_at"],
                 variants=tuple(product_variants),
+                card_metadata=fact.card_metadata
+                if classification.family is ProductFamily.SINGLE
+                else None,
             )
         except (TypeError, ValueError, runtime.RuntimeContractError) as exc:
             raise ReconciliationDataError("Product cannot enter runtime contract") from exc

@@ -14,6 +14,7 @@ import test_runtime_api_integration as integration
 import test_runtime_server as asgi
 from nla_catalog_gateway import runtime_api
 from nla_catalog_gateway.canonical_search import SingleCardSuggestion
+from nla_catalog_gateway.card_metadata import CardMetadataV1
 from nla_catalog_gateway.pagination import CatalogProjection
 from nla_catalog_gateway.runtime_api import (
     AppProxyVerifierAuthorizer,
@@ -168,6 +169,7 @@ def http_case(tmp_path):
             canonical_card_name=name,
             total_inventory=stock,
             variants=(replace(record.variants[0], sku="SET-019", inventory_quantity=stock),),
+            card_metadata=CardMetadataV1("MET-007", "EXP", "Set name", "Rare"),
         )
 
     records = (
@@ -281,6 +283,27 @@ def test_http_suggestions_same_scope_counts_and_first_page_only(http_case):
     rejected = call(_request(), raw_query=b"invalid")
     assert rejected.status == 401
     assert "suggestions" not in json.loads(rejected.body)
+
+
+def test_http_collector_number_metadata_suggestions_and_pagination(http_case):
+    _, call = http_case
+    selected = _request("met-00", page_size=1)
+    cursor = None
+    found = []
+    while True:
+        response = call(selected, cursor)
+        assert response.status == 200
+        parsed = CatalogResponseEnvelopeV1.from_json_bytes(response.body)
+        if cursor is None:
+            assert sum(s.print_count for s in parsed.suggestions) == 4
+            assert sum(s.available_print_count for s in parsed.suggestions) == 1
+        found.extend(item.product_gid for item in parsed.page.items)
+        assert all(item.card_metadata.collector_number == "MET-007" for item in parsed.page.items)
+        cursor = parsed.next_cursor
+        if cursor is None:
+            break
+    assert found == [f"gid://shopify/Product/{n}" for n in (1, 2, 3, 4)]
+    assert json.loads(call(_request("Set name")).body)["page"]["items"] == []
 
 
 @pytest.mark.parametrize("error", [RequestCancelled(), RequestDeadlineExceeded(), RuntimeError()])

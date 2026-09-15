@@ -1,5 +1,18 @@
 # NLA catalog gateway — current status
 
+## Current source metadata candidate — 2026-09-15 (#65)
+
+- Branch `agent/source-card-codes`, parent `94d95ad` (#64) now CI/CodeQL green.
+- Original CSVs recovered outside Git; prior "awaiting CSV input" statements below
+  are superseded. All 291,787 public historical singles join by verified source ID.
+- Card metadata now reaches SQLite/public items; collector numbers feed scoped SQL
+  search/suggestions with sold-out records retained. No inferred printed-code aliases.
+- 485 focused tests pass, metadata module 100% covered; independent re-review APPROVE
+  after three fixes. All 332,667 real source rows parse; 30,001 collector-only results
+  traverse completely with sold-out inclusion. Exact-head CI remains required;
+  see `ws-01h-card-metadata.md`.
+- No current real-package acceptance, clone installation, sync/deploy or E2E completion.
+
 ## Current clone UI candidate — 2026-09-15 (#14)
 
 - `agent/theme-clone-integration` starts from `69f56a3` (#63), whose CI and CodeQL are green.
