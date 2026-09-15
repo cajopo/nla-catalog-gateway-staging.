@@ -835,7 +835,11 @@ def test_service_traverses_over_30000_and_keeps_search_and_filter_under_two_seco
         request: CatalogRequestV1,
         cursor: str | None = None,
     ) -> tuple[runtime_api.CatalogResponseEnvelopeV1, float]:
-        body = CatalogRequestEnvelopeV1(request, cursor).to_json_bytes()
+        body = CatalogRequestEnvelopeV1(
+            request,
+            cursor,
+            include_suggestions=(cursor is None and bool(request.query)),
+        ).to_json_bytes()
         http_request = runtime_api.RuntimeHttpRequest(
             method="POST",
             path=endpoint,
@@ -887,6 +891,11 @@ def test_service_traverses_over_30000_and_keeps_search_and_filter_under_two_seco
         f"gid://shopify/Product/{target_id}",
     )
     assert searched.next_cursor is None
+    assert searched.suggestions is not None
+    assert [
+        (s.canonical_card_name, s.print_count, s.available_print_count)
+        for s in searched.suggestions
+    ] == [(target_name, 1, 0)]
     assert search_elapsed < 2.0
 
     filtered, filter_elapsed = call(

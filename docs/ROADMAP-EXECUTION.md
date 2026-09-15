@@ -4,7 +4,8 @@
 
 Work resumes with #60 on `agent/search-name-code-v2`: SQLite literal name/code search and
 suggestions, sold-out cards and complete keyset traversal. Remaining: verified printed-code
-data, public suggestions, clone UI, runtime activation, durable updates, staging and E2E.
+data, clone UI, runtime activation, durable updates, staging and E2E. Suggestions are now
+wired into the first-page HTTP search response; this does not enable public output.
 Dependency PRs through #57 remain unmerged; live remains Jacopo's #18 gate. STATUS-CURRENT
 and the #60 workstream distinguish executable evidence from pending work.
 

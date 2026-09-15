@@ -92,6 +92,52 @@ Final focused verification:
 
 No full issue closure or public readiness is claimed by these component checks.
 
-Still required: real source recovery/collector-code join and coverage, public suggestions,
+Still required: real source recovery/collector-code join and coverage,
 clone game selector/search UI, representative real-data latency, runtime activation,
 durable live updates, deployment and E2E. Full roadmap/live gates remain in #3/#18.
+
+## HTTP suggestion integration (2026-09-15 follow-up)
+
+The existing authenticated catalog POST computes suggestions when the client explicitly
+adds `includeSuggestions: true` for a nonblank `single` search with `cursor: null`, using
+the same leased projection, game, query and filters as the result page. At most ten
+normalized-name groups are returned, including sold-out
+matches. Later cursor pages omit suggestions; they do not rerun the grouping scan.
+No extra endpoint, provider or separate cache is introduced. Later pages must omit the
+option or send false; asking for suggestions outside the first search page is rejected.
+
+The v1 response gains an optional `suggestions` array. Each entry contains only
+`canonicalCardName`, `matchingProductCount` and `availableProductCount`. Counts refer
+to matching products in the selected scope, not variants or the total number of prints
+of that name. A code-only match may therefore suggest a name that does not contain the
+typed code. Opted-in searches without matches return `[]`. Requests without the option
+(including existing search clients) retain exactly the legacy response fields. The
+clone consumer will opt in and use the extended decoder. No default v1 wire change.
+
+Input/output validation rejects malformed, duplicate or over-limit suggestion groups.
+The shared deadline/cancellation and generation-file guards still apply; a failed
+suggestion computation returns an error, never a partial HTTP 200. App Proxy checks,
+readiness and static output gates are unchanged. This adds the wire implementation,
+not deployment or public activation.
+
+Initial follow-up verification: 40 new tests passed, including signed HTTP requests,
+game/publication/stock isolation, code matches, pagination omission, empty queries,
+malformed data, cancellation/failure and concurrent generation activation. The static
+output gates are overridden only inside the HTTP tests; real proxy verification and
+real evidence-bound leases are exercised. Review identified a compatibility P2 in the
+initial unconditional extension; explicit opt-in and legacy-response tests resolve it.
+Independent re-review approved the opt-in correction; no further actionable finding.
+Final focused regression: 198 passed (runtime API, integration, suggestions and sync
+publication), with 1,103 statements and 338 branches in `runtime_api.py` at 100%.
+The separate HTTP test (`pytest tests/test_runtime_api_integration.py -q -k over_30000 -x`)
+passed in 260.75s: 30,001 Products through 301 page requests without gaps/duplicates,
+with search + opted-in suggestions together under two seconds and the stock filter
+under two seconds. Synthetic fixture only, not a real-catalog latency acceptance.
+Ruff/check/format and build `--no-isolation` pass; staged preflight: 97 files, zero findings.
+Earlier exploratory runs failed
+on test-fixture mistakes and stale coverage line maps while source changed; the final
+coverage run above used frozen production code. No coverage threshold was relaxed.
+CI for preceding commit `ab0c26e` is fully green: run `35004492258` (Python 3.12/3.13,
+container, dependency audit) and CodeQL `35004492225`. Python 3.12 log: 2,249 tests passed,
+11,863 statements and 3,968 branches at 100%, zero skipped. This does not certify the
+newer suggestion delta, which needs its own exact-head CI.
