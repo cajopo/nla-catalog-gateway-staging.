@@ -7,7 +7,8 @@ solo componente Liquid riutilizzabile: selettore gioco, suggerimenti, esauriti e
 con URL. Clone identificato in sola lettura e ancora UNPUBLISHED; nessun upload/MAIN.
 Runtime #63 verde in CI e CodeQL. Validazione Shopify: 7 file validi; test browser: 18 PASS.
 Corretti tre P2 di stato/focus e un P3 di tastiera; re-review indipendente APPROVE.
-Pronto per la PR dedicata; nessuna installazione clone o verifica E2E reale ancora dichiarata.
+Push eseguito e PR #64 aperta draft su #63, implementazione `0d0345c`; CI del nuovo head
+ancora da verificare. Nessuna installazione clone o verifica E2E reale ancora dichiarata.
 Non è ancora il sito funzionante: mancano endpoint reale, installazione clone, dati/codici
 e immagini completi, aggiornamenti persistenti ed E2E. Dettagli in `ws-10-theme-clone.md`.
 

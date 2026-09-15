@@ -2,7 +2,7 @@
 
 ## Current goal overlay — 2026-09-15
 
-Current work is #14 (`agent/theme-clone-integration`) on green runtime #63: connect the
+Current work is #14 / draft PR #64 (`agent/theme-clone-integration`) on green runtime #63: connect the
 customer-facing path with a reusable game-scoped search/page component. Local UI/browser
 fixtures are not a clone installation or real E2E. Read `ws-10-theme-clone.md` before any
 upload; locale fragments must be merged, never replace the existing translations wholesale.

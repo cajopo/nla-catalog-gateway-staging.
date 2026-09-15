@@ -3,6 +3,11 @@
 Issue #14. Branch `agent/theme-clone-integration`, based on runtime `69f56a3`
 (PR #63; CI `35009265538` and CodeQL `35009265549` both succeeded).
 
+Delivery: [draft PR #64](https://github.com/cajopo/nla-catalog-gateway-staging./pull/64),
+implementation commit `0d0345c54201c1f8fd611d83a87017dde8cc4141`, pushed and independently
+approved on that SHA. Documentation-only follow-up records the actual PR. No merge or
+deployment; exact-head CI and release gates remain required.
+
 ## Scope and state
 
 This is a local integration component, NOT an installed/connected storefront.

@@ -10,7 +10,8 @@
 - Official validation passed all seven Liquid/theme files; all 18 headless-browser fixture
   checks pass. Three P2 state/focus findings and one P3 keyboard finding were corrected;
   independent re-review APPROVE. No clone installation or real E2E is claimed.
-  Source is ready for the dedicated draft PR; see `ws-10-theme-clone.md`.
+  Published as draft PR #64 on #63; implementation commit `0d0345c`.
+  Exact-head remote CI remains pending; see `ws-10-theme-clone.md`.
 - The architecture audit recommends targeted simplification, not a wholesale rewrite.
   Full goal remains open: printed codes, images, real package, durable sync, deployment/E2E.
 
