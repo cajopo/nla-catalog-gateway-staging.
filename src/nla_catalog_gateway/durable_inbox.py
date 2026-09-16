@@ -82,6 +82,10 @@ class DurableWebhookInbox:
         except (OSError, TypeError, ValueError):
             raise DurableInboxError(_ERROR) from None
 
+    @property
+    def shop_domain(self) -> str:
+        return self._shop
+
     @contextmanager
     def _transaction(self, *, create: bool = False) -> Iterator[sqlite3.Connection]:
         try:

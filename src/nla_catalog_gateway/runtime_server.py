@@ -1,9 +1,9 @@
 """Thin ASGI transport for the evidence-bound catalog runtime.
 
-The adapter owns no catalog or authorization logic.  It exposes only the two
-health probes and one explicitly configured Shopify App Proxy path, preserves
-the request bytes handed to it by the ASGI server, and fails closed with fixed
-public errors.
+The adapter owns no catalog or authorization logic. It exposes two health probes,
+one explicitly configured Shopify App Proxy path and an opt-in durable webhook
+receipt route. It preserves the request bytes handed to it by the ASGI server and
+fails closed with fixed public errors.
 """
 
 from __future__ import annotations
@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Awaitable, Callable, Mapping
 from contextlib import suppress
+from dataclasses import replace
 from typing import Any
 
 from nla_catalog_gateway.runtime_api import (
@@ -22,6 +23,8 @@ from nla_catalog_gateway.runtime_api import (
     RuntimeLimits,
 )
 from nla_catalog_gateway.runtime_contract import CatalogErrorCode, CatalogErrorV1
+from nla_catalog_gateway.sync import MAX_WEBHOOK_PAYLOAD_BYTES
+from nla_catalog_gateway.webhook_ingress import ShopifyWebhookReceiver
 
 AsgiReceive = Callable[[], Awaitable[Mapping[str, Any]]]
 AsgiSend = Callable[[Mapping[str, Any]], Awaitable[None]]
@@ -29,6 +32,7 @@ AsgiScope = Mapping[str, Any]
 
 LIVENESS_PATH = "/livez"
 READINESS_PATH = "/readyz"
+WEBHOOK_REPLY_SECONDS = 4.0
 
 _ERROR_HEADERS = (
     ("content-type", "application/json; charset=utf-8"),
@@ -67,7 +71,7 @@ class _Disconnected(Exception):
 class RuntimeAsgiApp:
     """ASGI 3 callable around one injected :class:`RuntimeCatalogService`."""
 
-    __slots__ = ("_app_proxy_path", "_limits", "_service")
+    __slots__ = ("_app_proxy_path", "_limits", "_service", "_webhook_path", "_webhook_receiver")
 
     def __init__(
         self,
@@ -75,6 +79,8 @@ class RuntimeAsgiApp:
         *,
         app_proxy_path: str,
         limits: RuntimeLimits | None = None,
+        webhook_path: str | None = None,
+        webhook_receiver: ShopifyWebhookReceiver | None = None,
     ) -> None:
         if not all(
             callable(getattr(service, name, None)) for name in ("catalog", "liveness", "readiness")
@@ -85,25 +91,57 @@ class RuntimeAsgiApp:
         if type(limits) is not RuntimeLimits:
             raise RuntimeServerConfigurationError("runtime limits are invalid")
         _validate_configured_path(app_proxy_path, limits)
+        if webhook_path is not None or webhook_receiver is not None:
+            _validate_configured_path(webhook_path, limits)
+            if (
+                webhook_path == app_proxy_path
+                or type(webhook_receiver) is not ShopifyWebhookReceiver
+            ):
+                raise RuntimeServerConfigurationError("webhook configuration is invalid")
         self._service = service
         self._app_proxy_path = app_proxy_path
         self._limits = limits
+        self._webhook_path = webhook_path
+        self._webhook_receiver = webhook_receiver
 
     async def __call__(self, scope: AsgiScope, receive: AsgiReceive, send: AsgiSend) -> None:
         """Handle one HTTP request without adding a second public catalog route."""
 
         if not callable(receive) or not callable(send):
             raise RuntimeServerConfigurationError("ASGI callables are invalid")
+        deadline = asyncio.get_running_loop().time() + WEBHOOK_REPLY_SECONDS
+        webhook = (
+            self._webhook_receiver is not None
+            and type(scope) is dict
+            and scope.get("path") == self._webhook_path
+        )
+        body_limit = MAX_WEBHOOK_PAYLOAD_BYTES if webhook else self._limits.max_request_body_bytes
+        receive_limits = (
+            replace(
+                self._limits,
+                max_body_chunks=1024,
+                request_timeout_ms=min(
+                    self._limits.request_timeout_ms, int(WEBHOOK_REPLY_SECONDS * 1000)
+                ),
+            )
+            if webhook
+            else self._limits
+        )
         try:
-            method, path, raw_query, headers = _request_metadata(scope, self._limits)
+            method, path, raw_query, headers = _request_metadata(
+                scope,
+                self._limits,
+                body_limit=body_limit,
+            )
             route = self._route(method, path, raw_query)
             cancellation = RequestCancellation()
             body_chunks = await _receive_body_with_timeout(
                 receive,
                 cancellation,
-                self._limits,
+                receive_limits,
+                body_limit=body_limit,
             )
-            if route != "catalog" and any(body_chunks):
+            if route not in {"catalog", "webhook"} and any(body_chunks):
                 raise _InvalidAsgiRequest
         except _Disconnected:
             return
@@ -129,7 +167,7 @@ class RuntimeAsgiApp:
             )
             return
 
-        if route == "catalog":
+        if route in {"catalog", "webhook"}:
             request = RuntimeHttpRequest(
                 method=method,
                 path=path,
@@ -139,6 +177,8 @@ class RuntimeAsgiApp:
             )
 
             def call() -> RuntimeHttpResponse:
+                if route == "webhook":
+                    return self._webhook_receiver.receive(request, cancellation=cancellation)
                 return self._service.catalog(request, cancellation=cancellation)
 
         elif route == "liveness":
@@ -148,7 +188,12 @@ class RuntimeAsgiApp:
             def call() -> RuntimeHttpResponse:
                 return self._service.readiness(cancellation=cancellation)
 
-        response = await _run_service(call, receive, cancellation)
+        response = await _run_service(
+            call,
+            receive,
+            cancellation,
+            timeout=max(0.0, deadline - asyncio.get_running_loop().time()) if webhook else None,
+        )
         if response is None:
             return
         await _send_response(send, response, self._limits)
@@ -160,6 +205,8 @@ class RuntimeAsgiApp:
             return "readiness"
         if method == "POST" and path == self._app_proxy_path:
             return "catalog"
+        if method == "POST" and path == self._webhook_path and not raw_query:
+            return "webhook"
         raise _InvalidAsgiRequest
 
 
@@ -168,10 +215,18 @@ def create_runtime_app(
     *,
     app_proxy_path: str,
     limits: RuntimeLimits | None = None,
+    webhook_path: str | None = None,
+    webhook_receiver: ShopifyWebhookReceiver | None = None,
 ) -> RuntimeAsgiApp:
     """Create the sole public ASGI adapter for an injected runtime service."""
 
-    return RuntimeAsgiApp(service, app_proxy_path=app_proxy_path, limits=limits)
+    return RuntimeAsgiApp(
+        service,
+        app_proxy_path=app_proxy_path,
+        limits=limits,
+        webhook_path=webhook_path,
+        webhook_receiver=webhook_receiver,
+    )
 
 
 def _validate_configured_path(path: Any, limits: RuntimeLimits) -> None:
@@ -192,7 +247,10 @@ def _validate_configured_path(path: Any, limits: RuntimeLimits) -> None:
 
 
 def _request_metadata(
-    scope: AsgiScope, limits: RuntimeLimits
+    scope: AsgiScope,
+    limits: RuntimeLimits,
+    *,
+    body_limit: int | None = None,
 ) -> tuple[str, str, bytes, tuple[tuple[bytes, bytes], ...]]:
     if type(scope) is not dict or scope.get("type") != "http":
         raise _InvalidAsgiRequest
@@ -235,7 +293,9 @@ def _request_metadata(
         if name.lower() == b"content-length":
             declared_length = value.strip(b" \t")
             if declared_length.isdigit() and (
-                len(declared_length) > 19 or int(declared_length) > limits.max_request_body_bytes
+                len(declared_length) > 19
+                or int(declared_length)
+                > (limits.max_request_body_bytes if body_limit is None else body_limit)
             ):
                 raise _RequestTooLarge
         headers.append((name, value))
@@ -246,6 +306,8 @@ async def _receive_body(
     receive: AsgiReceive,
     cancellation: RequestCancellation,
     limits: RuntimeLimits,
+    *,
+    body_limit: int | None = None,
 ) -> tuple[bytes, ...]:
     chunks: list[bytes] = []
     total = 0
@@ -271,7 +333,9 @@ async def _receive_body(
             raise _InvalidAsgiRequest
         next_count = len(chunks) + 1
         next_total = total + len(body)
-        if next_count > limits.max_body_chunks or next_total > limits.max_request_body_bytes:
+        if next_count > limits.max_body_chunks or next_total > (
+            limits.max_request_body_bytes if body_limit is None else body_limit
+        ):
             cancellation.cancel()
             raise _RequestTooLarge
         chunks.append(body)
@@ -284,10 +348,12 @@ async def _receive_body_with_timeout(
     receive: AsgiReceive,
     cancellation: RequestCancellation,
     limits: RuntimeLimits,
+    *,
+    body_limit: int | None = None,
 ) -> tuple[bytes, ...]:
     try:
         async with asyncio.timeout(limits.request_timeout_ms / 1_000):
-            return await _receive_body(receive, cancellation, limits)
+            return await _receive_body(receive, cancellation, limits, body_limit=body_limit)
     except TimeoutError:
         cancellation.cancel()
         raise _RequestTimedOut from None
@@ -297,13 +363,22 @@ async def _run_service(
     call: Callable[[], RuntimeHttpResponse],
     receive: AsgiReceive,
     cancellation: RequestCancellation,
+    *,
+    timeout: float | None = None,
 ) -> RuntimeHttpResponse | None:
     service_task = asyncio.create_task(asyncio.to_thread(call))
     disconnect_task = asyncio.create_task(_wait_for_disconnect(receive))
     try:
         done, _ = await asyncio.wait(
-            (service_task, disconnect_task), return_when=asyncio.FIRST_COMPLETED
+            (service_task, disconnect_task),
+            return_when=asyncio.FIRST_COMPLETED,
+            timeout=timeout,
         )
+        if not done:
+            cancellation.cancel()
+            await _cancel_and_drain(service_task)
+            await _cancel_and_drain(disconnect_task)
+            return _fixed_error(503, CatalogErrorCode.TEMPORARILY_UNAVAILABLE)
         if disconnect_task in done:
             cancellation.cancel()
             await _cancel_and_drain(service_task)
