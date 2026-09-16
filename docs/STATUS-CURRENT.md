@@ -1,5 +1,43 @@
 # NLA catalog gateway — current status
 
+## Current retained-cursor candidate — 2026-09-15 (#69)
+
+- `agent/retained-cursor-generations` starts from packaging candidate `0621aed` (#67).
+- Valid signed cursors select their original verified generation after activation;
+  new searches use the active one. In-flight requests and key rotation are covered.
+- Eight bounded generation/codec slots; activation defers at capacity, never evicts a
+  valid cursor. Expiry frees memory only, not catalog files. Existing gates remain.
+- 257 distinct regressions pass, including the signed HTTP 30,001-product traversal;
+  runtime module line/branch coverage is 100%. Ruff (58 files), package build and
+  independent diff review pass. Preflight passes over 112 tracked files. Exact-head
+  CI remains required; final review SHA binding belongs in the delivery receipt.
+- Retention remains in-process: restart/replica continuity and real memory sizing
+  are explicitly open. Full #7 and the storefront goal are NOT complete.
+- No fresh real package, Shopify/PowerTools/theme write or deployment. Parent CI
+  timeout and the separate #68 workflow authorization gate are unchanged.
+- Details and reproducible commands: `docs/workstreams/ws-03b-retained-cursors.md`.
+
+## Current packaging simplification — 2026-09-15 (#67)
+
+- Branch `agent/staging-single-build` on source-metadata head `fbe3cfc` (#66).
+- Packaging builds once and retains the exact projection that passed every core
+  check. Standalone proofs remain ephemeral; failed proofs still remove output.
+- 122 focused tests pass; both changed implementation modules have 100% coverage.
+  Tests assert one build, unchanged file identity/fingerprint, rejection of bytes
+  changed after proof, and cleanup after proof/publication failures.
+- Independent review APPROVE (22 checks independently passed); 233 additional runtime,
+  sync-publication and activation regressions pass, including the 30,001-product HTTP
+  traversal. Ruff over all 57 Python files and package build pass; exact-head CI pending.
+- Parent #66 CodeQL passed but CI run `35018638110` was cancelled at the 15-minute
+  quality-job limit during the large search suite. Parent is not mergeable; no bypass.
+  No new real package or deployment.
+- Rechecked historical raw/reconciled/canonical temporary directories: no files.
+  The historical staging package and recovered original CSVs remain distinct inputs;
+  no stale package is relabeled as a current verified catalog.
+- Shopify read-only export inventory returned no bulk operations for the connected app
+  (not a claim about operations belonging to other apps); fresh acquisition remains open.
+- See `docs/workstreams/ws-09c-single-build-package.md`. Full storefront goal stays open.
+
 ## Current source metadata candidate — 2026-09-15 (#65)
 
 - Branch `agent/source-card-codes`, parent `94d95ad` (#64) now CI/CodeQL green.

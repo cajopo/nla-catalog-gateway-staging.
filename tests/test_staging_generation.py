@@ -534,7 +534,7 @@ def test_duplicate_open_file_identity_is_rejected(
     )
 
 
-def test_producer_executes_proof_rebuilds_and_reopens_portable_package(
+def test_producer_builds_once_proves_and_reopens_the_exact_portable_package(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -542,6 +542,18 @@ def test_producer_executes_proof_rebuilds_and_reopens_portable_package(
     bundle = (tmp_path / "bundle").resolve()
     bundle.mkdir()
     observed: list[tuple[Path, str]] = []
+    builds: list[tuple[Path, str, int]] = []
+
+    def counted_build(*args: Any, **kwargs: Any) -> Any:
+        projection = build_catalog_projection(*args, **kwargs)
+        builds.append(
+            (
+                projection.path,
+                projection._file_fingerprint.content_sha256,
+                projection.path.stat().st_ino,
+            )
+        )
+        return projection
 
     @contextmanager
     def opened(directory: Path, digest: str) -> Any:
@@ -549,6 +561,7 @@ def test_producer_executes_proof_rebuilds_and_reopens_portable_package(
         yield verified
 
     monkeypatch.setattr(package_staging_generation, "open_reconciled_generation", opened)
+    monkeypatch.setattr(core_evidence, "build_catalog_projection", counted_build)
     destination = (tmp_path / "staging-package").resolve()
     manifest_sha = package_staging_generation.run_packaging(
         bundle,
@@ -563,6 +576,11 @@ def test_producer_executes_proof_rebuilds_and_reopens_portable_package(
     opened_package = staging_generation.open_staging_generation(destination, manifest_sha)
     assert opened_package.records == verified.generation.records
     assert opened_package.evidence.code_sha == CODE_SHA
+    assert len(builds) == 1
+    original_path, original_hash, original_inode = builds[0]
+    assert original_path.name == staging_generation.PROJECTION_FILENAME
+    assert original_hash == opened_package.evidence.projection_fingerprint
+    assert opened_package.projection.path.stat().st_ino == original_inode
     assert not (destination / ".core-proof.sqlite3").exists()
     assert all(
         not (path.stat().st_mode & (stat.S_IWUSR | stat.S_IWGRP | stat.S_IWOTH))
@@ -624,9 +642,11 @@ def test_producer_install_failure_cleans_temporary_directory(
     assert not tuple(tmp_path.glob(".nla-staging-generation-*"))
 
 
+@pytest.mark.parametrize("mismatch", ["missing", "fingerprint", "path"])
 def test_producer_rejects_projection_fingerprint_mismatch_and_cleans(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    mismatch: str,
 ) -> None:
     verified = evidence_helpers._verified()
     bundle = (tmp_path / "bundle").resolve()
@@ -637,22 +657,63 @@ def test_producer_rejects_projection_fingerprint_mismatch_and_cleans(
         yield verified
 
     monkeypatch.setattr(package_staging_generation, "open_reconciled_generation", opened)
-    monkeypatch.setattr(
-        package_staging_generation,
-        "_verify_with_measurements",
-        lambda *_args, **_kwargs: evidence_helpers._verification_result(),
-    )
-    monkeypatch.setattr(
-        package_staging_generation,
-        "build_catalog_projection",
-        lambda *_args, **_kwargs: object(),
-    )
+    verify = package_staging_generation._verify_with_measurements
+
+    def mismatched(*args: Any, **kwargs: Any) -> Any:
+        result = verify(*args, **kwargs)
+        if mismatch == "missing":
+            return replace(result, projection=None)
+        projection = result.projection
+        if mismatch == "path":
+            projection = replace(projection, path=tmp_path / "other.sqlite3")
+        else:
+            projection = replace(
+                projection,
+                _file_fingerprint=replace(projection._file_fingerprint, content_sha256="0" * 64),
+            )
+        return replace(result, projection=projection)
+
+    monkeypatch.setattr(package_staging_generation, "_verify_with_measurements", mismatched)
     destination = (tmp_path / "mismatch-package").resolve()
     with pytest.raises(ValueError):
         package_staging_generation.run_packaging(
             bundle, evidence_helpers.SUMMARY_SHA, CODE_SHA, destination
         )
     assert not destination.exists()
+    assert not tuple(tmp_path.glob(".nla-staging-generation-*"))
+
+
+def test_producer_rejects_changed_bytes_after_successful_proof(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    verified = evidence_helpers._verified()
+    bundle = (tmp_path / "bundle").resolve()
+    bundle.mkdir()
+
+    @contextmanager
+    def opened(*_args: object) -> Any:
+        yield verified
+
+    verify = package_staging_generation._verify_with_measurements
+
+    def changed(*args: Any, **kwargs: Any) -> Any:
+        result = verify(*args, **kwargs)
+        path = result.projection.path
+        path.chmod(stat.S_IRUSR | stat.S_IWUSR)
+        with path.open("ab") as output:
+            output.write(b"modified after proof")
+        path.chmod(stat.S_IRUSR | stat.S_IRGRP | stat.S_IROTH)
+        return result
+
+    monkeypatch.setattr(package_staging_generation, "open_reconciled_generation", opened)
+    monkeypatch.setattr(package_staging_generation, "_verify_with_measurements", changed)
+    destination = (tmp_path / "tampered-package").resolve()
+    with pytest.raises(staging_generation.StagingGenerationError):
+        package_staging_generation.run_packaging(
+            bundle, evidence_helpers.SUMMARY_SHA, CODE_SHA, destination
+        )
+    assert not destination.exists()
+    assert not tuple(tmp_path.glob(".nla-staging-generation-*"))
 
 
 @pytest.mark.parametrize("failure_stage", ["candidate", "destination-race", "installed"])

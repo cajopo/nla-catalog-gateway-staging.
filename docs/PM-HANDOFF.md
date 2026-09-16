@@ -1,5 +1,32 @@
 # PM handoff — Next Level Arena catalog gateway
 
+## Latest pagination handoff — 2026-09-15 (#69)
+
+Il candidato permette di continuare una navigazione sul catalogo originale dopo
+l'attivazione di uno nuovo; le nuove ricerche usano il nuovo catalogo. Coperti ricerca
+nome/codice, esauriti, richieste in corso, scadenza e cambio chiave. Nessun bypass dei
+controlli. 257 regressioni PASS, compreso traversal HTTP di 30.001 prodotti, modulo
+runtime al 100%, review del diff APPROVE, preflight su 112 file senza errori.
+CI dell'head ancora necessaria. La conservazione è soltanto nel processo:
+riavvio/repliche e dimensionamento reale restano aperti, quindi #7 e
+l'obiettivo completo non sono chiusi. Nessuna modifica Shopify/PowerTools/tema/deploy.
+Dettagli: `docs/workstreams/ws-03b-retained-cursors.md`.
+
+## Latest packaging handoff — 2026-09-15 (#67)
+
+Applicata una semplificazione concreta dell'audit: il packaging costruisce il DB una
+sola volta e consegna proprio quello verificato, senza ripetere la costruzione.
+Nessuna prova di completezza, ricerca o integrità rimossa. I 122 test mirati passano;
+i due moduli modificati sono coperti al 100%. Review indipendente APPROVE; altre 233
+regressioni passano, compreso il traversal HTTP su 30.001 prodotti. CI del nuovo SHA
+ancora richiesta. La CI del parent #66 è stata cancellata al limite di 15 minuti
+durante la suite grande: non è verde e non autorizza merge.
+Nessun pacchetto reale nuovo, deploy o intervento Shopify. Gli export grezzi nelle
+cartelle temporanee storiche risultano assenti: servirà recuperarli o riacquisirli
+in sola lettura. Il vecchio pacchetto non equivale a dati attuali.
+L'app Shopify collegata non restituisce precedenti Bulk riutilizzabili; altre app
+possono avere una cronologia diversa. Nessun nuovo export è stato ancora avviato.
+
 ## Latest data handoff — 2026-09-15 (#65)
 
 Recuperati i quattro CSV originali: non serve ricaricarli. Il nuovo candidato porta
