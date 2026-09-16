@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import gc
 import sqlite3
 from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 from time import perf_counter
-from types import SimpleNamespace
+from types import FunctionType, ModuleType, SimpleNamespace
 from typing import Any
 
 import pytest
@@ -45,6 +46,7 @@ from nla_catalog_gateway.runtime_api import (
 from nla_catalog_gateway.runtime_contract import (
     CatalogErrorCode,
     CatalogFiltersV1,
+    CatalogProductRecordV1,
     CatalogRequestV1,
     RequestFamily,
 )
@@ -123,6 +125,41 @@ def _bound_case(
 
 def _gids(result: Any) -> tuple[str, ...]:
     return tuple(item.product_gid for item in result.page.items)
+
+
+def _assert_no_retained_source_graph(root: object) -> None:
+    """Inspect owned data, including closures, without traversing module globals."""
+    pending = [root]
+    seen = set()
+    forbidden = (
+        CatalogProductRecordV1,
+        VerifiedReconciledGenerationV1,
+        staging_generation.VerifiedStagingGenerationV1,
+    )
+    while pending:
+        value = pending.pop()
+        if id(value) in seen:
+            continue
+        seen.add(id(value))
+        assert not isinstance(value, forbidden), "serving state retains source records"
+        if isinstance(value, (type, ModuleType)):
+            continue
+        if isinstance(value, FunctionType):
+            pending.extend((value.__closure__, value.__defaults__, value.__kwdefaults__))
+        else:
+            pending.extend(gc.get_referents(value))
+
+
+def test_residency_probe_detects_function_captures() -> None:
+    records = evidence_helpers._records()
+    captures = (
+        lambda: records,
+        lambda retained=records: retained,
+        lambda *, retained=records: retained,
+    )
+    for captured in captures:
+        with pytest.raises(AssertionError, match="serving state retains source records"):
+            _assert_no_retained_source_graph(captured)
 
 
 def test_request_envelope_rejects_query_that_exceeds_bound_after_nfkc() -> None:
@@ -371,7 +408,8 @@ def test_portable_staging_generation_reaches_the_evidence_gate_without_reconcili
     control = _control()
     lease = backend.acquire(control=control)
 
-    assert type(lease._generation.verified) is staging_generation.VerifiedStagingGenerationV1
+    assert lease._generation.manifest == verified.projection.manifest
+    assert lease._generation.manifest is not verified.projection.manifest
     assert not hasattr(lease._generation, "search")
     assert not hasattr(lease._generation, "facets")
     assert not hasattr(lease._generation, "items")
@@ -447,6 +485,63 @@ def test_binding_reuses_one_activation_verified_projection(
             backend.activate(case.verified, case.projection, codec, case.evidence)
     assert backend._active is active
     assert EvidenceBoundCapabilityGate(backend).ready(lease, control=_control()) is True
+    lease.close()
+
+
+@pytest.mark.parametrize("portable", (False, True))
+def test_serving_and_retained_generations_detach_source_records(
+    tmp_path: Path, portable: bool
+) -> None:
+    codec = CursorCodecV1(CURSOR_KEY, ttl_seconds=1_800)
+    if portable:
+        package = staging_helpers._make_package(tmp_path)
+        verified = staging_generation.open_staging_generation(
+            package.directory, package.manifest_sha256
+        )
+        backend = EvidenceBoundCatalogBackend.from_staging_generation(
+            verified, codec, expected_code_sha=CODE_SHA, clock=lambda: CURSOR_NOW
+        )
+        source = verified
+        manifest = verified.projection.manifest
+    else:
+        case = _bound_case(tmp_path, "detached", evidence_helpers._records(), "a" * 64)
+        verified = case.verified
+        backend = case.backend
+        source = verified.generation
+        manifest = source.dataset_manifest
+    _assert_no_retained_source_graph(backend)
+    gate = EvidenceBoundCapabilityGate(backend)
+    lease = backend.acquire(control=_control())
+    request = _request(page_size=1)
+    first = lease.fetch_page(request, None, control=_control())
+    assert first.next_cursor is not None
+
+    rotated = CursorCodecV1(b"r" * 32, ttl_seconds=1_800)
+    if portable:
+        backend.activate_staging_generation(verified, rotated)
+    else:
+        backend.activate(verified, case.projection, rotated, case.evidence)
+    with_current = backend.acquire(control=_control())
+    assert len(backend._cursor_generations) == 2
+    _assert_no_retained_source_graph(backend)
+    _assert_no_retained_source_graph(lease)
+    expected = lease.fetch_page(request, first.next_cursor, control=_control())
+    active = backend._active
+
+    # Discarded caller inputs cannot invalidate the already verified serving snapshot.
+    object.__setattr__(source, "records", ())
+    object.__setattr__(manifest, "catalog_content_sha256", "0" * 64)
+    assert gate.ready(lease, control=_control()) is True
+    assert lease.fetch_page(request, first.next_cursor, control=_control()) == expected
+    with pytest.raises(RuntimeApiContractError):
+        if portable:
+            backend.activate_staging_generation(verified, rotated)
+        else:
+            backend.activate(verified, case.projection, rotated, case.evidence)
+    assert backend._active is active
+    assert gate.ready(with_current, control=_control()) is True
+    assert _gids(with_current.fetch_page(request, None, control=_control())) == _gids(first)
+    with_current.close()
     lease.close()
 
 
@@ -636,13 +731,13 @@ def test_current_evidence_binding_rejects_malformed_and_unreadable_state(
     assert runtime_api._evidence_binding_is_current(object()) is False
     assert runtime_api._evidence_binding_is_current(replace(active, cursor_codec=object())) is False
 
-    generation = active.verified.generation
-    source = replace(generation.source_manifest, parts=(generation.source_manifest.parts[0],))
-    malformed = VerifiedReconciledGenerationV1(
-        replace(generation, source_manifest=source),
-        active.verified.summary_sha256,
+    assert runtime_api._evidence_binding_is_current(replace(active, manifest=object())) is False
+    changed_manifest = replace(active.manifest)
+    object.__setattr__(changed_manifest, "catalog_content_sha256", "0" * 64)
+    assert (
+        runtime_api._evidence_binding_is_current(replace(active, manifest=changed_manifest))
+        is False
     )
-    assert runtime_api._evidence_binding_is_current(replace(active, verified=malformed)) is False
 
     def unreadable(_self: CatalogProjection) -> None:
         raise RuntimeError("sensitive")
@@ -1217,7 +1312,6 @@ def test_generation_construction_rejects_malformed_runtime_bindings(
 
     with pytest.raises(RuntimeApiContractError, match="catalog runtime binding is invalid"):
         runtime_api._assemble_evidence_bound_generation(  # type: ignore[arg-type]
-            verified=case.verified,
             projection=object(),
             cursor_codec=case.codec,
             evidence=case.evidence,
@@ -1240,7 +1334,6 @@ def test_generation_construction_rejects_malformed_runtime_bindings(
     )
     with pytest.raises(RuntimeApiContractError, match="catalog runtime binding is invalid"):
         runtime_api._assemble_evidence_bound_generation(
-            verified=case.verified,
             projection=case.projection,
             cursor_codec=case.codec,
             evidence=case.evidence,
@@ -1262,17 +1355,20 @@ def test_current_evidence_binding_rejects_every_malformed_generation_shape(
     assert runtime_api._evidence_binding_is_current(object()) is False  # type: ignore[arg-type]
     assert runtime_api._evidence_binding_is_current(replace(active, cursor_codec=object())) is False
 
-    source = case.verified.generation.source_manifest
-    generation = replace(case.verified.generation, source_manifest=replace(source, parts=()))
-    malformed_verified = VerifiedReconciledGenerationV1(
-        generation,
-        case.verified.summary_sha256,
-    )
+    assert runtime_api._evidence_binding_is_current(replace(active, manifest=object())) is False
+    for index in range(6):
+        changed = list(active.binding)
+        changed[index] = "mismatch"
+        assert (
+            runtime_api._evidence_binding_is_current(replace(active, binding=tuple(changed)))
+            is False
+        )
+    changed_fingerprint = replace(active.projection._file_fingerprint, content_sha256="0" * 64)
+    changed_projection = replace(active.projection, _file_fingerprint=changed_fingerprint)
     assert (
-        runtime_api._evidence_binding_is_current(replace(active, verified=malformed_verified))
+        runtime_api._evidence_binding_is_current(replace(active, projection=changed_projection))
         is False
     )
-    assert runtime_api._evidence_binding_is_current(replace(active, verified=object())) is False
 
     def fail_fingerprint_check(_self: CatalogProjection) -> None:
         raise RuntimeError("sensitive")
