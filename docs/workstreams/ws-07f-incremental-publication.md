@@ -75,6 +75,14 @@ preflight121 before staging and sdist/wheel build PASS. Final focused results,
 independent review and exact-head full CI must be recorded before merge. No accepted heavy
 real-catalog proof is rerun for these synthetic integration checks.
 
+First exact-head CI at790b5eb failed on both Linux Python versions:13 new tests
+used the Win32-only production source-bundle reader, so they failed before the
+incremental path (2,521 other tests passed). The synthetic fixture now installs
+the existing portable test filesystem adapter; content validation, SQL proof,
+package reopen and serving remain real. No production boundary, coverage gate or
+workflow is weakened. This does not establish Linux source-bundle ingestion or
+an autonomous Linux worker. Corrected-head CI and review are required.
+
 Rollback uses the retained baseline package with baseline-compatible code. Older
 code rejects the new optional lineage field, so do not start old code on a derived
 package: restore the prior package/pointer as well. No packages or receipts are

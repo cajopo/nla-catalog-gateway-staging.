@@ -42,6 +42,14 @@ from nla_catalog_gateway.taxonomy import Game
 CODE = "c" * 40
 
 
+@pytest.fixture(autouse=True)
+def synthetic_bundle_filesystem(monkeypatch: pytest.MonkeyPatch):
+    # The source bundle reader has a Win32-only production boundary. Exercise
+    # its real content validation with the existing test filesystem adapter on
+    # every test platform; this is not Linux source-bundle deployment evidence.
+    bundles._install_backend(monkeypatch)
+
+
 def _control():
     return RequestControl(30, RequestCancellation(), lambda: 0)
 
