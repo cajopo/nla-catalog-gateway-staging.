@@ -527,7 +527,13 @@ def test_simultaneous_disconnect_drains_completed_sensitive_service_failure(
         unhandled: list[dict[str, Any]] = []
         loop.set_exception_handler(lambda _loop, context: unhandled.append(context))
 
-        async def both_done(tasks: Any, *, return_when: Any) -> tuple[set[Any], set[Any]]:
+        async def both_done(
+            tasks: Any,
+            *,
+            return_when: Any,
+            timeout: float | None = None,
+        ) -> tuple[set[Any], set[Any]]:
+            assert timeout is None
             del return_when
             selected = tuple(tasks)
             while not all(task.done() for task in selected):

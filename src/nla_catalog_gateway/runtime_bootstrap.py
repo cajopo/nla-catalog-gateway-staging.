@@ -14,6 +14,7 @@ from pathlib import Path
 import uvicorn
 
 from nla_catalog_gateway.app_proxy_security import AppProxyVerifier, AppProxyVerifierConfig
+from nla_catalog_gateway.durable_inbox import DurableWebhookInbox
 from nla_catalog_gateway.pagination import CursorCodecV1
 from nla_catalog_gateway.runtime_api import (
     AppProxyVerifierAuthorizer,
@@ -22,7 +23,11 @@ from nla_catalog_gateway.runtime_api import (
     RuntimeCatalogService,
     RuntimeLimits,
 )
-from nla_catalog_gateway.runtime_server import RuntimeAsgiApp, create_runtime_app
+from nla_catalog_gateway.runtime_server import (
+    RuntimeAsgiApp,
+    _validate_configured_path,
+    create_runtime_app,
+)
 from nla_catalog_gateway.staging_activation import (
     ABSENT_ACTIVATION_SHA256,
     GENERATIONS_DIRECTORY,
@@ -30,6 +35,7 @@ from nla_catalog_gateway.staging_activation import (
     load_active_staging_generation,
 )
 from nla_catalog_gateway.staging_generation import REPOSITORY_ROOT
+from nla_catalog_gateway.webhook_ingress import ShopifyWebhookReceiver
 
 _ERROR = "runtime bootstrap configuration is invalid"
 _LIMIT_CONCURRENCY = 32
@@ -48,6 +54,8 @@ _EVIDENCE_CODE_SHA = "NLA_EVIDENCE_CODE_SHA"
 _CURSOR_TTL_SECONDS = "NLA_CURSOR_TTL_SECONDS"
 _REQUEST_TIMEOUT_MS = "NLA_REQUEST_TIMEOUT_MS"
 _ALLOW_EMPTY_STORE = "NLA_ALLOW_EMPTY_STAGING_STORE"
+_WEBHOOK_PATH = "NLA_WEBHOOK_PATH"
+_WEBHOOK_INBOX_PATH = "NLA_WEBHOOK_INBOX_PATH"
 _PORT = "PORT"
 _REPARSE_POINT_ATTRIBUTE = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
 _CONCRETE_PATH_TYPE = type(Path())
@@ -70,6 +78,8 @@ class _RuntimeBootstrapConfig:
     cursor_ttl_seconds: int
     request_timeout_ms: int
     allow_empty_store: bool
+    webhook_path: str | None = None
+    webhook_inbox_path: Path | None = field(default=None, repr=False)
 
 
 def _fail() -> RuntimeBootstrapError:
@@ -205,6 +215,20 @@ def _configuration(environ: Mapping[str, str]) -> _RuntimeBootstrapConfig:
         or _CODE_SHA_RE.fullmatch(evidence_code_sha) is None
     ):
         raise _fail()
+    webhook_path = None
+    inbox_path = None
+    if _WEBHOOK_PATH in environ or _WEBHOOK_INBOX_PATH in environ:
+        webhook_path = _required(environ, _WEBHOOK_PATH)
+        _validate_configured_path(webhook_path, RuntimeLimits())
+        if webhook_path == _required(environ, _BACKEND_PATH):
+            raise _fail()
+        inbox_path = Path(_required(environ, _WEBHOOK_INBOX_PATH))
+        if (
+            not inbox_path.is_absolute()
+            or inbox_path.resolve().is_relative_to(REPOSITORY_ROOT)
+            or inbox_path.resolve().is_relative_to(store_root.resolve())
+        ):
+            raise _fail()
     return _RuntimeBootstrapConfig(
         shop_domain=_required(environ, _SHOP_DOMAIN),
         signed_path_prefix=_required(environ, _SIGNED_PATH_PREFIX),
@@ -217,6 +241,8 @@ def _configuration(environ: Mapping[str, str]) -> _RuntimeBootstrapConfig:
         cursor_ttl_seconds=_positive_integer(environ, _CURSOR_TTL_SECONDS, 1_800),
         request_timeout_ms=_positive_integer(environ, _REQUEST_TIMEOUT_MS, 2_000),
         allow_empty_store=_boolean(environ, _ALLOW_EMPTY_STORE, False),
+        webhook_path=webhook_path,
+        webhook_inbox_path=inbox_path,
     )
 
 
@@ -259,7 +285,20 @@ def _compose(config: _RuntimeBootstrapConfig) -> RuntimeAsgiApp:
         endpoint_path=config.backend_path,
         limits=limits,
     )
-    return create_runtime_app(service, app_proxy_path=config.backend_path, limits=limits)
+    receiver = None
+    if config.webhook_inbox_path is not None:
+        receiver = ShopifyWebhookReceiver(
+            DurableWebhookInbox(config.webhook_inbox_path, config.shop_domain),
+            config.app_proxy_material,
+            config.shop_domain,
+        )
+    return create_runtime_app(
+        service,
+        app_proxy_path=config.backend_path,
+        limits=limits,
+        webhook_path=config.webhook_path,
+        webhook_receiver=receiver,
+    )
 
 
 def create_app(environ: Mapping[str, str] | None = None) -> RuntimeAsgiApp:
