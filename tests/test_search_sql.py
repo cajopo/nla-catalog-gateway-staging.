@@ -285,6 +285,8 @@ def test_search_columns_are_verified_against_source_records(projection, column, 
         CatalogProjection.open(projection.path)
 
 
+# Execute both full scale proofs without coverage-tracing overhead.
+@pytest.mark.no_cover
 @pytest.mark.parametrize("code_source", ["sku", "collector"])
 def test_literal_search_traverses_30001_with_indexed_keyset(tmp_path, code_source):
     records = tuple(

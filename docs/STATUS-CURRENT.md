@@ -1,5 +1,22 @@
 # NLA catalog gateway — current status
 
+## Current retained-cursor candidate — 2026-09-15 (#69)
+
+- `agent/retained-cursor-generations` starts from packaging candidate `0621aed` (#67).
+- Valid signed cursors select their original verified generation after activation;
+  new searches use the active one. In-flight requests and key rotation are covered.
+- Eight bounded generation/codec slots; activation defers at capacity, never evicts a
+  valid cursor. Expiry frees memory only, not catalog files. Existing gates remain.
+- 257 distinct regressions pass, including the signed HTTP 30,001-product traversal;
+  runtime module line/branch coverage is 100%. Ruff (58 files), package build and
+  independent diff review pass. Preflight passes over 112 tracked files. Exact-head
+  CI remains required; final review SHA binding belongs in the delivery receipt.
+- Retention remains in-process: restart/replica continuity and real memory sizing
+  are explicitly open. Full #7 and the storefront goal are NOT complete.
+- No fresh real package, Shopify/PowerTools/theme write or deployment. Parent CI
+  timeout and the separate #68 workflow authorization gate are unchanged.
+- Details and reproducible commands: `docs/workstreams/ws-03b-retained-cursors.md`.
+
 ## Current packaging simplification — 2026-09-15 (#67)
 
 - Branch `agent/staging-single-build` on source-metadata head `fbe3cfc` (#66).

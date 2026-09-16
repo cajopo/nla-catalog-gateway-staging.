@@ -1,5 +1,17 @@
 # PM handoff — Next Level Arena catalog gateway
 
+## Latest pagination handoff — 2026-09-15 (#69)
+
+Il candidato permette di continuare una navigazione sul catalogo originale dopo
+l'attivazione di uno nuovo; le nuove ricerche usano il nuovo catalogo. Coperti ricerca
+nome/codice, esauriti, richieste in corso, scadenza e cambio chiave. Nessun bypass dei
+controlli. 257 regressioni PASS, compreso traversal HTTP di 30.001 prodotti, modulo
+runtime al 100%, review del diff APPROVE, preflight su 112 file senza errori.
+CI dell'head ancora necessaria. La conservazione è soltanto nel processo:
+riavvio/repliche e dimensionamento reale restano aperti, quindi #7 e
+l'obiettivo completo non sono chiusi. Nessuna modifica Shopify/PowerTools/tema/deploy.
+Dettagli: `docs/workstreams/ws-03b-retained-cursors.md`.
+
 ## Latest packaging handoff — 2026-09-15 (#67)
 
 Applicata una semplificazione concreta dell'audit: il packaging costruisce il DB una
