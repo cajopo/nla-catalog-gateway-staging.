@@ -25,6 +25,7 @@ from nla_catalog_gateway.staging_generation import (
     STAGING_PACKAGE_SCHEMA_VERSION,
     open_staging_generation,
 )
+from nla_catalog_gateway.sync import SyncCore
 
 _CONCRETE_PATH_TYPE = type(Path())
 _CODE_SHA_RE = re.compile(r"[0-9a-f]{40}\Z")
@@ -203,6 +204,8 @@ def run_packaging(
     expected_summary_sha256: str,
     code_sha: str,
     package_directory: Path,
+    *,
+    incremental_core: SyncCore | None = None,
 ) -> str:
     """Build once, prove, package those exact bytes, and locally reopen them."""
 
@@ -218,11 +221,13 @@ def run_packaging(
         with open_reconciled_generation(
             bundle_directory, expected_summary_sha256
         ) as verified_generation:
+            options = {} if incremental_core is None else {"incremental_core": incremental_core}
             result = _verify_with_measurements(
                 verified_generation,
                 projection_path=projection_path,
                 code_sha=code_sha,
                 retain_projection=True,
+                **options,
             )
             projection = result.projection
             if (

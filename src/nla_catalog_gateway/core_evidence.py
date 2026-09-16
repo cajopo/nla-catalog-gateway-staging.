@@ -7,6 +7,7 @@ Standalone proofs remove it; packaging may retain the exact successful artifact.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import secrets
@@ -558,6 +559,7 @@ def _verify(
     code_sha: str,
     *,
     retain_projection: bool = False,
+    incremental_core: SyncCore | None = None,
 ) -> _VerificationResult:
     if type(retain_projection) is not bool:
         raise CatalogCoreEvidenceError(_ERROR)
@@ -582,12 +584,32 @@ def _verify(
     )
 
     generation = checked.generation
-    records = generation.records
+    manifest = generation.dataset_manifest
+    view = None
+    summary_sha256 = checked.summary_sha256
+    if incremental_core is not None:
+        if type(incremental_core) is not SyncCore:
+            raise CatalogCoreEvidenceError(_ERROR)
+        view, manifest = incremental_core.publication_snapshot(manifest)
+        summary_sha256 = hashlib.sha256(
+            json.dumps(
+                {
+                    "domain": "nla-incremental-proof-v1",
+                    "baseSummary": checked.summary_sha256,
+                    "manifest": manifest.as_dict(),
+                },
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        ).hexdigest()
+    records = generation.records if view is None else view.records
     expected_by_request = _expected_pagination(records)
     parts = generation.source_manifest.parts
     if type(parts) is not tuple or len(parts) != 2:
         raise CatalogCoreEvidenceError(_ERROR)
     shop_domain = parts[0].shop_domain
+    if view is not None and view.shop_domain != shop_domain:
+        raise CatalogCoreEvidenceError(_ERROR)
 
     projection = None
     completed = False
@@ -595,7 +617,7 @@ def _verify(
         started = time.perf_counter_ns()
         projection = build_catalog_projection(
             projection_path,
-            manifest=generation.dataset_manifest,
+            manifest=manifest,
             records=records,
         )
         projection_build_nanoseconds = time.perf_counter_ns() - started
@@ -614,6 +636,10 @@ def _verify(
         facet_evaluation_nanoseconds = time.perf_counter_ns() - started
         started = time.perf_counter_ns()
         _verify_sync(checked, shop_domain)
+        if incremental_core is not None and incremental_core.publication_snapshot(
+            generation.dataset_manifest
+        ) != (view, manifest):
+            raise CatalogCoreEvidenceError(_ERROR)
         sync_bootstrap_nanoseconds = time.perf_counter_ns() - started
         reopened = type(projection).open(
             projection.path,
@@ -622,11 +648,10 @@ def _verify(
         if reopened._file_fingerprint != projection._file_fingerprint:
             raise CatalogCoreEvidenceError(_ERROR)
         fingerprint = reopened._file_fingerprint.content_sha256
-        manifest = generation.dataset_manifest
         result = _VerificationResult(
             evidence=_new_evidence(
                 shop_domain=shop_domain,
-                summary_sha256=checked.summary_sha256,
+                summary_sha256=summary_sha256,
                 dataset_generation=manifest.dataset_generation,
                 catalog_content_sha256=manifest.catalog_content_sha256,
                 projection_fingerprint=fingerprint,
@@ -657,6 +682,7 @@ def _verify_with_measurements(
     projection_path: Path,
     code_sha: str,
     retain_projection: bool = False,
+    incremental_core: SyncCore | None = None,
 ) -> _VerificationResult:
     """Optionally hand the exact successful projection to its packaging owner.
 
@@ -664,7 +690,10 @@ def _verify_with_measurements(
     output if a later packaging step fails; standalone proof stays ephemeral.
     """
     try:
-        result = _verify(verified, projection_path, code_sha, retain_projection=retain_projection)
+        options = {} if incremental_core is None else {"incremental_core": incremental_core}
+        result = _verify(
+            verified, projection_path, code_sha, retain_projection=retain_projection, **options
+        )
     except Exception:
         rejected = True
     else:

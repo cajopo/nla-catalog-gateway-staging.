@@ -1643,6 +1643,67 @@ def _count_tuple_from_dict(
 
 
 @dataclass(frozen=True, slots=True)
+class IncrementalLineageV1:
+    """Event-derived provenance; snapshot fields still identify the base export."""
+
+    base_dataset_generation: str
+    parent_dataset_generation: str
+    shop_domain: str
+    source_cut_at: str
+    event_count: int
+    event_lineage_sha256: str
+
+    FIELDS = frozenset(
+        {
+            "baseDatasetGeneration",
+            "parentDatasetGeneration",
+            "shopDomain",
+            "sourceCutAt",
+            "eventCount",
+            "eventLineageSha256",
+            "syncContractVersion",
+        }
+    )
+
+    def __post_init__(self) -> None:
+        _generation(self.base_dataset_generation, "incremental base generation")
+        _generation(self.parent_dataset_generation, "incremental parent generation")
+        shop = _string(self.shop_domain, "incremental shop")
+        if re.fullmatch(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.myshopify\.com", shop) is None:
+            raise _fail("incremental shop is invalid")
+        _timestamp(self.source_cut_at, "incremental source cut")
+        _positive_integer(self.event_count, "incremental event count")
+        _sha256(self.event_lineage_sha256, "incremental lineage")
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "baseDatasetGeneration": self.base_dataset_generation,
+            "parentDatasetGeneration": self.parent_dataset_generation,
+            "shopDomain": self.shop_domain,
+            "sourceCutAt": self.source_cut_at,
+            "eventCount": self.event_count,
+            "eventLineageSha256": self.event_lineage_sha256,
+            "syncContractVersion": 1,
+        }
+
+    @classmethod
+    def from_dict(cls, value: dict[str, Any]) -> Self:
+        if type(value) is not dict:
+            raise _fail("incremental lineage must be an object")
+        _exact_keys(value, cls.FIELDS, "incremental lineage")
+        if type(value["syncContractVersion"]) is not int or value["syncContractVersion"] != 1:
+            raise _fail("incremental lineage version is invalid")
+        return cls(
+            base_dataset_generation=value["baseDatasetGeneration"],
+            parent_dataset_generation=value["parentDatasetGeneration"],
+            shop_domain=value["shopDomain"],
+            source_cut_at=value["sourceCutAt"],
+            event_count=value["eventCount"],
+            event_lineage_sha256=value["eventLineageSha256"],
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class DatasetManifestV1(_JsonDto):
     source_snapshot_manifest_schema_version: int
     source_snapshot_manifest_sha256: str
@@ -1673,6 +1734,7 @@ class DatasetManifestV1(_JsonDto):
     public_item_count: int
     capability_matrix: CapabilityMatrixV1 = DEFAULT_CAPABILITIES_V1
     contract_version: int = CONTRACT_VERSION
+    incremental_lineage: IncrementalLineageV1 | None = None
 
     FIELDS = frozenset(
         {
@@ -1709,6 +1771,15 @@ class DatasetManifestV1(_JsonDto):
     )
 
     def __post_init__(self) -> None:
+        if self.incremental_lineage is not None:
+            if type(self.incremental_lineage) is not IncrementalLineageV1:
+                raise _fail("incremental lineage is invalid")
+            IncrementalLineageV1.from_dict(self.incremental_lineage.as_dict())
+            if (
+                _expiry_order_key(self.incremental_lineage.source_cut_at, "source cut")[1:]
+                > (_expiry_order_key(self.generated_at, "generatedAt")[1:])
+            ):
+                raise _fail("incremental source cut exceeds generation time")
         if type(self.contract_version) is not int or self.contract_version != CONTRACT_VERSION:
             raise _fail("dataset manifest contractVersion must be 1")
         if (
@@ -1870,6 +1941,14 @@ class DatasetManifestV1(_JsonDto):
             raise _fail(f"source {context} count must equal included plus excluded")
 
     def generation_descriptor(self) -> dict[str, Any]:
+        if self.incremental_lineage is not None:
+            return {
+                **self.incremental_lineage.as_dict(),
+                "catalogContentSha256": self.catalog_content_sha256,
+                "contractVersion": CONTRACT_VERSION,
+                "domain": "nla-catalog-incremental-generation-v1",
+                "taxonomyRuleVersion": self.taxonomy_rule_version,
+            }
         return {
             "catalogContentSha256": self.catalog_content_sha256,
             "contractVersion": CONTRACT_VERSION,
@@ -1888,6 +1967,11 @@ class DatasetManifestV1(_JsonDto):
     def as_dict(self) -> dict[str, Any]:
         return {
             "capabilityMatrix": self.capability_matrix.as_dict(),
+            **(
+                {"incrementalLineage": self.incremental_lineage.as_dict()}
+                if self.incremental_lineage is not None
+                else {}
+            ),
             "catalogContentSha256": self.catalog_content_sha256,
             "classifiedProductCount": self.classified_product_count,
             "contractVersion": self.contract_version,
@@ -1928,10 +2012,18 @@ class DatasetManifestV1(_JsonDto):
     def from_dict(cls, value: dict[str, Any]) -> Self:
         if type(value) is not dict:
             raise _fail("dataset manifest must be an object")
-        _exact_keys(value, cls.FIELDS, "dataset manifest")
+        incremental = "incrementalLineage" in value
+        _exact_keys(
+            value,
+            cls.FIELDS | ({"incrementalLineage"} if incremental else set()),
+            "dataset manifest",
+        )
         statuses = tuple(PRODUCT_STATUSES)
         families = tuple(family.value for family in ProductFamily)
         kwargs: dict[str, Any] = {
+            "incremental_lineage": (
+                IncrementalLineageV1.from_dict(value["incrementalLineage"]) if incremental else None
+            ),
             "contract_version": _positive_integer(value["contractVersion"], "contractVersion"),
             "source_snapshot_manifest_schema_version": _positive_integer(
                 value["sourceSnapshotManifestSchemaVersion"],

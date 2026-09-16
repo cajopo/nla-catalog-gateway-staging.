@@ -1,7 +1,7 @@
-"""Publish only fully reconciled sync views through existing verified contracts.
+"""Publish reconciled or explicitly event-derived views through verified contracts.
 
-Incremental sync identities are intentionally not ``DatasetManifestV1`` identities,
-so this handoff rejects them instead of fabricating a projection manifest.
+Incremental publication requires a proven, reopened immutable package whose
+manifest retains baseline provenance and the existing sync lineage identity.
 """
 
 from __future__ import annotations
@@ -14,6 +14,7 @@ from nla_catalog_gateway.generation_bundle import VerifiedReconciledGenerationV1
 from nla_catalog_gateway.pagination import CursorCodecV1, build_catalog_projection
 from nla_catalog_gateway.runtime_api import EvidenceBoundCatalogBackend
 from nla_catalog_gateway.runtime_contract import CatalogProductRecordV1
+from nla_catalog_gateway.staging_generation import VerifiedStagingGenerationV1
 from nla_catalog_gateway.sync import GenerationView, SyncCore, _initial_event_lineage
 
 _CONCRETE_PATH_TYPE = type(Path())
@@ -155,4 +156,60 @@ def publish_reconciled_generation(
     return view.dataset_generation
 
 
-__all__ = ["SyncPublicationError", "publish_reconciled_generation"]
+def publish_incremental_generation(
+    core: SyncCore,
+    verified: VerifiedStagingGenerationV1,
+    *,
+    backend: EvidenceBoundCatalogBackend,
+    cursor_codec: CursorCodecV1,
+) -> str:
+    """Publish a proven, reopened package only while its committed sync view is current.
+
+    The package is durable but the runtime switch is in-process. A durable active
+    pointer and inbox completion are separate; this does not acknowledge events.
+    """
+    try:
+        if (type(core), type(verified), type(backend), type(cursor_codec)) != (
+            SyncCore,
+            VerifiedStagingGenerationV1,
+            EvidenceBoundCatalogBackend,
+            CursorCodecV1,
+        ):
+            raise ValueError
+        token = backend.capture_activation_token()
+        manifest = verified.projection.manifest
+        lineage = manifest.incremental_lineage
+        if lineage is None:
+            raise ValueError
+
+        def activate(view: GenerationView) -> None:
+            if (
+                view.shop_domain != lineage.shop_domain
+                or view.base_dataset_generation != lineage.base_dataset_generation
+                or view.parent_dataset_generation != lineage.parent_dataset_generation
+                or view.source_cut_at != lineage.source_cut_at
+                or view.applied_event_count != lineage.event_count
+                or view.event_lineage_sha256 != lineage.event_lineage_sha256
+            ):
+                raise ValueError
+            manifest.validate_records(view.records)
+            backend.activate_staging_generation_if_current(token, verified, cursor_codec)
+
+        core.publish_active_dataset(
+            expected_active_generation=manifest.dataset_generation,
+            publisher=activate,
+        )
+    except Exception:
+        rejected = True
+    else:
+        rejected = False
+    if rejected:
+        raise SyncPublicationError(_ERROR)
+    return manifest.dataset_generation
+
+
+__all__ = [
+    "SyncPublicationError",
+    "publish_incremental_generation",
+    "publish_reconciled_generation",
+]
