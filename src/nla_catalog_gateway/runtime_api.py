@@ -1881,14 +1881,13 @@ def _assemble_evidence_bound_generation(
         raise RuntimeApiContractError("catalog runtime binding is invalid")
     shop_domain = _validated_shop(shop_domain)
     manifest.validate_records(records)
-    reopened = CatalogProjection.open(
-        projection.path,
-        expected_generation=manifest.dataset_generation,
-    )
+    activation = AtomicCatalogActivation(projection)
+    reopened = activation.select()
     if (
         reopened._file_fingerprint != projection._file_fingerprint
         or reopened.manifest != manifest
         or projection.manifest != manifest
+        or reopened.dataset_generation != manifest.dataset_generation
     ):
         raise RuntimeApiContractError("catalog runtime binding is invalid")
     codec = CursorCodecV1(cursor_codec.secret, cursor_codec.ttl_seconds)
@@ -1918,7 +1917,7 @@ def _assemble_evidence_bound_generation(
     ):
         raise RuntimeApiContractError("catalog runtime binding is invalid")
     paginator = CatalogPaginator(
-        AtomicCatalogActivation(reopened),
+        activation,
         codec,
         clock=clock,
     )

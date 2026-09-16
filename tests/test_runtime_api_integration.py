@@ -389,6 +389,67 @@ def test_portable_staging_generation_reaches_the_evidence_gate_without_reconcili
     assert _gids(lease.fetch_page(searched, None, control=control)) == ("gid://shopify/Product/1",)
 
 
+@pytest.mark.parametrize("portable", (False, True))
+def test_binding_reuses_one_activation_verified_projection(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, portable: bool
+) -> None:
+    codec = CursorCodecV1(CURSOR_KEY, ttl_seconds=1_800)
+    if portable:
+        package = staging_helpers._make_package(tmp_path)
+        verified = staging_generation.open_staging_generation(
+            package.directory, package.manifest_sha256
+        )
+    else:
+        case = _bound_case(tmp_path, "single-open", evidence_helpers._records(), "a" * 64)
+    reopened = []
+    original_open = CatalogProjection.open.__func__
+
+    def counted_open(cls, path, *, expected_generation=None):
+        projection = original_open(cls, path, expected_generation=expected_generation)
+        reopened.append(projection)
+        return projection
+
+    monkeypatch.setattr(CatalogProjection, "open", classmethod(counted_open))
+    if portable:
+        backend = EvidenceBoundCatalogBackend.from_staging_generation(
+            verified, codec, expected_code_sha=CODE_SHA, clock=lambda: CURSOR_NOW
+        )
+    else:
+        backend = EvidenceBoundCatalogBackend(
+            case.verified,
+            case.projection,
+            codec,
+            case.evidence,
+            expected_code_sha=CODE_SHA,
+            clock=lambda: CURSOR_NOW,
+        )
+    assert len(reopened) == 1
+    assert backend._active.projection is reopened[-1]
+    assert backend._active.paginator._activation.select() is reopened[-1]
+    if portable:
+        backend.activate_staging_generation(verified, codec)
+    else:
+        backend.activate(case.verified, case.projection, codec, case.evidence)
+    assert len(reopened) == 2
+    assert backend._active.projection is reopened[-1]
+    assert backend._active.paginator._activation.select() is reopened[-1]
+    lease = backend.acquire(control=_control())
+    assert EvidenceBoundCapabilityGate(backend).ready(lease, control=_control()) is True
+    active = backend._active
+    wrong_generation = replace(reopened[-1], dataset_generation="sha256:" + "f" * 64)
+    monkeypatch.setattr(
+        CatalogProjection, "open", classmethod(lambda _cls, *_args, **_kwargs: wrong_generation)
+    )
+    with pytest.raises(RuntimeApiContractError, match="catalog runtime binding is invalid"):
+        if portable:
+            backend.activate_staging_generation(verified, codec)
+        else:
+            backend.activate(case.verified, case.projection, codec, case.evidence)
+    assert backend._active is active
+    assert EvidenceBoundCapabilityGate(backend).ready(lease, control=_control()) is True
+    lease.close()
+
+
 def test_portable_activation_rejects_tamper_without_replacing_the_active_generation(
     tmp_path: Path,
 ) -> None:
