@@ -1667,6 +1667,44 @@ def test_native_file_binding_failures_close_exact_resources(
             assert handle.read() == b"source"
 
 
+def test_native_snapshot_binding_is_buffered_without_weakening_line_limit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = tmp_path / "snapshot.jsonl"
+    maximum = cli.bulk.MAX_JSONL_LINE_BYTES
+    accepted = b"x" * (maximum - 1) + b"\n"
+    rejected = b"x" * maximum + b"\n"
+    source.write_bytes(accepted + rejected)
+    descriptor = os.open(source, os.O_RDONLY)
+    fdopen_calls: list[tuple[int, str, int]] = []
+    real_fdopen = os.fdopen
+
+    def recorded_fdopen(fd: int, mode: str, *, buffering: int) -> Any:
+        fdopen_calls.append((fd, mode, buffering))
+        return real_fdopen(fd, mode, buffering=buffering)
+
+    fake_msvcrt = SimpleNamespace(open_osfhandle=lambda *_args: descriptor)
+    with monkeypatch.context() as patch:
+        patch.setattr(cli, "_native_create_file", lambda *_args, **_kwargs: 101)
+        patch.setattr(cli, "_windows_msvcrt", lambda: fake_msvcrt)
+        patch.setattr(os, "fdopen", recorded_fdopen)
+        with cli._native_binary_file(
+            source, writable=False, create=False, context="input"
+        ) as handle:
+            initial_state = cli._handle_input_state(handle, "input")
+            assert isinstance(handle, io.BufferedReader)
+            assert handle.fileno() == descriptor
+            assert cli.bulk._next_line(handle) == accepted
+            with pytest.raises(
+                cli.bulk.BulkContractError,
+                match="exceeds the maximum line size",
+            ):
+                cli.bulk._next_line(handle)
+            assert cli._handle_input_state(handle, "input") == initial_state
+
+    assert fdopen_calls == [(descriptor, "rb", cli._NATIVE_READ_BUFFER_BYTES)]
+
+
 def test_native_handle_and_directory_error_paths_are_fail_closed(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
