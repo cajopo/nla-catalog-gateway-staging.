@@ -467,11 +467,10 @@ class AppProxyVerifierAuthorizer:
 
 @dataclass(frozen=True, slots=True, repr=False)
 class _EvidenceBoundGeneration:
-    verified: VerifiedReconciledGenerationV1 | VerifiedStagingGenerationV1 = field(repr=False)
+    manifest: DatasetManifestV1 = field(repr=False)
     projection: CatalogProjection = field(repr=False)
     cursor_codec: CursorCodecV1 = field(repr=False)
     evidence: VerifiedCatalogCoreEvidenceV1 = field(repr=False)
-    records: tuple[CatalogProductRecordV1, ...] = field(repr=False)
     paginator: CatalogPaginator = field(repr=False)
     clock: Callable[[], datetime] = field(repr=False, compare=False)
     binding: tuple[str, str, str, str, str, str] = field(repr=False)
@@ -1791,7 +1790,6 @@ def _new_evidence_bound_generation(
         ):
             raise RuntimeApiContractError("catalog runtime binding is invalid")
         candidate = _assemble_evidence_bound_generation(
-            verified=checked,
             projection=projection,
             cursor_codec=cursor_codec,
             evidence=evidence,
@@ -1831,7 +1829,6 @@ def _new_evidence_bound_staging_generation(
         ):
             raise RuntimeApiContractError("catalog runtime binding is invalid")
         candidate = _assemble_evidence_bound_generation(
-            verified=verified,
             projection=verified.projection,
             cursor_codec=cursor_codec,
             evidence=verified.evidence,
@@ -1855,7 +1852,6 @@ def _new_evidence_bound_staging_generation(
 
 def _assemble_evidence_bound_generation(
     *,
-    verified: VerifiedReconciledGenerationV1 | VerifiedStagingGenerationV1,
     projection: CatalogProjection,
     cursor_codec: CursorCodecV1,
     evidence: VerifiedCatalogCoreEvidenceV1,
@@ -1880,6 +1876,7 @@ def _assemble_evidence_bound_generation(
     ):
         raise RuntimeApiContractError("catalog runtime binding is invalid")
     shop_domain = _validated_shop(shop_domain)
+    manifest = DatasetManifestV1.from_json_bytes(manifest.to_json_bytes())
     manifest.validate_records(records)
     activation = AtomicCatalogActivation(projection)
     reopened = activation.select()
@@ -1922,11 +1919,10 @@ def _assemble_evidence_bound_generation(
         clock=clock,
     )
     return _EvidenceBoundGeneration(
-        verified=verified,
+        manifest=manifest,
         projection=reopened,
         cursor_codec=codec,
         evidence=evidence,
-        records=records,
         paginator=paginator,
         clock=clock,
         binding=binding,
@@ -1937,11 +1933,12 @@ def _evidence_binding_is_current(generation: _EvidenceBoundGeneration) -> bool:
     try:
         if type(generation) is not _EvidenceBoundGeneration:
             return False
-        verified = generation.verified
+        manifest = generation.manifest
         projection = generation.projection
         evidence = generation.evidence
         if (
             type(projection) is not CatalogProjection
+            or type(manifest) is not DatasetManifestV1
             or type(generation.cursor_codec) is not CursorCodecV1
             or type(evidence) is not VerifiedCatalogCoreEvidenceV1
             or type(evidence.verification_version) is not int
@@ -1950,51 +1947,6 @@ def _evidence_binding_is_current(generation: _EvidenceBoundGeneration) -> bool:
         ):
             return False
         projection._assert_file_unchanged()
-        if type(verified) is VerifiedReconciledGenerationV1:
-            manifest = verified.generation.dataset_manifest
-            source_records = verified.generation.records
-            parts = verified.generation.source_manifest.parts
-            if type(parts) is not tuple or len(parts) != 2:
-                return False
-            binding = (
-                parts[0].shop_domain,
-                verified.summary_sha256,
-                manifest.dataset_generation,
-                manifest.catalog_content_sha256,
-                projection._file_fingerprint.content_sha256,
-                generation.binding[5],
-            )
-            source_is_current = (
-                parts[1].shop_domain == binding[0]
-                and parts[1].source_code_sha == parts[0].source_code_sha
-                and type(parts[0].source_code_sha) is str
-                and _CODE_SHA_RE.fullmatch(parts[0].source_code_sha) is not None
-            )
-        elif type(verified) is VerifiedStagingGenerationV1:
-            portable_projection = verified.projection
-            manifest = portable_projection.manifest
-            source_records = verified.records
-            binding = (
-                verified.evidence.shop_domain,
-                verified.evidence.summary_sha256,
-                manifest.dataset_generation,
-                manifest.catalog_content_sha256,
-                projection._file_fingerprint.content_sha256,
-                verified.evidence.code_sha,
-            )
-            source_is_current = (
-                type(verified.manifest_sha256) is str
-                and _SHA256_RE.fullmatch(verified.manifest_sha256) is not None
-                and type(portable_projection) is CatalogProjection
-                and type(source_records) is tuple
-                and verified.evidence is evidence
-                and source_records is generation.records
-                and portable_projection.path == projection.path
-                and portable_projection.manifest == projection.manifest
-                and portable_projection._file_fingerprint == projection._file_fingerprint
-            )
-        else:
-            return False
         evidence_binding = (
             evidence.shop_domain,
             evidence.summary_sha256,
@@ -2004,12 +1956,13 @@ def _evidence_binding_is_current(generation: _EvidenceBoundGeneration) -> bool:
             evidence.code_sha,
         )
         return (
-            generation.binding == binding == evidence_binding
-            and source_is_current
-            and source_records is generation.records
-            and projection.dataset_generation == binding[2]
+            generation.binding == evidence_binding
+            and projection.dataset_generation == evidence.dataset_generation
+            and projection._file_fingerprint.content_sha256 == evidence.projection_fingerprint
+            and manifest.dataset_generation == evidence.dataset_generation
+            and manifest.catalog_content_sha256 == evidence.catalog_content_sha256
             and projection.manifest == manifest
-            and generation.paginator._activation.active_generation == binding[2]
+            and generation.paginator._activation.active_generation == evidence.dataset_generation
         )
     except Exception:
         return False
