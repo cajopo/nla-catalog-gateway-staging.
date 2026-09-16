@@ -634,6 +634,27 @@ class EvidenceBoundCatalogBackend:
             raise PaginationContractError("pagination clock must return a UTC datetime")
         return now
 
+    def activate_staging_generation_if_current(
+        self,
+        activation_token: object,
+        verified: VerifiedStagingGenerationV1,
+        cursor_codec: CursorCodecV1,
+    ) -> None:
+        """Conditionally install a verified package without overwriting another publisher."""
+        candidate = _new_evidence_bound_staging_generation(
+            verified,
+            cursor_codec,
+            expected_code_sha=self._expected_code_sha,
+            clock=self._clock,
+        )
+        with self._lock:
+            if (
+                activation_token is not self._activation_token
+                or candidate.binding[0] != self._active.binding[0]
+            ):
+                raise RuntimeApiContractError("catalog runtime binding is invalid")
+            self._install_candidate(candidate)
+
     def _prune_cursor_generations(self, now: datetime) -> None:
         # Only release memory/keys. Package files are never deleted here.
         expired = [
