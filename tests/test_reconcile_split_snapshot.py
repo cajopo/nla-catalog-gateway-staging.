@@ -93,12 +93,13 @@ def portable_core_filesystem_backend(
     request: pytest.FixtureRequest,
     tmp_path: Path,
 ) -> Any:
-    """Exercise portable runner logic on CI while production remains Win32 fail-closed."""
+    """Keep Windows-contract simulation separate from the native Linux test module."""
 
     if not PORTABLE_CORE_BACKEND or request.node.name.startswith("test_native_"):
         yield
         return
 
+    monkeypatch.setattr(cli, "_LINUX_HANDLE_API_AVAILABLE", False)
     products_query_bytes = PRODUCT_QUERY.read_bytes()
     variants_query_bytes = VARIANT_QUERY.read_bytes()
     portable_repository = tmp_path / "portable-repository"
@@ -1397,6 +1398,7 @@ def test_native_runner_fails_closed_before_output_when_backend_is_unavailable(
     inputs = make_inputs(tmp_path)
     output = tmp_path / "generation"
     monkeypatch.setattr(cli, "_WINDOWS_HANDLE_API_AVAILABLE", False)
+    monkeypatch.setattr(cli, "_LINUX_HANDLE_API_AVAILABLE", False)
 
     with pytest.raises(cli.ReconciliationCliError, match="guarantees are unavailable"):
         cli.run_reconciliation(**inputs.kwargs(output))
@@ -3451,7 +3453,7 @@ def test_module_entrypoint_is_covered(
     with pytest.raises(SystemExit) as error:
         runpy.run_path(str(cli.__file__), run_name="__main__")
     captured = capsys.readouterr()
-    if sys.platform != "win32":
+    if sys.platform not in ("win32", "linux"):
         assert error.value.code == 2
         assert captured.out == ""
         assert captured.err.strip() == "split snapshot reconciliation failed"
