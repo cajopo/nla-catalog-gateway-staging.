@@ -588,6 +588,41 @@ def test_producer_builds_once_proves_and_reopens_the_exact_portable_package(
     )
 
 
+def test_producer_releases_previous_catalog_before_each_package_reopen(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    bundle = (tmp_path / "bundle").resolve()
+    bundle.mkdir()
+
+    @contextmanager
+    def opened(directory: Path, digest: str) -> Any:
+        yield evidence_helpers._verified()
+
+    real_open = package_staging_generation.open_staging_generation
+    observations = []
+
+    def checked_open(*args: Any, **kwargs: Any) -> Any:
+        names = set(sys._getframe(1).f_locals)
+        assert "verified_generation" not in names
+        assert "candidate" not in names
+        observations.append(args[0])
+        return real_open(*args, **kwargs)
+
+    monkeypatch.setattr(package_staging_generation, "open_reconciled_generation", opened)
+    monkeypatch.setattr(package_staging_generation, "open_staging_generation", checked_open)
+    destination = (tmp_path / "staging-package").resolve()
+    manifest_sha = package_staging_generation.run_packaging(
+        bundle, evidence_helpers.SUMMARY_SHA, CODE_SHA, destination
+    )
+    assert len(observations) == 2
+    assert observations[0] != destination
+    assert observations[1] == destination
+    assert (
+        real_open(destination, manifest_sha).records
+        == evidence_helpers._verified().generation.records
+    )
+
+
 def test_producer_rejects_bad_destination_code_and_existing_output(
     tmp_path: Path,
 ) -> None:
