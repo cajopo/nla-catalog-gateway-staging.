@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sys
 from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
@@ -43,11 +44,18 @@ CODE = "c" * 40
 
 
 @pytest.fixture(autouse=True)
-def synthetic_bundle_filesystem(monkeypatch: pytest.MonkeyPatch):
-    # The source bundle reader has a Win32-only production boundary. Exercise
-    # its real content validation with the existing test filesystem adapter on
-    # every test platform; this is not Linux source-bundle deployment evidence.
-    bundles._install_backend(monkeypatch)
+def synthetic_bundle_filesystem(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    # Ubuntu CI exercises the production reader, not the synthetic filesystem seam.
+    if sys.platform != "linux":
+        bundles._install_backend(monkeypatch)
+    yield
+    if sys.platform == "linux":
+        for directory in tmp_path.rglob("bundle"):
+            if directory.is_dir() and not directory.is_symlink():
+                directory.chmod(0o755)
+                for artifact in directory.iterdir():
+                    if artifact.is_file() and not artifact.is_symlink():
+                        artifact.chmod(0o644)
 
 
 def _control():
@@ -66,6 +74,10 @@ def _case(tmp_path: Path):
         for index, record in enumerate(evidence_helpers._records())
     )
     bundle = bundles._write_bundle(tmp_path / "bundle", records)
+    if sys.platform == "linux":
+        for artifact in bundle.directory.iterdir():
+            artifact.chmod(0o444)
+        bundle.directory.chmod(0o555)
     base_path = tmp_path / "base-package"
     base_pin = run_packaging(bundle.directory, bundle.summary_sha256, CODE, base_path)
     base = open_staging_generation(base_path, base_pin)
