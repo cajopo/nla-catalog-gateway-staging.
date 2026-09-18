@@ -1,0 +1,7 @@
+# This mutation starts a read-only export; it does not mutate catalog resources.
+mutation NlaCaptureStart($query: String!) {
+  bulkOperationRunQuery(query: $query, groupObjects: false) {
+    bulkOperation { id }
+    userErrors { message }
+  }
+}

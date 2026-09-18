@@ -1,5 +1,14 @@
 # NLA catalog gateway — execution roadmap
 
+## Current next step — 2026-09-18 (#89)
+
+After merged native Linux reconciliation #88 (`9fe7358`), deliver one minimal Bulk
+acquisition command producing a verified candidate with the existing core. No
+new scheduler/service or automatic publication. Read
+`workstreams/ws-07-vps-bulk-acquisition.md`. Real Shopify installation/auth, current
+canonical inputs, incremental/scheduled sync, persistent activation/restart and
+actual proxy/theme E2E remain outstanding; the full goal is unchanged.
+
 ## Current goal overlay — 2026-09-15
 
 Current action: #67 / `agent/staging-single-build` on #66 (`fbe3cfc`). Package the exact

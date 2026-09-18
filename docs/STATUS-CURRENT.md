@@ -1,5 +1,16 @@
 # NLA catalog gateway — current status
 
+## Current acquisition candidate — 2026-09-18 (#89)
+
+Merged #88 (`9fe7358`) supplies native Linux reconciliation. The next bounded
+slice acquires the existing two read-only Bulk exports on the VPS and reuses
+reconciliation/packaging, without a new service or automatic activation. Explicit
+checkpointed resume, independent counts and pinned canonical sources are required.
+See `workstreams/ws-07-vps-bulk-acquisition.md` for scope and verification status.
+Actual app credentials/installation, current source coverage and signed Shopify
+App Proxy proof remain separate; the full storefront goal and #11 remain open.
+Historical entries below do not supersede this current workstream.
+
 ## Current retained-cursor candidate — 2026-09-15 (#69)
 
 - `agent/retained-cursor-generations` starts from packaging candidate `0621aed` (#67).

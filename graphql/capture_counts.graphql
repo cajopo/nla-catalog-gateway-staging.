@@ -1,0 +1,10 @@
+# Independent counts; never infer expected totals from downloaded Bulk rows.
+query NlaCaptureCounts($singleQuery: String!) {
+  shop { myshopifyDomain }
+  products: productsCount(limit: null) { count precision }
+  variants: productVariantsCount(limit: null) { count precision }
+  published: productsCount(limit: null, query: "status:active AND published_status:published") {
+    count precision
+  }
+  singles: productsCount(limit: null, query: $singleQuery) { count precision }
+}
