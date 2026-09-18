@@ -1,0 +1,6 @@
+query NlaCaptureStatus($id: ID!) {
+  bulkOperation(id: $id) {
+    id type status errorCode query createdAt completedAt
+    fileSize objectCount rootObjectCount url partialDataUrl
+  }
+}

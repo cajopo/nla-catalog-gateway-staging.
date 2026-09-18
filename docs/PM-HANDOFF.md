@@ -1,5 +1,17 @@
 # PM handoff — Next Level Arena catalog gateway
 
+## Latest acquisition handoff — 2026-09-18 (#89)
+
+Pronto il comando minimo sulla VPS: due esportazioni Shopify di sola lettura,
+download verificato e riuso della riconciliazione/packaging esistenti. Ogni ripresa
+conserva gli identificativi; un avvio incerto richiede recupero esplicito, non un
+duplicato. Nessun nuovo servizio, pianificazione o attivazione automatica.
+180 test nativi Linux PASS in 6.25s, entrambi i componenti al 100% linee/rami;
+review indipendente PASS dopo due correzioni Medium. CI dell'head ancora richiesta.
+Dettagli: `workstreams/ws-07-vps-bulk-acquisition.md`. Installazione e credenziali
+reali dell'app, sorgenti canoniche correnti e prova App Proxy restano da completare;
+questo risultato non chiude #11, #89 reale o l'obiettivo complessivo.
+
 ## Latest pagination handoff — 2026-09-15 (#69)
 
 Il candidato permette di continuare una navigazione sul catalogo originale dopo
