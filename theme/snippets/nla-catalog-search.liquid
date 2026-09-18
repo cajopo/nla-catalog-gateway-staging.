@@ -94,12 +94,15 @@ Renders game-scoped gateway search without native predictive-search fallback.
   .nla-catalog__suggestions [aria-selected="true"], .nla-catalog__suggestions li:hover { background: #303846; }
   .nla-catalog__status { min-height: 24px; margin: 8px 0; overflow-wrap: anywhere; }
   .nla-catalog__page { margin-top: 24px; }
+  .nla-catalog__heading { color: #f6f8fb; }
   .nla-catalog__results { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
     gap: 16px; list-style: none; margin: 20px 0; padding: 0; }
   .nla-catalog__results li { padding: 16px; border: 1px solid #535a68; border-radius: 12px;
     background: #15171d; overflow-wrap: anywhere; }
   .nla-catalog__results a { display: block; color: #8addfa; font-weight: 700; text-decoration: underline; }
   .nla-catalog__results p { margin: 12px 0 0; }
+  .nla-catalog__media { display: grid; place-items: center; aspect-ratio: 5 / 7; margin-bottom: 12px; }
+  .nla-catalog__media img { width: 100%; height: 100%; max-height: 360px; object-fit: contain; }
   .nla-catalog__page nav, .nla-catalog__recovery { display: flex; flex-wrap: wrap; gap: 12px; }
   @media (max-width: 600px) {
     .nla-catalog__bar { flex-wrap: wrap; }
@@ -116,6 +119,7 @@ Renders game-scoped gateway search without native predictive-search fallback.
         if (this.events) return;
         this.events = new AbortController();
         this.sequence = 0;
+        this.imageCache ||= new Map();
         this.form = this.querySelector('form');
         this.game = this.form.elements.game;
         this.input = this.form.elements.q;
@@ -175,7 +179,7 @@ Renders game-scoped gateway search without native predictive-search fallback.
       message(key) { return this.querySelector(`[data-message="${key}"]`).textContent; }
 
       cancel() {
-        clearTimeout(this.timer); this.controller?.abort(); this.sequence += 1;
+        clearTimeout(this.timer); this.controller?.abort(); this.imageController?.abort(); this.sequence += 1;
       }
 
       hideSuggestions() {
@@ -336,7 +340,8 @@ Renders game-scoped gateway search without native predictive-search fallback.
           const root = this.dataset.rootUrl.endsWith('/') ? this.dataset.rootUrl : this.dataset.rootUrl + '/';
           link.href = root + 'products/' + encodeURIComponent(item.handle); li.append(link);
           const append = text => { const p = document.createElement('p'); p.textContent = text; li.append(p); };
-          append(this.message('image_notice'));
+          const media = document.createElement('div'); media.className = 'nla-catalog__media';
+          media.textContent = this.message('image_notice'); li.prepend(media);
           append(this.message(item.variants.some(variant => variant.inventoryQuantity > 0) ? 'in_stock' : 'sold_out'));
           const prices = item.variants.map(variant => variant.priceText);
           const scale = Math.max(...prices.map(price => (price.split('.')[1] || '').length));
@@ -346,8 +351,53 @@ Renders game-scoped gateway search without native predictive-search fallback.
           return li;
         });
         this.results.replaceChildren(...nodes);
+        this.loadImages(data.page.items, nodes);
         this.heading.textContent = `${this.message('results')} — ${this.game.selectedOptions[0].textContent}${request.q ? ': ' + request.q : ''}`;
         this.status.textContent = nodes.length ? `${this.message('results')}: ${nodes.length}` : this.message('empty');
+      }
+
+      async loadImages(items, nodes) {
+        this.imageController?.abort();
+        const controller = new AbortController(); this.imageController = controller;
+        const current = () => !controller.signal.aborted && this.isConnected && this.imageController === controller;
+        let next = 0;
+        const worker = async () => {
+          while (current() && next < items.length) {
+            const index = next++; const item = items[index]; const media = nodes[index].querySelector('.nla-catalog__media');
+            const key = item.productGid + '|' + item.handle;
+            try {
+              let imageUrl = this.imageCache.get(key);
+              if (!imageUrl) {
+                const root = this.dataset.rootUrl.endsWith('/') ? this.dataset.rootUrl : this.dataset.rootUrl + '/';
+                const url = new URL(root + 'products/' + encodeURIComponent(item.handle) + '.js', location.origin);
+                if (url.origin !== location.origin) continue;
+                const response = await fetch(url, { headers: { 'Accept': 'application/json' }, credentials: 'same-origin',
+                  redirect: 'error', signal: AbortSignal.any([controller.signal, AbortSignal.timeout(5000)]) });
+                if (!response.ok) continue;
+                const product = await response.json();
+                if (!Number.isSafeInteger(product.id) || 'gid://shopify/Product/' + product.id !== item.productGid
+                  || product.handle !== item.handle || typeof product.featured_image !== 'string' || !product.featured_image) continue;
+                const image = new URL(product.featured_image, location.origin);
+                if (image.protocol !== 'https:' || image.username || image.password || image.port
+                  || (image.hostname !== 'cdn.shopify.com' && image.origin !== location.origin)) continue;
+                imageUrl = image.href;
+                if (!current()) return;
+                this.imageCache.set(key, imageUrl);
+                if (this.imageCache.size > 96) this.imageCache.delete(this.imageCache.keys().next().value);
+              }
+              if (!current() || !this.results.contains(nodes[index])) return;
+              const image = document.createElement('img'); image.alt = item.commercialTitle;
+              image.loading = 'lazy'; image.decoding = 'async'; image.width = 250; image.height = 350;
+              image.addEventListener('error', () => {
+                if (current() && this.results.contains(nodes[index])) media.textContent = this.message('image_notice');
+              }, { once: true });
+              image.src = imageUrl; media.replaceChildren(image);
+            } catch {
+              if (!current()) return;
+            }
+          }
+        };
+        await Promise.all(Array.from({ length: Math.min(4, items.length) }, worker));
       }
     });
   }
