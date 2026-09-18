@@ -41,9 +41,7 @@ def _input(root: Path):
         "relative",
         "double-root",
         "parent",
-        "colon",
-        "trailing-dot",
-        "trailing-space",
+        "nul",
         "repository",
         "repository-child",
         "unavailable",
@@ -57,9 +55,7 @@ def test_linux_path_rejects_unsafe_namespace(linux_root, monkeypatch, kind):
         "relative": Path("relative"),
         "double-root": Path("//double-root"),
         "parent": linux_root / ".." / "escape",
-        "colon": linux_root / "name:stream",
-        "trailing-dot": linux_root / "name.",
-        "trailing-space": linux_root / "name ",
+        "nul": linux_root / "nul\x00name",
         "repository": cli.REPOSITORY_ROOT,
         "repository-child": cli.REPOSITORY_ROOT / "snapshot.jsonl",
         "unavailable": linux_root,
@@ -68,6 +64,33 @@ def test_linux_path_rejects_unsafe_namespace(linux_root, monkeypatch, kind):
         monkeypatch.setattr(cli, "_LINUX_HANDLE_API_AVAILABLE", False)
     with pytest.raises(cli.ReconciliationCliError, match="filesystem path is invalid"):
         cli._linux_path(paths[kind], external=True)
+
+
+@pytest.mark.parametrize("name", ["name:stream", "name.", "name "])
+def test_linux_literal_names_are_valid_for_directories_and_files(linux_root, name):
+    if linux_root is None:
+        return
+    sibling = linux_root / "name"
+    sibling.mkdir()
+    (sibling / "name").write_bytes(b"untouched")
+    directory = linux_root / name
+    directory.mkdir()
+    path = directory / name
+    path.write_bytes(b"literal-name-input")
+    assert cli._linux_path(directory, external=True) == directory
+    with cli._linux_directory(directory, external=True) as descriptor:
+        assert os.fstat(descriptor).st_ino == directory.stat().st_ino
+        assert os.fstat(descriptor).st_ino != sibling.stat().st_ino
+    checked_path, state = cli._linux_regular_file(path, "literal input", external=True)
+    assert checked_path == path
+    assert state.identity.inode == path.stat().st_ino
+    with ExitStack() as stack:
+        pinned = cli._linux_pin_regular_file(
+            path, state, "literal input", stack, freeze_maximum=64, external=True
+        )
+        assert pinned.frozen_bytes == b"literal-name-input"
+        cli._linux_verify_pinned_input(pinned)
+    assert (sibling / "name").read_bytes() == b"untouched"
 
 
 def test_linux_directory_walk_accepts_root_and_rejects_symlink_ancestor(linux_root):

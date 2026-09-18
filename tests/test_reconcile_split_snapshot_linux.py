@@ -83,6 +83,34 @@ def test_native_linux_reconciles_deterministically_and_reopens(native_inputs, tm
     assert not tuple(tmp_path.glob(".nla-reconcile-staging-*"))
 
 
+def test_native_linux_query_directory_with_trailing_dot(native_inputs, tmp_path):
+    """The real GitHub repository/checkout name ends with a dot, literal on Linux."""
+    if native_inputs is None:
+        return
+    checkout = tmp_path / "nla-catalog-gateway-staging."
+    checkout.mkdir()
+    products_query, variants_query = checkout / "products.graphql", checkout / "variants.graphql"
+    products_query.write_bytes(native_inputs.products_query.read_bytes())
+    variants_query.write_bytes(native_inputs.variants_query.read_bytes())
+    inputs = replace(native_inputs, products_query=products_query, variants_query=variants_query)
+    output = tmp_path / "generation"
+    cli.run_reconciliation(**inputs.kwargs(output))
+    with open_reconciled_generation(output, _pin(output)) as verified:
+        assert len(verified.generation.records) == 1
+
+
+@pytest.mark.parametrize("name", ["generation.", "generation:one", "generation ", "parent./out"])
+def test_native_linux_output_remains_compatible_with_bundle_reader(native_inputs, tmp_path, name):
+    if native_inputs is None:
+        return
+    output = tmp_path / name
+    output.parent.mkdir(exist_ok=True)
+    with pytest.raises(cli.ReconciliationCliError):
+        cli.run_reconciliation(**native_inputs.kwargs(output))
+    assert not output.exists()
+    assert not tuple(output.parent.glob(".nla-reconcile-staging-*"))
+
+
 def _single_card_inputs(inputs, root):
     sources = {}
     products, variants = [], []

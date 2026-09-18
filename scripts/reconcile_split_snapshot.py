@@ -1611,7 +1611,7 @@ def _linux_path(value: object, *, external: bool) -> Path:
         or type(value) is not _CONCRETE_PATH_TYPE
         or value.anchor != "/"
         or _contains_parent_reference(value)
-        or _has_unsafe_path_component(value)
+        or "\x00" in os.fspath(value)
         or (external and (value == REPOSITORY_ROOT or value.is_relative_to(REPOSITORY_ROOT)))
     ):
         raise ReconciliationCliError("Linux filesystem path is invalid")
@@ -1876,7 +1876,8 @@ def _linux_write_generation_output(
     terminal_query_audits: tuple[_TerminalQueryAuditEvidence, _TerminalQueryAuditEvidence],
 ) -> dict[str, object]:
     target = _linux_path(output_directory, external=True)
-    if target == target.parent:
+    # Generated bundle paths must remain compatible with the existing reader.
+    if target == target.parent or _has_unsafe_path_component(target):
         raise ReconciliationCliError("output directory is invalid")
     try:
         with _linux_directory(target.parent, external=True) as parent:

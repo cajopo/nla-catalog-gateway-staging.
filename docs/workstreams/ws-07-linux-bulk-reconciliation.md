@@ -11,7 +11,10 @@ are shared with Windows. No new service or data format is introduced.
 Inputs are pinned through directory descriptors with no symbolic-link traversal.
 Regular single-link files are checked against their path and descriptor, including
 change time. Bounded control documents are frozen in memory. Data stays outside
-the repository; approved query files may remain inside it.
+the repository; approved query files may remain inside it. Input paths use native
+POSIX semantics (NUL rejected; literal trailing dots/spaces/colons allowed), including
+the GitHub checkout name ending with a dot. Output paths retain the existing bundle
+reader's stricter component contract so success never creates an unreadable bundle.
 
 The output parent must belong to the effective operator UID and must not be
 group/other writable. A private staging directory holds exclusive-created files,
@@ -41,11 +44,24 @@ catalog proof requires searchable cards in all four games. The test fixture now
 contains four distinct products/source identities with the same publication ID;
 no production gate was relaxed.
 
-Final native container `nla-reconcile-v5`: **195 passed in 4.22s**, no skips or
+Initial successful native container `nla-reconcile-v5`: **195 passed in 4.22s**, no skips or
 warnings. Reconciler coverage: **1261 statements / 334 branches, 100%**. Python
 3.13.15, non-root UID10001, no network, read-only source/root, private temporary
 test data, 1 CPU / 1 GiB limit. Archive SHA256:
 `eebc2d40a49fe935afc09efd50475e0034d2d72b03041c405c8f5d23f4561e22`.
+
+Full CI at initial head `09d84cc` caught a genuine Linux path compatibility bug:
+query files inside the real GitHub checkout name ending in `.` were rejected by
+an inherited Windows component restriction. No publication occurred. The targeted
+fix uses native POSIX validation for inputs; an independent review also required
+preserving reader-compatible restrictions on output paths. Both have dedicated
+real-filesystem regressions. Native container `nla-reconcile-v7`, source mounted
+at `/work/repository.` rather than `/work`, passed **201 tests in 4.40s** with
+**100% of 1261 statements / 334 branches**, no skips/warnings. Same isolation and
+resource limits. Archive SHA256:
+`43b29ffe68a1b91d022da60d41f161dc1f06acd18bed98076892ff860efa4559`.
+The command below applies with `/work` replaced by `/work/repository.` for v7.
+POSIX reference: https://man7.org/linux/man-pages/man7/pathname.7.html.
 
 Command:
 ```sh
