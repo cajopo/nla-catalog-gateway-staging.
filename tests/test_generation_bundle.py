@@ -1250,6 +1250,7 @@ def test_public_api_fails_closed_when_native_handle_api_is_unavailable(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(generation_bundle, "_WINDOWS_HANDLE_API_AVAILABLE", False)
+    monkeypatch.setattr(generation_bundle, "_LINUX_HANDLE_API_AVAILABLE", False)
 
     with pytest.raises(generation_bundle.GenerationBundleError) as captured:
         with generation_bundle.open_reconciled_generation(
@@ -1259,6 +1260,17 @@ def test_public_api_fails_closed_when_native_handle_api_is_unavailable(
             pass
 
     assert str(captured.value) == FILESYSTEM_ERROR
+
+    with pytest.raises(generation_bundle.GenerationBundleError) as native_error:
+        with generation_bundle._Win32FilesystemBackend().open(bundle_case.directory):
+            pytest.fail("unavailable Win32 backend was accepted")
+    assert str(native_error.value) == FILESYSTEM_ERROR
+
+    # Test dispatch only; this does not claim native Win32 execution on Linux.
+    monkeypatch.setattr(generation_bundle, "_WINDOWS_HANDLE_API_AVAILABLE", True)
+    assert (
+        type(generation_bundle._filesystem_backend()) is generation_bundle._Win32FilesystemBackend
+    )
 
 
 @pytest.mark.parametrize("phase", ["open", "verify"])
