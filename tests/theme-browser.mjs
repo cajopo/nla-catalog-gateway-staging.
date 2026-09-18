@@ -159,10 +159,14 @@ try {
     await navigate('game=magic'); await waitFor(visible);
     assert.equal(requests.at(-1).request.filters.inStock, null);
     assert.equal(await evaluate(`${el}.results.firstChild.dataset.productGid`), 'gid://shopify/Product/25000');
-    await evaluate(`${el}.querySelector('[data-action="next"]').click()`); await waitFor(`${visible} && ${el}.results.textContent.includes('Esaurito')`);
+    assert.match(await evaluate(`${el}.results.textContent`), /1\.20 EUR/);
+    await evaluate(`${el}.querySelector('[data-action="next"]').click()`); await waitFor(`${visible} && ${el}.results.textContent.includes('SOLD OUT')`);
     assert.equal(await evaluate(`${el}.results.firstChild.dataset.productGid`), 'gid://shopify/Product/25001');
     assert.match(await evaluate('location.search'), /cursor=opaque-next-page/);
-    assert.match(await evaluate(`${el}.results.textContent`), /Prezzo n\/d/);
+    assert.doesNotMatch(await evaluate(`${el}.results.textContent`), /Prezzo n\/d|0\.00 EUR/);
+    assert.equal(await evaluate(`${el}.results.firstChild.querySelectorAll('p').length`), 1);
+    assert.equal(await evaluate(`${el}.results.firstChild.querySelector('p').textContent`), 'SOLD OUT');
+    assert.equal(await evaluate(`getComputedStyle(${el}.results.firstChild.querySelector('p')).color`), 'rgb(255, 69, 69)');
   });
   await check('back, forward and refresh recover the same cursor page', async () => {
     await evaluate('history.back()'); await waitFor(`${visible} && ${el}.results.firstChild?.dataset.productGid.endsWith('/25000')`);
@@ -182,7 +186,8 @@ try {
     await evaluate(`${el}.input.focus(); ${el}.input.value='Light'; ${el}.input.dispatchEvent(new Event('input'))`);
     await waitFor(`${el}.list.children.length === 2`);
     assert.equal(requests.at(-1).includeSuggestions, true);
-    assert.match(await evaluate(`${el}.list.textContent`), /Esaurito/);
+    assert.match(await evaluate(`${el}.list.textContent`), /SOLD OUT/);
+    assert.equal(await evaluate(`getComputedStyle(${el}.list.querySelector('.nla-catalog__sold-out')).color`), 'rgb(255, 69, 69)');
     await call('Input.dispatchKeyEvent', { type: 'keyDown', key: 'ArrowUp', code: 'ArrowUp' });
     assert.equal(await evaluate(`${el}.input.getAttribute('aria-activedescendant')`), 'NlaSuggestions-fixture-1');
     await call('Input.dispatchKeyEvent', { type: 'keyDown', key: 'ArrowDown', code: 'ArrowDown' });
@@ -272,6 +277,7 @@ try {
     await navigate('mode=header&game=magic'); await delay(100); maxActiveImages = 0;
     await evaluate(`${el}.dataset.rootUrl='/it/'`);
     const items = Array.from({ length: 24 }, (_, i) => product(30000 + i, 'magic', `Image card ${i}`, i % 2 === 0));
+    items[3].variants[0].priceText = '2.50';
     const before = imageRequests.length; await renderImages(items);
     await waitFor(`${el}.results.querySelectorAll('img').length === 24`);
     assert.equal(imageRequests.length - before, 24); assert.equal(maxActiveImages, 4);
@@ -280,8 +286,9 @@ try {
     assert.equal(await evaluate(`${el}.results.querySelector('img').loading`), 'lazy');
     assert.equal(await evaluate(`${el}.results.querySelector('img').decoding`), 'async');
     assert.equal(await evaluate(`${el}.results.querySelector('img').alt`), 'Image card 0');
-    assert.match(await evaluate(`${el}.results.children[1].textContent`), /Esaurito/);
-    assert.match(await evaluate(`${el}.results.children[1].textContent`), /Prezzo n\/d/);
+    assert.match(await evaluate(`${el}.results.children[1].textContent`), /SOLD OUT/);
+    assert.doesNotMatch(await evaluate(`${el}.results.children[1].textContent`), /Prezzo n\/d|0\.00 EUR/);
+    assert.match(await evaluate(`${el}.results.children[3].textContent`), /SOLD OUT.*2\.50 EUR/);
     assert.equal(await evaluate(`getComputedStyle(${el}.results.querySelector('img')).objectFit`), 'contain');
     await renderImages(items); assert.equal(imageRequests.length - before, 24, 'cached images must not refetch');
     for (let page = 1; page <= 4; page++) await renderImages(items.map((item, index) => product(30000 + page * 24 + index, 'magic', item.commercialTitle)));
