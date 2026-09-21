@@ -11,6 +11,7 @@ WORKDIR /app
 COPY pyproject.toml README.md ./
 COPY src ./src
 COPY scripts/manage_staging_activation.py ./scripts/manage_staging_activation.py
+COPY scripts/verify_staging_runtime.py ./scripts/verify_staging_runtime.py
 RUN python -m pip install --no-cache-dir .
 
 USER appuser
