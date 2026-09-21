@@ -250,6 +250,11 @@ Renders game-scoped gateway search without native predictive-search fallback.
         this.cancel();
         const sequence = this.sequence;
         const request = options.saved || this.request();
+        if (this.dataset.mode !== 'header' && !options.suggest) {
+          const game = Array.from(this.game.options).find(option => option.value === request.game);
+          document.title = this.message('results') + (game?.value
+            ? ` — ${game.textContent}${request.q ? ': ' + request.q : ''}` : '');
+        }
         if (!['magic', 'pokemon', 'yugioh', 'one-piece'].includes(request.game)) {
           this.status.textContent = this.game.options[0].textContent; return;
         }
