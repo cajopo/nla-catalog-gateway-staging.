@@ -1,6 +1,7 @@
 """One Linux capture step: Shopify read-only Bulk exports -> verified candidate.
 
-Run again with the same private directory when status is pending. No scheduler,
+Run again with the same private directory when status is pending, or use --wait-seconds.
+No scheduler,
 activation, credential persistence, cancellation or blind launch retry lives here.
 """
 
@@ -13,6 +14,7 @@ import os
 import re
 import stat
 import sys
+import time
 import uuid
 from contextlib import ExitStack, contextmanager
 from datetime import UTC, datetime, timedelta
@@ -470,6 +472,33 @@ def run_capture(
         return {"status": "candidate-ready", "manifestSha256": state["packageManifestSha256"]}
 
 
+def wait_for_capture(*, client, wait_seconds: int, poll_seconds: int, **configuration):
+    """Resume only pending exports; errors are never retried or given a fresh directory.
+
+    This bounds polling, not an individual capture/package step. An external service
+    must impose the overall process limit. Candidate-ready still does not activate.
+    """
+    if not 0 <= wait_seconds <= 86400 or not 5 <= poll_seconds <= 3600:
+        raise CaptureError("invalid capture wait configuration")
+    deadline = time.monotonic() + wait_seconds
+    while True:
+        receipt = run_capture(client=client, **configuration)
+        if receipt["status"] == "candidate-ready":
+            return receipt
+        if receipt["status"] != "pending":
+            raise CaptureError("unexpected capture status")
+        remaining = deadline - time.monotonic()
+        if wait_seconds == 0 or remaining <= 0:
+            return receipt
+        time.sleep(min(poll_seconds, remaining))
+        if time.monotonic() >= deadline:
+            return receipt
+        # The first step resolved any supplied recovery IDs into its checkpoint.
+        # Supplying them again would incorrectly attempt to recover an existing ID.
+        configuration["recover_products_operation_id"] = None
+        configuration["recover_variants_operation_id"] = None
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = _Parser(description=__doc__)
     for name in ("capture-directory", "canonical-names-jsonl", "canonical-names-manifest"):
@@ -483,6 +512,8 @@ def main(argv: list[str] | None = None) -> int:
         parser.add_argument("--" + name, required=True)
     for part in PARTS:
         parser.add_argument(f"--recover-{part}-operation-id")
+    parser.add_argument("--wait-seconds", type=int, default=0)
+    parser.add_argument("--poll-seconds", type=int, default=60)
     try:
         args = parser.parse_args(argv)
         client = ShopifyCaptureHttp(
@@ -491,7 +522,7 @@ def main(argv: list[str] | None = None) -> int:
             os.environ["SHOPIFY_CLIENT_ID"],
             os.environ["SHOPIFY_CLIENT_SECRET"],
         )
-        receipt = run_capture(client=client, **vars(args))
+        receipt = wait_for_capture(client=client, **vars(args))
     except (Exception, KeyboardInterrupt):
         print(
             "Capture not completed; private checkpoint retained. No catalog was activated.",
