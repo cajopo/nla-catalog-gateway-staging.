@@ -27,6 +27,7 @@ PATHS = {"run_root", "config", "store", "reference", "archive"}
 PINS = {"archive_sha256", "reference_manifest_sha256", "reference_data_sha256"}
 FIELDS = PATHS | PINS | {"code_sha", "image", "shop", "publication", "current"}
 MIN_FREE_BYTES = 6 * 1024**3
+RUN_NAME = r"[0-9]{8}t[0-9]{6}z-[0-9a-f]{8}"
 
 
 def timestamp():
@@ -253,6 +254,153 @@ def verify(plan):
     publish(plan.capture / "runtime-verification-receipt.json", json.loads(result.stdout))
 
 
+def retention(config, run, completed):
+    """Delete only recorded obsolete runs/resources; caller holds pipeline lock."""
+    root, store = config["run_root"], config["store"]
+    pointer_plan = argparse.Namespace(store=store)
+
+    def unchanged():
+        pointer, pin = activation.pointer(pointer_plan)
+        if (
+            pin != completed["activationSha256"]
+            or pointer["currentManifestSha256"] != completed["manifestSha256"]
+            or pointer["previousManifestSha256"] != completed["previousManifestSha256"]
+            or activation.inspect(config["current"])["Id"] != completed["resources"]["runtime"]
+        ):
+            raise ValueError("runtime changed during retention")
+        return pointer
+
+    pointer = unchanged()
+    protected = {pointer["currentManifestSha256"], pointer["previousManifestSha256"]}
+    keep_ids = set(completed["resources"].values())
+    receipts, owners = {}, {}
+    for directory in sorted(root.iterdir()):
+        if (
+            re.fullmatch(RUN_NAME, directory.name) is None
+            or not (directory / "completed.json").exists()
+        ):
+            continue
+        if directory.resolve() != directory:
+            raise ValueError("noncanonical completed run")
+        receipt = document(directory / "completed.json")
+        if receipt["run"] != directory.name or receipt["status"] != "ready":
+            raise ValueError("invalid completed run")
+        resources = receipt["resources"]
+        if set(resources) != {"runtime", "before", "verifier", "promote"}:
+            raise ValueError("invalid completed resources")
+        for value in [
+            receipt["manifestSha256"],
+            receipt["previousManifestSha256"],
+            *resources.values(),
+        ]:
+            if not isinstance(value, str) or re.fullmatch("[0-9a-f]{64}", value) is None:
+                raise ValueError("invalid retention identity")
+        receipts[directory] = receipt
+        for role, resource in resources.items():
+            manifest = (
+                receipt["previousManifestSha256"] if role == "before" else receipt["manifestSha256"]
+            )
+            if resource in owners and owners[resource] != manifest:
+                raise ValueError("conflicting container ownership")
+            owners[resource] = manifest
+    if receipts.get(run) != completed:
+        raise ValueError("current completion missing")
+
+    def references_managed_data(container):
+        return any(
+            mount["Type"] == "bind"
+            and any(
+                Path(mount["Source"]).is_relative_to(parent)
+                or parent.is_relative_to(Path(mount["Source"]))
+                for parent in (root, store)
+            )
+            for mount in container["Mounts"]
+        )
+
+    remove_ids = []
+    for identifier in activation.docker("ps", "-a", "-q", "--no-trunc").splitlines():
+        container = activation.inspect(identifier)
+        if container["Id"] != identifier:
+            raise ValueError("container inventory changed")
+        if references_managed_data(container) and identifier not in owners:
+            raise ValueError("unrecorded container references managed data")
+        if identifier not in owners:
+            continue
+        if identifier in keep_ids:
+            protected.add(owners[identifier])
+            continue
+        if (
+            container["State"]["Status"] not in ("exited", "created")
+            or container["State"]["Running"]
+            or container["HostConfig"]["RestartPolicy"]["Name"] not in ("", "no")
+        ):
+            raise ValueError("obsolete container is not stopped without restart")
+        remove_ids.append(identifier)
+
+    def check_tree(path, parent, uid):
+        # Re-read: even a same-filesystem bind mount can appear after planning.
+        mounts = [
+            Path(re.sub(r"\\([0-7]{3})", lambda match: chr(int(match[1], 8)), line.split()[4]))
+            for line in Path("/proc/self/mountinfo").read_text().splitlines()
+        ]
+        facts = path.lstat()
+        if (
+            path.parent != parent
+            or path.resolve() != path
+            or not stat.S_ISDIR(facts.st_mode)
+            or facts.st_uid != uid
+            or any(mount.is_relative_to(path) for mount in mounts)
+            or not shutil.rmtree.avoids_symlink_attacks
+        ):
+            raise ValueError("unsafe retention root")
+        for entry in [path, *path.rglob("*")]:
+            item = entry.lstat()
+            if (
+                entry.resolve() != entry
+                or item.st_dev != facts.st_dev
+                or item.st_uid not in (0, 10001)
+                or not (stat.S_ISDIR(item.st_mode) or stat.S_ISREG(item.st_mode))
+                or (stat.S_ISREG(item.st_mode) and item.st_nlink != 1)
+            ):
+                raise ValueError("unsafe retention entry")
+        return facts.st_dev, facts.st_ino
+
+    targets = {}
+    for directory, receipt in receipts.items():
+        manifest = receipt["manifestSha256"]
+        if manifest in protected:
+            continue
+        generation = store / "generations" / manifest
+        if os.path.lexists(generation):
+            if activation.digest(generation / "staging-generation-manifest.v1.json") != manifest:
+                raise ValueError("obsolete generation does not match receipt")
+            targets[generation] = (generation.parent, 10001)
+        targets[directory] = (root, 0)
+    checked = {path: check_tree(path, *args) for path, args in targets.items()}
+    publish(
+        run / "retention-plan.json",
+        {"containers": remove_ids, "directories": [str(p) for p in targets]},
+    )
+    for identifier in remove_ids:
+        unchanged()
+        container = activation.inspect(identifier)
+        if container["State"]["Running"] or container["HostConfig"]["RestartPolicy"][
+            "Name"
+        ] not in ("", "no"):
+            raise ValueError("container changed before removal")
+        activation.docker("rm", identifier)  # No force, no volumes, exact recorded ID.
+    for path, args in targets.items():
+        unchanged()
+        for identifier in activation.docker("ps", "-a", "-q", "--no-trunc").splitlines():
+            container = activation.inspect(identifier)
+            if references_managed_data(container) and owners.get(identifier) not in protected:
+                raise ValueError("container references changed before tree removal")
+        if check_tree(path, *args) != checked[path]:
+            raise ValueError("retention directory changed")
+        shutil.rmtree(path)
+        activation.sync_directory(path.parent)
+
+
 def run_once(config_path, config):
     root = config["run_root"]
     with pipeline_lock(root):
@@ -315,7 +463,9 @@ def run_once(config_path, config):
             }
         )
         verify(plan)
-        activation.apply(plan, activation.preflight(plan))
+        checked = activation.preflight(plan)
+        previous_manifest = checked[3]["currentManifestSha256"]
+        activation.apply(plan, checked)
         completed = {
             "run": run_id,
             "status": "ready",
@@ -323,12 +473,49 @@ def run_once(config_path, config):
             "activatedAt": timestamp(),
             "manifestSha256": plan.manifest,
             "activationSha256": activation.pointer(plan)[1],
+            "previousManifestSha256": previous_manifest,
+            "resources": {
+                "runtime": activation.inspect(plan.current)["Id"],
+                "before": plan.expected_id,
+                "verifier": activation.inspect(plan.verifier)["Id"],
+                "promote": activation.inspect(plan.prefix + "-promote")["Id"],
+            },
         }
         publish(run / "completed.json", completed)
+        retention(config, run, completed)
         publish(root / "last-success.json", completed, replace=True)
         pending.unlink()
         activation.sync_directory(root)
         return completed
+
+
+def freshness(config):
+    """Private operator status; source age is not reset by activation time."""
+    receipt = document(config["run_root"] / "last-success.json")
+    pointer, pin = activation.pointer(argparse.Namespace(store=config["store"]))
+    current = activation.inspect(config["current"])
+    if (
+        pointer["currentManifestSha256"] != receipt["manifestSha256"]
+        or pin != receipt["activationSha256"]
+        or current["Id"] != receipt["resources"]["runtime"]
+        or not current["State"]["Running"]
+    ):
+        raise ValueError("freshness receipt does not describe current runtime")
+    started = datetime.strptime(receipt["sourceStartedAt"], "%Y-%m-%dT%H:%M:%SZ").replace(
+        tzinfo=UTC
+    )
+    age = (datetime.now(UTC) - started).total_seconds()
+    if age < 0:
+        raise ValueError("source timestamp is in the future")
+    pending = os.path.lexists(config["run_root"] / "pending-run.json")
+    return {
+        "status": "stale" if age >= 86400 else "refresh_incomplete" if pending else "fresh",
+        "sourceAgeSeconds": int(age),
+        "sourceStartedAt": receipt["sourceStartedAt"],
+        "activatedAt": receipt["activatedAt"],
+        "pendingRun": pending,
+        "marketNewUpdates": False,
+    }
 
 
 class _Parser(argparse.ArgumentParser):
@@ -342,9 +529,14 @@ def main(argv=None):
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--apply", action="store_true")
     mode.add_argument("--capture-run", type=Path)
+    mode.add_argument("--status", action="store_true")
     try:
         args = parser.parse_args(argv)
         config = configuration(args.config)
+        if args.status:
+            result = freshness(config)
+            print(json.dumps(result))
+            return 0 if result["status"] == "fresh" else 2
         if args.capture_run is not None:
             print(json.dumps(capture(config, args.capture_run)))
         elif args.apply:

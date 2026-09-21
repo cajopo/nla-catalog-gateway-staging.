@@ -117,7 +117,9 @@ def pipeline(tmp_path, monkeypatch):
         assert value["new_code"] == config["code_sha"]
         assert value["counts"] == {"products": 9, "published": 8, "singles": 8, "variants": 10}
         value.update({key: Path(value[key]) for key in ("capture", "store", "config", "work")})
-        return SimpleNamespace(**value)
+        return SimpleNamespace(
+            **value, prefix="nla-refresh-test", verifier="nla-refresh-test-runtime-verify"
+        )
 
     monkeypatch.setattr(refresh.activation, "load_plan", load_plan)
 
@@ -136,10 +138,10 @@ def pipeline(tmp_path, monkeypatch):
         events.append("preflight")
         if case.failure == "preflight":
             raise RuntimeError("activation evidence rejected")
-        return plan
+        return (None, None, None, {"currentManifestSha256": "9" * 64})
 
     def apply(plan, checked):
-        assert case.held and checked is plan
+        assert case.held and checked[3]["currentManifestSha256"] == "9" * 64
         events.append("apply")
         if case.failure == "apply":
             raise RuntimeError("activation outcome requires inspection")
@@ -147,6 +149,14 @@ def pipeline(tmp_path, monkeypatch):
     monkeypatch.setattr(refresh, "verify", verify)
     monkeypatch.setattr(refresh.activation, "preflight", preflight)
     monkeypatch.setattr(refresh.activation, "apply", apply)
+
+    def retention(config, run, completed):
+        assert case.held and (run / "completed.json").exists()
+        events.append("retention")
+        if case.failure == "retention":
+            raise RuntimeError("retention requires inspection")
+
+    monkeypatch.setattr(refresh, "retention", retention)
     return case
 
 
@@ -154,7 +164,7 @@ def test_pipeline_holds_one_lock_until_success_and_records_source_age(pipeline):
     case = pipeline
     completed = refresh.run_once(Path("private-config.json"), case.config)
     root = case.config["run_root"]
-    assert case.events == ["lock", "capture", "verify", "preflight", "apply", "unlock"]
+    assert case.events == ["lock", "capture", "verify", "preflight", "apply", "retention", "unlock"]
     assert not case.held and not (root / "pending-run.json").exists()
     assert completed["sourceStartedAt"] == "2026-09-21T12:00:00Z"
     assert completed["activatedAt"] != completed["sourceStartedAt"]
@@ -176,6 +186,7 @@ def test_pipeline_holds_one_lock_until_success_and_records_source_age(pipeline):
         "verify",
         "preflight",
         "apply",
+        "retention",
     ],
 )
 def test_failed_pipeline_retains_intent_and_blocks_next_export(pipeline, failure):
@@ -192,6 +203,7 @@ def test_failed_pipeline_retains_intent_and_blocks_next_export(pipeline, failure
         "verify": RuntimeError,
         "preflight": RuntimeError,
         "apply": RuntimeError,
+        "retention": RuntimeError,
     }[failure]
     with pytest.raises(expected):
         refresh.run_once(Path("private-config.json"), case.config)
@@ -203,7 +215,7 @@ def test_failed_pipeline_retains_intent_and_blocks_next_export(pipeline, failure
         refresh.run_once(Path("private-config.json"), case.config)
     assert (root / "pending-run.json").read_bytes() == retained
     assert case.events.count("capture") == captures
-    if failure not in ("apply",):
+    if failure not in ("apply", "retention"):
         assert "apply" not in case.events
 
 

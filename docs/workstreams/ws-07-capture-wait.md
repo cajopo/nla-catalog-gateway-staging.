@@ -108,9 +108,9 @@ not a blind retry. Work receipts and named containers remain for that inspection
 
 Focused offline tests exercise the real preflight against synthetic files and
 simulated POSIX ownership, command construction, install/sealing, readiness,
-rollback and ambiguous failures. They do not claim a new VPS deployment. The
-coordinator, retention, freshness reporting and timer are still absent; this
-component alone provides neither a 24-hour refresh guarantee nor new market cards.
+rollback and ambiguous failures. They do not claim a new VPS deployment. This
+component alone provides neither a 24-hour refresh guarantee nor new market
+cards; the coordinator below supplies its surrounding lifecycle.
 
 ## Single-run coordinator (not scheduled or deployed)
 
@@ -144,16 +144,47 @@ and a20-minute timeout; the source-pinned checker script is mounted read-only,
 so the existing runtime image need not be upgraded. The capture child is bounded
 to3hours. One outer systemd oneshot must bound the whole operation and its process
 group; no per-run service/journal gate is needed. Timeouts or uncertainty leave
-the pending marker and named resources for inspection. No automatic retry,
-container deletion or package cleanup occurs.
+the pending marker and named resources for inspection. No automatic retry
+occurs. Successful runs use the bounded retention described below.
 
 Success writes an exclusive run `completed.json` and replaces private
 `last-success.json`, preserving both capture-start and activation timestamps.
-Only then is pending intent cleared. Thus activation time cannot masquerade as
-source freshness. Low disk reserve (less than6GiB) blocks before a new capture.
+Retention must also succeed before pending intent is cleared. Thus activation
+time cannot masquerade as source freshness. Low disk reserve (less than6GiB)
+blocks before a new capture.
 
 Native Linux archive/path/lock tests must pass in CI; a Windows test run does not
 certify those cases. This coordinator is not installed on staging and does not
-yet include bounded retention, stale-source alerting or a timer. Those remain
-required before unattended use. It only refreshes Shopify's existing catalog;
+yet include an installed timer or notification destination. Those remain required
+before unattended use. It only refreshes Shopify's existing catalog;
 market-new source discovery and verified canonical-reference updates are separate.
+
+## Bounded retention and operator freshness
+
+The coordinator records exact runtime, previous-runtime, verifier and promote
+container IDs plus the previous manifest in each successful run receipt. Under
+the same pipeline lock, retention keeps the active and previous catalog and the
+current run's four resources. Older recorded stopped/no-restart containers are
+removed by exact ID without force or volume deletion; duplicate IDs are handled
+once. This does not preserve an ever-growing chain of old backup containers.
+
+Only obsolete completed-run folders and their matching generation directories
+are eligible. Incomplete/unrecognized runs and unrecorded generations are never
+deleted. Unknown containers mounting a managed root (or an ancestor) stop cleanup.
+Generation manifest hashes must match their receipts. Every deletion tree must
+have the expected owner and exact parent, no links, special files, nested mounts
+or cross-filesystem entries. A private fsynced plan precedes deletion. Pointer,
+current runtime, remaining container references and mountpoints are rechecked
+during removal. Any failure retains pending intent for inspection; it does not
+start another capture. Existing legacy resources must be handled separately by
+a supervised deployment; they are not silently adopted or pruned.
+
+`--status` is read-only. It binds `last-success.json` to the actual current pointer
+and container, then reports source age from capture start, not activation time.
+Exit0 means younger than24hours and no pending run; exit2 means stale or incomplete.
+Missing/mismatched evidence and future timestamps fail closed with exit1. The
+report explicitly says `marketNewUpdates: false`: refreshing Shopify does not
+discover new market releases or renew the frozen canonical reference.
+
+Tests use synthetic directories and simulated Docker only, including post-plan
+container/mount changes. Native Linux CI remains mandatory before deployment.
