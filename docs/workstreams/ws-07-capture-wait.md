@@ -58,3 +58,54 @@ Focused verification: `pytest tests/test_verify_staging_runtime.py
 --cov=scripts.verify_staging_runtime --cov-report=term-missing` covers a real
 package/runtime binding, read-only file hashes, wrong pins/counts, CLI errors and
 interruption without a success receipt.
+
+## Parameterized staging replacement
+
+`scripts/activate_staging_refresh.py` is the host-side version of the supervised
+replacement already exercised on staging. It reuses the existing activation CLI
+and pinned runtime image; it does not add an HTTP activation API or hot reload.
+
+```text
+python scripts/activate_staging_refresh.py --plan /private/activation-plan.json
+python scripts/activate_staging_refresh.py --plan /private/activation-plan.json --apply
+```
+
+The default is read-only preflight. Run as root on the Linux staging host, without
+Python optimization, inside a bounded service and the coordinator's exclusive
+whole-pipeline lock. This component does not acquire that lock itself and must not
+be scheduled directly. A private root-owned mode-0600 plan supplies exactly:
+
+- `capture`, `store`, `config`, `work`: canonical absolute host directories; `work`
+  must not exist and its parent must be root-owned mode 0700.
+- `run_id`, `current`, `expected_id`, `image`: a unique run suffix, current runtime
+  name, exact container ID, and exact image SHA256 (not a mutable tag).
+- `old_pin`, `old_code`: accepted pointer-byte hash and current producer commit.
+- `manifest`, `summary`, `new_code`, `started`, `counts`: accepted capture evidence;
+  counts contain `products`, `published`, `singles`, `variants`, not a fixed total.
+- `shop`: the expected Shopify shop domain. Credentials remain in the existing
+  private accepted environment, never in the plan or repository.
+
+The capture service is `nla-refresh-<run_id>.service`; its successful termination,
+capture receipt/checkpoint and the exited successful verifier container
+`nla-refresh-<run_id>-runtime-verify` must agree. Candidate artifact hashes, file
+permissions, current container, accepted environment and pointer are checked
+before any writes. Existing run resources or destination packages stop the run.
+
+Apply installs the immutable package, prepares a same-image runtime changing only
+the activation and producer pins, compare-and-swaps the pointer, replaces the
+stopped runtime, and waits up to 20 minutes for pinned-container HTTP readiness.
+Only then is `accepted-runtime.env` replaced. Package and prior container remain
+available for recovery; this script deletes nothing.
+
+Before environment commit, an ordinary failure with a known pointer/runtime can
+roll back through the existing CAS command. Recovery creates a fresh runtime with
+the **actual rollback pointer hash**; restarting the old container with its stale
+pin is not valid. Ambiguous selection, an externally changed pointer/container,
+interruption, or failure after environment commit requires operator inspection,
+not a blind retry. Work receipts and named containers remain for that inspection.
+
+Focused offline tests exercise the real preflight against synthetic files and
+simulated POSIX ownership, command construction, install/sealing, readiness,
+rollback and ambiguous failures. They do not claim a new VPS deployment. The
+coordinator, retention, freshness reporting and timer are still absent; this
+component alone provides neither a 24-hour refresh guarantee nor new market cards.
