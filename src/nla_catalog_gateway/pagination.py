@@ -853,7 +853,7 @@ class CatalogProjection:
         try:
             with _readonly_connection(self.path) as connection:
                 connection.set_progress_handler(progress, _SQLITE_PROGRESS_VM_STEPS)
-                result = select_suggestions(connection, request, limit=limit)
+                result = select_suggestions(connection, request, limit=limit, checkpoint=checkpoint)
         except sqlite3.Error as exc:
             if failure is not None:
                 raise failure from None

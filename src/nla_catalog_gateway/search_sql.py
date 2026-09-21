@@ -8,6 +8,7 @@ rarity are never searched. No printed-code punctuation is inferred from SKUs.
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 from collections.abc import Callable
 from dataclasses import replace
@@ -21,6 +22,24 @@ from nla_catalog_gateway.canonical_search import (
 )
 from nla_catalog_gateway.facets import ContextualFacet, FacetDimension, FacetValueCount
 from nla_catalog_gateway.runtime_contract import CatalogProductRecordV1, CatalogRequestV1
+
+_PRINT_VERSION = re.compile(r" \(V\.[0-9]+(?: - [^()]+)?\)\Z")
+_ONE_PIECE_NUMBER = re.compile(r" \((?:(?:OP|ST|EB|PRB)[0-9]{2}|P)-[0-9]{3}\)\Z")
+_POKEMON_LEVEL = re.compile(r" Lv\.[0-9]+\Z", re.IGNORECASE)
+
+
+def _suggestion_name(name: str, game: str) -> str:
+    """Group observed source print suffixes, not arbitrary parenthesized card text.
+
+    This is a suggestion label only: source names, IDs, search columns and product
+    results remain unchanged. Selecting the base name searches all its prints.
+    """
+    label = _PRINT_VERSION.sub("", name)
+    if game == "one-piece":
+        label = _ONE_PIECE_NUMBER.sub("", label)
+    if game == "pokemon":
+        label = _POKEMON_LEVEL.sub("", label)
+    return label if label.strip() else name
 
 
 def search_facts(record: CatalogProductRecordV1) -> tuple[str, str, int]:
@@ -151,7 +170,11 @@ def select_metadata_facets(
 
 
 def select_suggestions(
-    connection: sqlite3.Connection, request: CatalogRequestV1, *, limit: int
+    connection: sqlite3.Connection,
+    request: CatalogRequestV1,
+    *,
+    limit: int,
+    checkpoint: Callable[[], None] | None = None,
 ) -> tuple[SingleCardSuggestion, ...]:
     if type(limit) is not int or not 1 <= limit <= 20:
         raise CanonicalSearchError("suggestion limit must be between 1 and 20")
@@ -160,15 +183,37 @@ def select_suggestions(
         return ()
     where, parameters = search_scope(request)
     # The interpolated predicate contains fixed fragments only, never request values.
-    sql = f"""SELECT MIN(canonical_card_name), normalized_card_name,
+    sql = f"""SELECT canonical_card_name,
                      COUNT(*), SUM(has_positive_inventory)
               FROM products WHERE {where}
-              GROUP BY normalized_card_name
-              ORDER BY CASE WHEN normalized_card_name = ? THEN 0
-                            WHEN instr(normalized_card_name, ?) = 1 THEN 1 ELSE 2 END,
-                       normalized_card_name
-              LIMIT ?"""  # noqa: S608
-    return tuple(
-        SingleCardSuggestion(*row)
-        for row in connection.execute(sql, (*parameters, query, query, limit))
+              GROUP BY canonical_card_name"""  # noqa: S608
+    # Group before limiting: a run of print versions must not crowd out other names.
+    groups: dict[str, SingleCardSuggestion] = {}
+    for name, count, available in connection.execute(sql, parameters):
+        if checkpoint is not None:
+            checkpoint()
+        label = _suggestion_name(name, request.game.value)
+        normalized = normalize_search_text(label)
+        previous = groups.get(normalized)
+        groups[normalized] = SingleCardSuggestion(
+            min(label, previous.canonical_card_name) if previous else label,
+            normalized,
+            count + (previous.print_count if previous else 0),
+            available + (previous.available_print_count if previous else 0),
+        )
+    result = tuple(
+        sorted(
+            groups.values(),
+            key=lambda item: (
+                0
+                if item.normalized_card_name == query
+                else 1
+                if item.normalized_card_name.startswith(query)
+                else 2,
+                item.normalized_card_name,
+            ),
+        )[:limit]
     )
+    if checkpoint is not None:
+        checkpoint()
+    return result
