@@ -36,6 +36,15 @@ Renders game-scoped gateway search without native predictive-search fallback.
     <label class="nla-catalog__stock">
       <input name="stock" type="checkbox"> {{ 'nla_catalog.stock_only' | t }}
     </label>
+    <fieldset class="nla-catalog__filters" hidden disabled>
+      <legend>{{ 'nla_catalog.filters' | t }}</legend>
+      <label><span>{{ 'nla_catalog.expansion' | t }}</span>
+        <select name="expansionCode"><option value="">{{ 'nla_catalog.all_expansions' | t }}</option></select>
+      </label>
+      <label><span>{{ 'nla_catalog.rarity' | t }}</span>
+        <select name="rarity"><option value="">{{ 'nla_catalog.all_rarities' | t }}</option></select>
+      </label>
+    </fieldset>
     <ul id="NlaSuggestions-{{ instance_id | escape }}" class="nla-catalog__suggestions"
       role="listbox" aria-label="{{ 'nla_catalog.suggestions' | t | escape }}" hidden></ul>
   </form>
@@ -66,6 +75,8 @@ Renders game-scoped gateway search without native predictive-search fallback.
     <span data-message="in_stock">{{ 'nla_catalog.in_stock' | t }}</span>
     <span data-message="unknown_price">{{ 'nla_catalog.unknown_price' | t }}</span>
     <span data-message="image_notice">{{ 'nla_catalog.image_notice' | t }}</span>
+    <span data-message="all_expansions">{{ 'nla_catalog.all_expansions' | t }}</span>
+    <span data-message="all_rarities">{{ 'nla_catalog.all_rarities' | t }}</span>
   </div>
   <noscript><p>{{ 'nla_catalog.javascript_required' | t }}</p></noscript>
 </nla-catalog-search>
@@ -87,6 +98,10 @@ Renders game-scoped gateway search without native predictive-search fallback.
   nla-catalog-search :focus-visible { outline: 3px solid #22c2f4; outline-offset: 3px; }
   .nla-catalog__stock { display: flex; align-items: center; gap: 8px; min-height: 44px; }
   .nla-catalog__stock input { width: 20px; height: 20px; }
+  .nla-catalog__filters { display: flex; flex-wrap: wrap; gap: 12px; min-width: 0; margin: 8px 0;
+    border: 1px solid #646a78; border-radius: 8px; padding: 12px; }
+  .nla-catalog__filters label { display: grid; gap: 6px; flex: 1 1 200px; min-width: 0; }
+  .nla-catalog__filters select { width: 100%; }
   .nla-catalog__suggestions { position: absolute; z-index: 80; left: 0; right: 0; margin: 0;
     padding: 6px; max-height: 45vh; overflow: auto; list-style: none; background: #15171d;
     border: 1px solid #22c2f4; border-radius: 8px; box-shadow: 0 12px 24px #0008; }
@@ -125,6 +140,10 @@ Renders game-scoped gateway search without native predictive-search fallback.
         this.game = this.form.elements.game;
         this.input = this.form.elements.q;
         this.stock = this.form.elements.stock;
+        this.expansion = this.form.elements.expansionCode;
+        this.rarity = this.form.elements.rarity;
+        this.metadataFilters = this.querySelector('.nla-catalog__filters');
+        this.metadataFilters.hidden = this.dataset.mode === 'header';
         this.list = this.querySelector('[role="listbox"]');
         this.status = this.querySelector('[role="status"]');
         this.page = this.querySelector('.nla-catalog__page');
@@ -143,6 +162,7 @@ Renders game-scoped gateway search without native predictive-search fallback.
           this.cancel(); this.timer = setTimeout(() => this.load({ suggest: true }), 250);
         });
         on(this.game, 'change', () => {
+          this.resetMetadata();
           this.cancel(); this.page.hidden = true; this.hideSuggestions();
           if (this.dataset.mode === 'header') this.load({ suggest: true }); else this.submit();
         });
@@ -150,6 +170,7 @@ Renders game-scoped gateway search without native predictive-search fallback.
           this.cancel(); this.hideSuggestions();
           if (this.dataset.mode === 'header') this.load({ suggest: true }); else this.submit();
         });
+        for (const select of [this.expansion, this.rarity]) on(select, 'change', () => this.submit());
         on(this.input, 'keydown', event => this.keydown(event));
         on(this, 'focusout', event => {
           if (!this.contains(event.relatedTarget)) {
@@ -184,6 +205,7 @@ Renders game-scoped gateway search without native predictive-search fallback.
 
       cancel() {
         clearTimeout(this.timer); this.controller?.abort(); this.imageController?.abort(); this.sequence += 1;
+        if (this.metadataFilters) this.metadataFilters.disabled = this.dataset.mode === 'header' || !this.game.value;
       }
 
       hideSuggestions() {
@@ -192,8 +214,33 @@ Renders game-scoped gateway search without native predictive-search fallback.
       }
 
       request() {
+        const filters = { inStock: this.stock.checked ? true : null, productSubtype: null };
+        if (this.dataset.mode !== 'header') {
+          if (this.expansion.value) filters.expansionCode = this.expansion.value;
+          if (this.rarity.value) filters.rarity = this.rarity.value;
+        }
         return { contractVersion: 1, game: this.game.value, productFamily: 'single', q: this.input.value.trim() || null,
-          filters: { inStock: this.stock.checked ? true : null, productSubtype: null }, pageSize: 24, sort: 'product_gid_asc' };
+          filters, pageSize: 24, sort: 'product_gid_asc' };
+      }
+
+      metadataValue(value) {
+        return typeof value === 'string' && value.length > 0 && Array.from(value).length <= 1024
+          && !/[\u0000-\u0008\u000b\u000c\u000e-\u001f\ud800-\udfff]/u.test(value);
+      }
+
+      metadataOptions(select, message, values, selected = '') {
+        const all = document.createElement('option'); all.value = ''; all.textContent = this.message(message);
+        const options = values.map(item => {
+          const option = document.createElement('option'); option.value = item.value;
+          option.textContent = item.count === undefined ? item.value : `${item.value} (${item.count})`;
+          return option;
+        });
+        select.replaceChildren(all, ...options); select.value = selected;
+      }
+
+      resetMetadata(expansion = '', rarity = '') {
+        this.metadataOptions(this.expansion, 'all_expansions', expansion ? [{ value: expansion }] : [], expansion);
+        this.metadataOptions(this.rarity, 'all_rarities', rarity ? [{ value: rarity }] : [], rarity);
       }
 
       restore() {
@@ -204,7 +251,11 @@ Renders game-scoped gateway search without native predictive-search fallback.
         this.game.value = state.get('game') || '';
         this.input.value = state.get('q') || '';
         this.stock.checked = state.get('stock') === '1';
-        if (this.dataset.mode !== 'header') this.load({ cursor: state.get('cursor'), generation: state.get('generation') });
+        const invalid = ['expansionCode', 'rarity'].some(key => state.getAll(key).length > 1
+          || (state.has(key) && !this.metadataValue(state.get(key))));
+        this.resetMetadata(...(!invalid && this.dataset.mode !== 'header'
+          ? [state.get('expansionCode') || '', state.get('rarity') || ''] : []));
+        if (this.dataset.mode !== 'header') this.load({ cursor: state.get('cursor'), generation: state.get('generation'), invalid });
       }
 
       url(request, cursor = null, generation = null) {
@@ -212,6 +263,9 @@ Renders game-scoped gateway search without native predictive-search fallback.
         url.searchParams.set('view', 'nla-catalog'); url.searchParams.set('game', request.game);
         if (request.q) url.searchParams.set('q', request.q);
         if (request.filters.inStock) url.searchParams.set('stock', '1');
+        for (const key of ['expansionCode', 'rarity']) {
+          if (request.filters[key]) url.searchParams.set(key, request.filters[key]);
+        }
         if (cursor) { url.searchParams.set('cursor', cursor); url.searchParams.set('generation', generation); }
         const preview = new URL(location.href).searchParams.get('preview_theme_id');
         if (preview) url.searchParams.set('preview_theme_id', preview);
@@ -256,21 +310,28 @@ Renders game-scoped gateway search without native predictive-search fallback.
             ? ` — ${game.textContent}${request.q ? ': ' + request.q : ''}` : '');
         }
         if (!['magic', 'pokemon', 'yugioh', 'one-piece'].includes(request.game)) {
+          this.metadataFilters.disabled = true;
           this.status.textContent = this.game.options[0].textContent; return;
         }
         if (options.suggest && !request.q) return;
         this.lastLoad = options;
         this.recovery.hidden = true;
-        if (!options.suggest) { this.page.hidden = true; this.status.textContent = this.message('loading'); }
+        if (!options.suggest) {
+          this.metadataFilters.disabled = true;
+          this.page.hidden = true; this.status.textContent = this.message('loading');
+        }
         let timer;
         try {
           const endpoint = new URL(this.dataset.endpoint, location.origin);
           if (!this.dataset.endpoint || endpoint.origin !== location.origin || !endpoint.pathname.startsWith('/apps/') || endpoint.search || endpoint.hash) throw new Error('unconfigured');
           if ((request.q?.length || 0) > 256 || (options.cursor?.length || 0) > 16384 || Boolean(options.cursor) !== Boolean(options.generation)) throw new Error('invalid');
+          if (options.invalid || ['expansionCode', 'rarity'].some(key => request.filters[key] !== undefined
+            && !this.metadataValue(request.filters[key]))) throw new Error('invalid');
           const controller = new AbortController(); this.controller = controller;
           timer = setTimeout(() => controller.abort(), 8000);
           const body = { contractVersion: 1, cursor: options.cursor || null, request };
           if (request.q && !body.cursor) body.includeSuggestions = true;
+          if (this.dataset.mode !== 'header' && !options.suggest) body.includeFacets = true;
           const response = await fetch(endpoint, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
             body: JSON.stringify(body), credentials: 'same-origin', signal: controller.signal, redirect: 'error', cache: 'no-store' });
           const data = await response.json();
@@ -285,6 +346,10 @@ Renders game-scoped gateway search without native predictive-search fallback.
           }
           else {
             this.hideSuggestions();
+            if (body.includeFacets) {
+              this.metadataOptions(this.expansion, 'all_expansions', data.facets[0].values, request.filters.expansionCode || '');
+              this.metadataOptions(this.rarity, 'all_rarities', data.facets[1].values, request.filters.rarity || '');
+            }
             this.renderPage(data, request);
             this.pageRequest = request; this.generation = data.page.datasetGeneration; this.nextCursor = data.nextCursor;
             this.querySelector('[data-action="next"]').hidden = !data.nextCursor;
@@ -302,13 +367,17 @@ Renders game-scoped gateway search without native predictive-search fallback.
           this.hideSuggestions(); this.status.textContent = this.message(key); this.recovery.hidden = false;
           this.querySelector('[data-action="retry"]').hidden = key === 'restart';
           this.querySelector('[data-action="restart"]').hidden = key !== 'restart';
-        } finally { clearTimeout(timer); }
+        } finally {
+          clearTimeout(timer);
+          if (sequence === this.sequence) this.metadataFilters.disabled = this.dataset.mode === 'header';
+        }
       }
 
       validate(data, body, generation) {
         const page = data.page;
-        const same = (actual, expected) => Object.keys(expected).every(key =>
-          typeof expected[key] === 'object' && expected[key] !== null ? same(actual?.[key] || {}, expected[key]) : actual?.[key] === expected[key]);
+        const same = (actual, expected) => actual && typeof actual === 'object'
+          && Object.keys(actual).length === Object.keys(expected).length && Object.keys(expected).every(key =>
+            typeof expected[key] === 'object' && expected[key] !== null ? same(actual[key], expected[key]) : actual[key] === expected[key]);
         if (data.contractVersion !== 1 || page?.contractVersion !== 1 || !same(page.request, body.request)
           || !/^sha256:[a-f0-9]{64}$/.test(page.datasetGeneration) || (generation && page.datasetGeneration !== generation)
           || !Array.isArray(page.items) || page.items.length > 24 || page.returnedProductCount !== page.items.length
@@ -321,11 +390,30 @@ Renders game-scoped gateway search without native predictive-search fallback.
             || typeof item.canonicalCardName !== 'string' || typeof item.commercialTitle !== 'string'
             || !Array.isArray(item.variants) || !item.variants.length) throw new Error('unavailable');
           ids.add(item.productGid);
+          for (const key of ['expansionCode', 'rarity']) {
+            if (body.request.filters[key] !== undefined && item.cardMetadata?.[key] !== body.request.filters[key]) throw new Error('unavailable');
+          }
           for (const variant of item.variants) {
             if (typeof variant.priceText !== 'string' || !/^(0|[1-9][0-9]*)(\.[0-9]+)?$/.test(variant.priceText)
               || !Number.isSafeInteger(variant.inventoryQuantity)) throw new Error('unavailable');
           }
         }
+        if (body.includeFacets) {
+          if (!Array.isArray(data.facets) || data.facets.length !== 2) throw new Error('unavailable');
+          ['expansionCode', 'rarity'].forEach((dimension, index) => {
+            const facet = data.facets[index];
+            if (!facet || facet.dimension !== dimension || !Array.isArray(facet.values)
+              || !Number.isSafeInteger(facet.missingValueCount) || facet.missingValueCount < 0) throw new Error('unavailable');
+            const values = new Set();
+            for (const item of facet.values) {
+              if (!item || !this.metadataValue(item.value) || values.has(item.value)
+                || !Number.isSafeInteger(item.count) || item.count < 0) throw new Error('unavailable');
+              values.add(item.value);
+            }
+            const selected = body.request.filters[dimension];
+            if (selected !== undefined && !values.has(selected)) throw new Error('unavailable');
+          });
+        } else if (data.facets !== undefined) throw new Error('unavailable');
         if (body.includeSuggestions && !Array.isArray(data.suggestions)) throw new Error('unavailable');
         if (data.suggestions !== undefined && (!Array.isArray(data.suggestions) || data.suggestions.length > 10
           || data.suggestions.some(item => typeof item.canonicalCardName !== 'string' || !item.canonicalCardName.trim()

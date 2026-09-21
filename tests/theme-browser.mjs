@@ -30,6 +30,7 @@ let activeImages = 0; let maxActiveImages = 0;
 function product(id, game, name, available = true) {
   return { contractVersion: 1, productGid: `gid://shopify/Product/${id}`, handle: `card-${id}`, commercialTitle: name,
     canonicalCardName: name, game, productFamily: 'single', productSubtype: null,
+    cardMetadata: { expansionCode: id % 2 ? 'SET-B' : 'SET-A', rarity: id % 2 ? 'rare' : 'common' },
     variants: [{ variantGid: `gid://shopify/ProductVariant/${id}`, title: 'Default', selectedOptions: [],
       priceText: available ? '1.20' : '0.00', compareAtPriceText: null, inventoryQuantity: available ? 1 : 0,
       inventoryPolicy: 'DENY', inventoryTracked: true }] };
@@ -69,6 +70,21 @@ const server = createServer(async (req, res) => {
     items = items.filter(item => item.canonicalCardName.toLowerCase().includes(q.toLowerCase()));
   }
   if (request.filters.inStock) items = items.filter(item => item.variants[0].inventoryQuantity > 0);
+  const scopedItems = items;
+  const dimensions = ['expansionCode', 'rarity'];
+  const facets = dimensions.map(dimension => {
+    const other = dimensions.find(key => key !== dimension);
+    const counts = new Map();
+    for (const item of scopedItems) {
+      if (request.filters[other] && item.cardMetadata[other] !== request.filters[other]) continue;
+      const value = item.cardMetadata[dimension];
+      counts.set(value, (counts.get(value) || 0) + 1);
+    }
+    const selected = request.filters[dimension];
+    if (selected && !counts.has(selected)) counts.set(selected, 0);
+    return { dimension, missingValueCount: 0, values: [...counts].map(([value, count]) => ({ value, count })) };
+  });
+  items = items.filter(item => dimensions.every(key => !request.filters[key] || item.cardMetadata[key] === request.filters[key]));
   if (q === 'leak') items[0].game = 'one-piece';
   if (q === 'duplicate') items = [items[0], items[0]];
   const allItems = items;
@@ -79,6 +95,7 @@ const server = createServer(async (req, res) => {
       returnedProductCount: items.length, returnedVariantCount: items.length, items,
       hasNextPage: q === 'loop' && cursor ? true : nextCursor !== null } };
   if (q === 'duplicate') { data.page.items = allItems; data.page.returnedProductCount = allItems.length; }
+  if (body.includeFacets) data.facets = facets;
   if (body.includeSuggestions) data.suggestions = allItems.map(item => ({ canonicalCardName: q === 'fast' ? 'Fast answer' : item.canonicalCardName,
     matchingProductCount: 1, availableProductCount: item.variants[0].inventoryQuantity > 0 ? 1 : 0 }));
   res.setHeader('Content-Type', 'application/json');

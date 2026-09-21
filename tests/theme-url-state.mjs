@@ -18,7 +18,7 @@ class Component extends Element {
     this.dataset = { mode: 'header', searchUrl: '/search', endpoint: '/apps/nla/catalog' };
     this.nodes = new Map();
     const form = this.querySelector('form');
-    form.elements = { game: new Element(), q: new Element(), stock: new Element() };
+    form.elements = { game: new Element(), q: new Element(), stock: new Element(), expansionCode: new Element(), rarity: new Element() };
     form.elements.game.options = [
       { value: '', textContent: 'Choose a game' },
       { value: 'magic', textContent: 'Magic' },
@@ -39,12 +39,13 @@ let fetches = 0;
 let responseOk = true;
 const context = {
   HTMLElement: Component, window, location, URL, Event, AbortController, setTimeout, clearTimeout,
-  document: { title: 'Native search: 1000 results' },
+  document: { title: 'Native search: 1000 results', createElement: () => new Element() },
   customElements: { get: name => classes.get(name), define: (name, value) => classes.set(name, value) },
   history: { pushState: (_state, _title, url) => { location.href = url.href; } },
   fetch: async () => {
     fetches += 1;
-    return { ok: responseOk, json: async () => ({ page: { datasetGeneration: 'generation' }, nextCursor: null }) };
+    return { ok: responseOk, json: async () => ({ page: { datasetGeneration: 'generation' }, nextCursor: null,
+      facets: [{ values: [] }, { values: [] }] }) };
   },
 };
 vm.runInNewContext(script, context);

@@ -4,6 +4,8 @@
     "magic": "Magic", "pokemon": "Pokémon", "yugioh": "Yu-Gi-Oh!", "one_piece": "One Piece",
     "search_label": "Nome o codice carta", "placeholder": "Digita un nome o codice carta", "search": "Cerca",
     "stock_only": "Solo carte disponibili", "suggestions": "Suggerimenti", "retry": "Riprova",
+    "filters": "Filtra le carte", "expansion": "Codice espansione", "rarity": "Rarità",
+    "all_expansions": "Tutte le espansioni", "all_rarities": "Tutte le rarità",
     "restart": "Ricomincia la ricerca", "pagination": "Pagine del catalogo", "first": "Prima pagina", "next": "Pagina successiva",
     "loading": "Caricamento del catalogo…", "empty": "Nessuna carta corrispondente.", "results": "Risultati",
     "unavailable": "Il catalogo è temporaneamente indisponibile. Riprova.",
