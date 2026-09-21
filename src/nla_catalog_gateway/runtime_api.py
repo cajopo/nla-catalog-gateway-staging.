@@ -904,10 +904,8 @@ class CatalogRequestEnvelopeV1:
             raise IncompatibleCatalogRequestError("suggestions require a first-page single search")
         if type(self.include_facets) is not bool:
             raise RuntimeApiContractError("includeFacets must be a boolean")
-        if self.include_facets and (
-            self.cursor is not None or self.request.product_family is not RequestFamily.SINGLE
-        ):
-            raise IncompatibleCatalogRequestError("facets require a first-page single request")
+        if self.include_facets and self.request.product_family is not RequestFamily.SINGLE:
+            raise IncompatibleCatalogRequestError("facets require a single request")
 
     def as_dict(self) -> dict[str, Any]:
         result = {

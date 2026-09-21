@@ -111,7 +111,10 @@ not change the immutable database schema or Shopify, and it does not yet add the
 - Pagination and adaptive suggestions use the same bound SQL predicates. Game, public
   visibility, query, and stock constraints remain in force; SOLD OUT remains included
   when no stock selection is made. Missing metadata is not dropped from unfiltered results.
-- A first-page `single` envelope may opt into `includeFacets: true`. Without this flag,
+- Any `single` envelope, including a cursor page, may opt into `includeFacets: true`.
+  Cursor validation precedes the count read; both use the same pinned generation, so
+  direct page URLs and back/forward need no separate latest-generation facet query.
+  Without this flag,
   the response keeps its existing shape. With it, `facets` contains exactly `expansionCode`
   then `rarity`, each with lexically ordered `{value,count}` entries and `missingValueCount`.
 - Each count covers all matching products, not the result page. One aggregate groups the
@@ -157,3 +160,11 @@ Still required before storefront acceptance: runtime candidate validation on the
 catalog within its deadline; clone-only controls/URL/back navigation; E2E verification.
 No deploy or MAIN-theme change is implied by this backend slice. New-market updates remain
 blocked on CardTrader API access and are not supplied by these filters.
+
+Cursor-facet follow-up: 197 focused runtime, metadata and suggestion tests PASS after
+allowing `includeFacets` on subsequent single-family pages. The added cases verify
+complete counts on page 2, a retained generation after activation, and invalid,
+incompatible or unretained cursors rejected before count reads. Ruff and diff checks
+PASS. Independent reviewer `/root/theme_title_review` approved the three-file delta
+without High/Blocker findings; no lease, authorization or deadline path changed.
+This follow-up has not been deployed and does not supersede the full CI gate.

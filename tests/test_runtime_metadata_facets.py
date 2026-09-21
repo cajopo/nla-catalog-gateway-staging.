@@ -80,11 +80,11 @@ def test_reject_non_boolean_metadata_facet_option(flag):
 @pytest.mark.parametrize(
     "family", [RequestFamily.ALL, RequestFamily.SEALED, RequestFamily.ACCESSORY]
 )
-def test_metadata_facets_only_accept_first_single_page(family):
+def test_metadata_facets_only_accept_single_family(family):
     with pytest.raises(runtime_api.IncompatibleCatalogRequestError):
         CatalogRequestEnvelopeV1(api._request(family=family), None, include_facets=True)
-    with pytest.raises(runtime_api.IncompatibleCatalogRequestError):
-        CatalogRequestEnvelopeV1(_request(), api.OPAQUE_CURSOR, include_facets=True)
+    enabled = CatalogRequestEnvelopeV1(_request(), api.OPAQUE_CURSOR, include_facets=True)
+    assert CatalogRequestEnvelopeV1.from_json_bytes(enabled.to_json_bytes()) == enabled
     # Browsing without a text query still needs the complete set choices.
     assert CatalogRequestEnvelopeV1(_request(None), None, include_facets=True).include_facets
 
@@ -178,6 +178,12 @@ def test_signed_http_facets_are_complete_scoped_and_optional(http_case):
     next_page = call_facets(case, _request(page_size=1), cursor=parsed.next_cursor, enabled=False)
     assert next_page.status == 200
     assert "facets" not in json.loads(next_page.body)
+    next_with_facets = call_facets(case, _request(page_size=1), cursor=parsed.next_cursor)
+    assert next_with_facets.status == 200
+    next_parsed = CatalogResponseEnvelopeV1.from_json_bytes(next_with_facets.body)
+    assert next_parsed.page.items[0].product_gid == "gid://shopify/Product/2"
+    assert next_parsed.facets == facet_values()
+    assert next_parsed.page.dataset_generation == parsed.page.dataset_generation
     foreign = call_facets(case, replace(_request(), game=Game.POKEMON))
     assert foreign.status == 200
     assert [f["values"][0]["count"] for f in json.loads(foreign.body)["facets"]] == [1, 1]
@@ -244,3 +250,54 @@ def test_metadata_facets_use_leased_generation_during_activation(http_case, tmp_
     )
     assert parsed.facets == facet_values()
     assert case.backend.active_generation == new_case.backend.active_generation
+
+
+def test_cursor_metadata_facets_keep_retained_generation_after_activation(http_case, tmp_path):
+    case, _ = http_case
+    chosen = _request(page_size=1)
+    first = CatalogResponseEnvelopeV1.from_json_bytes(call_facets(case, chosen).body)
+    changed = tuple(
+        replace(record, card_metadata=replace(record.card_metadata, expansion_code="NEW"))
+        for record in case.records
+    )
+    new_case = integration._bound_case(tmp_path, "retained-facets", changed, "b" * 64)
+    case.backend.activate(new_case.verified, new_case.projection, new_case.codec, new_case.evidence)
+    response = call_facets(case, chosen, cursor=first.next_cursor)
+    assert response.status == 200
+    parsed = CatalogResponseEnvelopeV1.from_json_bytes(response.body)
+    assert parsed.page.dataset_generation == first.page.dataset_generation
+    assert parsed.page.items[0].product_gid == "gid://shopify/Product/2"
+    assert parsed.facets == facet_values()
+    assert case.backend.active_generation != parsed.page.dataset_generation
+
+
+def test_invalid_or_unretained_cursor_fails_before_metadata_read(http_case, tmp_path, monkeypatch):
+    case, _ = http_case
+    chosen = _request(page_size=1)
+    first = CatalogResponseEnvelopeV1.from_json_bytes(call_facets(case, chosen).body)
+    changed = tuple(replace(record, canonical_card_name="New Bolt") for record in case.records)
+    foreign = integration._bound_case(tmp_path, "foreign-facets", changed, "b" * 64)
+    control = integration._control()
+    lease = foreign.backend.acquire(control=control)
+    try:
+        foreign_cursor = lease.fetch_page(chosen, None, control=control).next_cursor
+    finally:
+        lease.close()
+    assert foreign_cursor is not None
+    reads = []
+
+    def forbidden(*args, **kwargs):
+        reads.append(True)
+        raise AssertionError("invalid cursor must precede facet reads")
+
+    monkeypatch.setattr(CatalogProjection, "metadata_facets", forbidden)
+    for request, cursor, expected_code in (
+        (chosen, api.OPAQUE_CURSOR, "invalid_cursor"),
+        (replace(chosen, query="different"), first.next_cursor, "cursor_context_mismatch"),
+        (chosen, foreign_cursor, "restart_required"),
+    ):
+        response = call_facets(case, request, cursor=cursor)
+        assert response.status in (400, 409)
+        assert json.loads(response.body)["code"] == expected_code
+        assert "facets" not in json.loads(response.body)
+    assert reads == []
