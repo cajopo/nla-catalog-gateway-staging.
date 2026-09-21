@@ -14,8 +14,10 @@ this fixed order:
 3. nullable `q` (present with an empty value when the request distinguishes `""` from null);
 4. nullable `inStock` as lowercase `true|false`;
 5. nullable `productSubtype`;
-6. the only v1 sort, `product_gid_asc`;
-7. `pageSize`.
+6. optional `expansionCode`;
+7. optional `rarity`;
+8. the only v1 sort, `product_gid_asc`;
+9. `pageSize`.
 
 UTF-8 values use uppercase percent escapes and spaces use `%20`, never `+`. The parser accepts
 only this canonical representation. Missing/unknown/duplicate keys, repeated scalar values,
@@ -29,8 +31,8 @@ rejected. Duplicate elimination for a future multi-value facet is not representa
 wire contract and requires an explicit versioned extension rather than comma-delimited or
 repeated-key interpretation.
 
-A family change clears `productSubtype` and preserves the common compatible state: game,
-query, `inStock`, sort, and page size. A game change also clears `productSubtype`, whose
+A family change clears `productSubtype`, `expansionCode`, and `rarity`, preserving game,
+query, `inStock`, sort, and page size. A game change also clears those three selections, whose
 cross-game meaning has not been evidenced, while preserving the other canonical request
 fields. Cursor tokens and page numbers are not added here because they are not fields in the
 issue #28 request contract; cursor encoding/HMAC remains owned by issue #7.
@@ -87,7 +89,7 @@ baseline evidence are not frozen.
 ## Explicitly unsupported/backlog
 
 The following candidate dimensions are not accepted in URL state and are not added to the
-issue #28 wire contract: language, expansion/set/set code, condition, finish, rarity,
+issue #28 wire contract: language, expansion/set/setCode aliases, condition, finish,
 collector number, price range, accessory brand/compatibility, and release date.
 Selected-option display text is not promoted into a canonical condition/finish/language
 vocabulary. Additional sorts likewise remain backlog until producer coverage and
@@ -96,3 +98,62 @@ normalization rules are independently evidenced.
 `CapabilityMatrixV1.facets` and `catalogOutput` remain `unsupported`. These tests prove the
 reference algebra and bounded prepared high-cardinality evaluation only; they do not prove
 the real baseline, SQL equivalence, or a production serving path.
+
+## September 21 extension: exact set/rarity filtering and optional SQL counts
+
+This issue #10 backend slice extends the historical reference-only work above. It does
+not change the immutable database schema or Shopify, and it does not yet add theme controls.
+
+- `CatalogFiltersV1` accepts omitted-or-nonempty `expansionCode` and `rarity`, for `single`
+  only. Values match the source-ID-joined `cardMetadata` literally, including case and
+  Unicode; no rarity vocabulary or title-derived identity is invented. Explicit null
+  extension values are rejected. Missing keys preserve legacy request/cursor bytes.
+- Pagination and adaptive suggestions use the same bound SQL predicates. Game, public
+  visibility, query, and stock constraints remain in force; SOLD OUT remains included
+  when no stock selection is made. Missing metadata is not dropped from unfiltered results.
+- A first-page `single` envelope may opt into `includeFacets: true`. Without this flag,
+  the response keeps its existing shape. With it, `facets` contains exactly `expansionCode`
+  then `rarity`, each with lexically ordered `{value,count}` entries and `missingValueCount`.
+- Each count covers all matching products, not the result page. One aggregate groups the
+  two raw fields, then applies the other dimension's selection. Selected absent values
+  remain visible with zero counts; neither a top-100 limit nor a frequency cutoff is used.
+- Page, suggestions and counts share the same acquired generation and operation deadline.
+  A failed/timed-out facet read fails the response, rather than returning partial counts.
+  Existing request/response size limits and safe capability defaults are not increased.
+
+Real restored-baseline diagnostics found metadata on all 291,787 public singles, with
+753/128/766/1,170 distinct set codes for Magic/One Piece/Pokemon/Yu-Gi-Oh respectively.
+The diagnostic combined SQL aggregate took about 1.08/0.09/0.62/0.77 seconds on the VPS;
+these are isolated query timings, **not** full HTTP or concurrent-load acceptance.
+The four public sealed products remain outside these single-only metadata controls.
+
+Tests: `test_metadata_filters.py`, `test_metadata_facet_counts.py`, and
+`test_runtime_metadata_facets.py` cover legacy vectors, exact scopes, cursor binding,
+48 SQL/oracle combinations, complete vocabularies, URL restoration/reset, signed HTTP,
+generation activation during a request, cancellation, and fail-closed wire output.
+Independent review passed with 133 tests. Full-suite results are recorded separately.
+
+Local final regression: 3,250 tests passed in 1,667.14 seconds. A subsequent 64-test
+coverage append included the 13 newly added edge cases (3,263 unique tests in the final
+tree). All five modified modules have 100% statement/branch coverage. The Windows run
+still exits nonzero at the repository-wide coverage gate: 99.39%, solely 57 statements
+and one partial branch in the unchanged native Linux bundle backend. Its native tests
+return on non-Linux hosts, so Windows PASS is not evidence for those operations. Keep
+the 100% threshold unchanged and require the normal Ubuntu Python 3.12/3.13 CI gates
+before promotion. No skipped/non-native case is claimed as native Linux acceptance.
+
+An additional read-only VPS component run used the built candidate wheel (no installation)
+against restored manifest `3edfbc59f731613b4684305efc676e9ff8739076024928ff3f9b21e432dd8864`.
+It exercised first-page SQL, variant/item decoding, contextual counts, optional suggestions,
+and public count validation/serialization: 24 cases (four games, browse/search/rare-set,
+two passes) all completed in 0.058–1.460 seconds. The rare sets PTMT/J-P/20TH-S/PB-JP
+returned 1/2/1/3 products, with the full contextual set lists retained. Output remained
+below 60 KB. Copy size/mtime were unchanged. This supports using the existing SQLite
+schema without another search service; it does **not** replace full signed HTTP, concurrent
+load or clone acceptance. The disposable wheel/script live only in
+`/tmp/nla-metadata-facets-cpiMam`, with no serving configuration or activation change.
+
+Still required before storefront acceptance: runtime candidate validation on the real
+catalog within its deadline; clone-only controls/URL/back navigation; E2E verification.
+No deploy or MAIN-theme change is implied by this backend slice. New-market updates remain
+blocked on CardTrader API access and are not supplied by these filters.
