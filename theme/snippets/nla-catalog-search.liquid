@@ -170,6 +170,9 @@ Renders game-scoped gateway search without native predictive-search fallback.
           if (action === 'retry' && this.lastLoad) this.load(this.lastLoad);
         });
         on(window, 'popstate', () => this.restore());
+        on(window, 'nla:catalog-navigate', () => {
+          if (this.dataset.mode === 'header') this.restore();
+        });
         this.restore();
       }
 
@@ -281,7 +284,10 @@ Renders game-scoped gateway search without native predictive-search fallback.
             this.pageRequest = request; this.generation = data.page.datasetGeneration; this.nextCursor = data.nextCursor;
             this.querySelector('[data-action="next"]').hidden = !data.nextCursor;
             this.querySelector('[data-action="first"]').hidden = !options.cursor;
-            if (options.navigate) history.pushState(null, '', this.url(request, options.cursor, this.generation));
+            if (options.navigate) {
+              history.pushState(null, '', this.url(request, options.cursor, this.generation));
+              window.dispatchEvent(new Event('nla:catalog-navigate'));
+            }
             this.page.hidden = false;
             if (options.navigate) this.heading.focus({ preventScroll: true });
           }
