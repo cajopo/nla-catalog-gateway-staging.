@@ -58,8 +58,8 @@ class StagingActivationOfflineTests(unittest.TestCase):
         self.env = {
             "NLA_ACTIVATION_SHA256": self.plan.old_pin,
             "NLA_EVIDENCE_CODE_SHA": self.plan.old_code,
-            "NLA_CURSOR_HMAC_SECRET_B64": "SYNTHETIC_CURSOR_VALUE_ONLY",
-            "NLA_APP_PROXY_SHARED_SECRET_B64": "SYNTHETIC_PROXY_VALUE_ONLY",
+            "NLA_CURSOR_HMAC_SECRET_B64": "example-secret",
+            "NLA_APP_PROXY_SHARED_SECRET_B64": "placeholder-secret",
             "NLA_SHOP_DOMAIN": "test.myshopify.com",
             "NLA_STAGING_STORE_ROOT": "/var/lib/nla-catalog",
         }
@@ -361,7 +361,6 @@ def test_plan_names_and_evidence_are_not_tied_to_one_capture():
     values["run_id"] = "another-run"
     plan = operator.load_plan(values)
     assert plan.prefix == "nla-refresh-another-run"
-    assert plan.unit == plan.prefix + ".service"
     assert plan.verifier == plan.prefix + "-runtime-verify"
     assert len({plan.current, plan.backup, plan.candidate, plan.failed, plan.restored}) == 5
     values["counts"]["products"] = 123
@@ -671,19 +670,11 @@ def preflight_case(tmp_path, monkeypatch):
         },
     }
     commands = []
-    state = {
-        "unit": "ActiveState=inactive\nMainPID=0\n",
-        "journal": plan.unit + ": Deactivated successfully.",
-        "names": plan.current,
-    }
+    state = {"names": plan.current}
 
     def run(args, **kwargs):
         commands.append(args)
         assert kwargs == {"check": True, "capture_output": True, "text": True}
-        if args[0] == "/usr/bin/systemctl":
-            return SimpleNamespace(stdout=state["unit"])
-        if args[0] == "/usr/bin/journalctl":
-            return SimpleNamespace(stdout=state["journal"])
         assert args[0] == "/usr/bin/docker"
         if args[1] == "inspect":
             return SimpleNamespace(stdout=json.dumps([containers[args[2]]]))
@@ -711,7 +702,7 @@ def test_real_preflight_accepts_bound_evidence_without_writing(preflight_case):
     assert result[5] == case.source
     assert result[6] == case.plan.store / "generations" / case.plan.manifest
     assert not result[6].exists() and not case.plan.work.exists()
-    assert all(command[1] in ("show", "-u", "inspect", "ps") for command in case.commands)
+    assert all(command[1] in ("inspect", "ps") for command in case.commands)
 
 
 @pytest.mark.parametrize(
@@ -744,8 +735,6 @@ def test_preflight_rejects_mismatched_receipts(preflight_case, file, key, value)
 @pytest.mark.parametrize(
     "failure",
     [
-        "unit",
-        "journal",
         "verifier-running",
         "verifier-exit",
         "verifier-oom",
@@ -775,9 +764,7 @@ def test_preflight_rejects_unsafe_or_reused_state(preflight_case, failure):
     plan = case.plan
     verifier = case.containers[plan.verifier]
     current = case.containers[plan.current]
-    if failure in ("unit", "journal"):
-        case.state[failure] = "not successful"
-    elif failure == "verifier-running":
+    if failure == "verifier-running":
         verifier["State"]["Status"] = "running"
     elif failure == "verifier-exit":
         verifier["State"]["ExitCode"] = 1

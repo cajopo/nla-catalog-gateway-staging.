@@ -52,10 +52,6 @@ class ActivationPlan:
         return "nla-refresh-" + self.run_id
 
     @property
-    def unit(self):
-        return self.prefix + ".service"
-
-    @property
     def verifier(self):
         return self.prefix + "-runtime-verify"
 
@@ -213,37 +209,9 @@ def preflight(plan):
         assert directory.resolve() == directory and directory.is_dir()
         assert directory.stat().st_uid == 10001
         assert stat.S_IMODE(directory.stat().st_mode) == 0o700
-    facts = subprocess.run(  # noqa: S603 -- validated unit, no shell
-        [
-            "/usr/bin/systemctl",
-            "show",
-            plan.unit,
-            "-p",
-            "ActiveState",
-            "-p",
-            "MainPID",
-        ],
-        check=True,
-        capture_output=True,
-        text=True,
-    ).stdout.splitlines()
-    assert set(facts) == {"ActiveState=inactive", "MainPID=0"}
-    terminal = subprocess.run(  # noqa: S603 -- validated unit, no shell
-        [
-            "/usr/bin/journalctl",
-            "-u",
-            plan.unit,
-            "--no-pager",
-            "-o",
-            "cat",
-            "--grep",
-            "^" + re.escape(plan.unit) + r": Deactivated successfully\.$",
-        ],
-        capture_output=True,
-        text=True,
-        check=True,
-    ).stdout.strip()
-    assert terminal == plan.unit + ": Deactivated successfully."
+    # The locked coordinator publishes this terminal receipt only after its
+    # capture subprocess exits successfully. A separate per-run systemd unit is
+    # unnecessary; missing/ambiguous completion cannot produce this receipt.
     receipt = json.loads(private_read(plan.capture / "operator-receipt.json"))
     checkpoint = json.loads(private_read(plan.capture / "capture-checkpoint.v1.json"))
     verified = json.loads(private_read(plan.capture / "runtime-verification-receipt.json"))

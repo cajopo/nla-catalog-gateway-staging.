@@ -85,9 +85,11 @@ be scheduled directly. A private root-owned mode-0600 plan supplies exactly:
 - `shop`: the expected Shopify shop domain. Credentials remain in the existing
   private accepted environment, never in the plan or repository.
 
-The capture service is `nla-refresh-<run_id>.service`; its successful termination,
-capture receipt/checkpoint and the exited successful verifier container
-`nla-refresh-<run_id>-runtime-verify` must agree. Candidate artifact hashes, file
+The coordinator must publish the capture receipt only after its capture child
+exits successfully, using exclusive atomic publication and fsync under the
+whole-pipeline lock. The receipt/checkpoint and the exited successful verifier
+container `nla-refresh-<run_id>-runtime-verify` must agree. A separate capture
+systemd unit and journal lookup are not required. Candidate artifact hashes, file
 permissions, current container, accepted environment and pointer are checked
 before any writes. Existing run resources or destination packages stop the run.
 
