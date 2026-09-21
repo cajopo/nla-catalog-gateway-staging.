@@ -111,3 +111,49 @@ simulated POSIX ownership, command construction, install/sealing, readiness,
 rollback and ambiguous failures. They do not claim a new VPS deployment. The
 coordinator, retention, freshness reporting and timer are still absent; this
 component alone provides neither a 24-hour refresh guarantee nor new market cards.
+
+## Single-run coordinator (not scheduled or deployed)
+
+`python -m scripts.refresh_staging_catalog --config /private/refresh.json`
+validates configuration and source/reference hashes without running a capture.
+Add `--apply` for one whole pipeline. Run from the pinned source checkout with
+its `src` on `PYTHONPATH`, using the existing host Python environment. The private
+configuration contains exactly these keys:
+
+- Paths: `run_root`, `config`, `store`, `reference`, `archive`. All must be
+  canonical absolute Linux paths. `run_root` and `config` are existing root-owned
+  mode-0700 directories; `config` contains the existing private accepted-runtime
+  environment and Shopify application credentials.
+- Pins: `code_sha`, `archive_sha256`, `reference_manifest_sha256`,
+  `reference_data_sha256`, `image`. `archive` is a Git tar archive of `code_sha`;
+  its global PAX commit and all installed application/scripts/query files must
+  agree. No mutable image tag or unverified source tree is accepted.
+- Store identity: `shop`, `publication` (Online Store publication GID), `current`
+  (the already running staging container's name).
+
+A nonblocking filesystem lock spans capture, verification, activation and final
+receipts. A durable `pending-run.json` is written before any export; any existing
+pending marker stops the next run. The capture child receives no credential in
+its command line or environment. Its internal `--capture-run` mode additionally
+requires the private run directory and matching pending intent; it is not a retry
+interface. Child exit0, candidate-ready result and matching checkpoint identity
+are required before exclusive atomic publication of the terminal capture receipt.
+
+The verifier runs in the current pinned image with no network, read-only mounts
+and a20-minute timeout; the source-pinned checker script is mounted read-only,
+so the existing runtime image need not be upgraded. The capture child is bounded
+to3hours. One outer systemd oneshot must bound the whole operation and its process
+group; no per-run service/journal gate is needed. Timeouts or uncertainty leave
+the pending marker and named resources for inspection. No automatic retry,
+container deletion or package cleanup occurs.
+
+Success writes an exclusive run `completed.json` and replaces private
+`last-success.json`, preserving both capture-start and activation timestamps.
+Only then is pending intent cleared. Thus activation time cannot masquerade as
+source freshness. Low disk reserve (less than6GiB) blocks before a new capture.
+
+Native Linux archive/path/lock tests must pass in CI; a Windows test run does not
+certify those cases. This coordinator is not installed on staging and does not
+yet include bounded retention, stale-source alerting or a timer. Those remain
+required before unattended use. It only refreshes Shopify's existing catalog;
+market-new source discovery and verified canonical-reference updates are separate.
