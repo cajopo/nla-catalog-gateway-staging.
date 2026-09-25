@@ -40,6 +40,17 @@ of absence from current Shopify. Real samples remain outside Git.
 - Full repository validation, deployment and automatic ingestion NOT claimed.
 - `write_products` not granted. GitHub uploads held pending allowance reset.
 
-Next: VPS credential setup, actual category retrieval, read-only candidate report,
-current Shopify identity checks, and duplicate-safe creation under the approved
-exception. Automatic ingestion remains OFF; publication remains a separate gate.
+## Real read-only check — 2026-09-25
+
+Credential setup succeeded on VPS (root-only, outside Git). Actual API category
+names/game IDs verified for single categories 1/44/73/192 and sealed category54.
+The committed transport/comparison ran in memory against six authenticated GETs
+and the existing SQLite projection in read-only mode: 226 accounted items =
+110 existing, 98 absent from the Sep22 snapshot, 16 missing IDs, one multiple-ID,
+one non-card. No Shopify mutations or gateway deployment.
+This proves only the four-expansion sample, not whole-catalog coverage or current
+Shopify absence. Owner has been asked to grant the missing `write_products` scope.
+
+Next: whole-catalog discovery, fresh Shopify identity checks and duplicate-safe
+creation under the approved exception. Automatic ingestion remains OFF;
+publication remains a separate gate.
