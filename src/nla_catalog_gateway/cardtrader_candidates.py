@@ -14,6 +14,7 @@ def compare_catalog(
     blueprints: list[dict],
     products: Iterable[dict],
     categories: Mapping[int, tuple[int, str]],
+    expansions: Mapping[int, int],
 ) -> list[dict]:
     """Account for every input row against a supplied, possibly stale snapshot.
 
@@ -30,6 +31,8 @@ def compare_catalog(
         for category, (game, family) in categories.items()
     ):
         raise ValueError("invalid_category_mapping")
+    if any(not _id(key) or not _id(game) or game not in GAMES for key, game in expansions.items()):
+        raise ValueError("invalid_expansion_mapping")
     existing = defaultdict(dict)
     by_gid = {}
     for product in products:
@@ -78,6 +81,10 @@ def compare_catalog(
             decision = "unclassified_category"
         elif category[0] != game_id:
             decision = "category_game_conflict"
+        elif expansion_id not in expansions:
+            decision = "unclassified_expansion"
+        elif expansions[expansion_id] != game_id:
+            decision = "expansion_game_conflict"
         elif category[1] != "single":
             decision = "non_card_category"
         elif not ids_valid:

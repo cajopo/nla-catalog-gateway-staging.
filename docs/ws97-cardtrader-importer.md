@@ -54,3 +54,17 @@ Shopify absence. Owner has been asked to grant the missing `write_products` scop
 Next: whole-catalog discovery, fresh Shopify identity checks and duplicate-safe
 creation under the approved exception. Automatic ingestion remains OFF;
 publication remains a separate gate.
+
+## Source inconsistency discovered during full acquisition
+
+The first acquisition stopped after 63 expansions: expansion73 belongs to Magic,
+but its export includes two rows with game5/category73 (Pokemon). A fresh GET
+confirmed this discrepancy. Do not repair the upstream identities by guessing.
+Comparison now requires the actual expansion-to-game mapping and reports
+`expansion_game_conflict`, even when category and blueprint game agree. Focused
+comparison suite: 38 passed, 100% module coverage, Ruff PASS; independent review PASS.
+
+One-shot discovery V2 preserves every raw response plus indexed anomaly sidecars,
+using a new run directory/unit; the failed run is retained. Its eventual complete
+state means acquisition, not import eligibility. Consumers must respect sidecars
+as well as record-level identity checks: sidecars retain requested-export context.
