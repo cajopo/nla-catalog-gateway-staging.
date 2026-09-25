@@ -9,6 +9,31 @@ language/condition/finish. Gateway/normal refresh stay read-only.
 
 ## Current increment
 
+### Canonical reference prerequisite resolved — 2026-09-25
+
+Helper commit `1643d6b12f434cf7562185d2baf8cb9e5587510d` extends through the existing
+CSV builder/strict loader, rejecting collisions and requiring exact preservation.
+Independent review found no blocker.85 extension/loader/builder tests PASS;
+Ruff check and format check PASS. No full-suite claim.
+
+Real captured candidate:332667 original mappings +4065 additions =336732;
+5/4070 candidate IDs already mapped and retained unchanged. Additions by game:
+Magic2163, Pokemon1080, Yugioh474, OnePiece348. Source file hashes and row/blueprint
+bindings retained privately on VPS, not in Git. No new CardTrader calls needed.
+
+VPS `/opt/nla-staging/reference-cardtrader-20260925-candidate-v1/bundle`:
+manifest `fd1d542b44b98be9bb364f7365f83c58d22d00b10ba337c540aa668a63ad1c6d`,
+sidecar `64742f7e6654eda4456d4e5ef2f0b488daaa97f97e8253dd50075230edab4c7b`.
+Installed refresh configuration validator accepted the candidate. Selected these
+reference pins under pipeline lock; timer briefly stopped then restored active,
+refresh service inactive, runtime pointer unchanged. Prior configuration retained
+in `refresh-config-before.json`; later `refresh-reference-selected.json` records
+selection (the builder evidence's activated:false describes earlier build time).
+
+No Shopify mutation or refresh started. This prepares future refreshes to accept
+these new identities; it does not make missing products visible or enable imports.
+Still require app scope, current duplicate checks, pilot integration and scheduling.
+
 `cardtrader_catalog.py` is only a GET transport for games/categories/expansions
 and blueprint export. Fixed HTTPS origin; no redirects/proxies; bounded bodies;
 sanitized errors; no credential storage or Shopify writes.
