@@ -3,6 +3,9 @@
 ## Mission
 Build a read-only catalog projection for the Next Level Arena Shopify storefront. Shopify remains authoritative for products, variants, prices, inventory, product pages, cart, checkout and orders. TCG PowerTools continues to write to Shopify as it does today.
 
+A separate missing-printing importer supports new market releases under the
+owner-approved create-only exception below; the gateway itself stays read-only.
+
 ## Read before changing code
 1. GitHub issue #3 — master roadmap.
 2. GitHub issue #17 — approved gateway architecture.
@@ -10,7 +13,9 @@ Build a read-only catalog projection for the Next Level Arena Shopify storefront
 4. The issue assigned to the current workstream.
 
 ## Non-negotiable boundaries
-- Never mutate Shopify products, variants, prices, inventory, tags, metafields or publication state.
+- Read relevant official public documentation before proposing or implementing integrations; explicitly reconcile discrepancies with observed API behavior.
+- Gateway and Shopify-to-index refresh remain read-only. Owner exception confirmed 2026-09-25: a separate importer may create verified missing card-printing products, initially DRAFT/unpublished/zero-stock, including only necessary initial variants, metadata and verified identities. Never modify or delete pre-existing products or their data. Do not invent prices or language/condition/finish. Missing or ambiguous IDs require reporting, not guessing. Check current Shopify data before creation and prevent duplicate retries.
+- This importer exception does not authorize publication, MAIN theme changes, PowerTools configuration changes or corrective edits to existing products. Publication/cutover remains a separate owner gate. See issue #97.
 - Never change or disconnect TCG PowerTools.
 - Never modify the Shopify MAIN theme. Theme work is restricted to the unpublished clone and its own workstream.
 - Never commit Shopify snapshots, SQLite databases, generated catalog artifacts, credentials or signed Bulk URLs.
