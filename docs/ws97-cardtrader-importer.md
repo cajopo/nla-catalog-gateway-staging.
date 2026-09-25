@@ -170,3 +170,27 @@ store budget rather than assuming all4070 candidates can be imported immediately
 References:
 - https://shopify.dev/docs/api/admin-graphql/latest/mutations/productCreate
 - https://shopify.dev/docs/api/admin-graphql/latest/mutations/metafieldsSet
+
+## Integration prerequisite found before any write — 2026-09-25
+
+The current refresh pins an external canonical-name reference. In
+`reconciliation._apply_canonical_names`, EVERY structured single requires a matching
+(game,sync ID) entry, including drafts; absence raises `ReconciliationDataError`.
+The capture counts all structured singles, not only published/active products.
+Therefore creating missing products before extending the reference would break
+the next full refresh, even though draft creation itself succeeded.
+
+Actual read-only check of the currently configured reference:332667 rows.
+Of4070 absent Shopify candidates, only5 already have a canonical mapping;
+4065 need new entries (Magic2163/Pokemon1080/Yugioh474/OnePiece348).
+No reference file or operator configuration was changed. This is a prerequisite
+for the importer, not a reason to weaken reconciliation checks or fabricate names.
+Next: build a new version of the reference using verified CardTrader names and
+available metadata, preserve existing records exactly, validate with existing
+loader, and activate the reference under the refresh lock BEFORE creating products.
+Retain parent/source evidence outside Git. Publication remains separately gated.
+
+Browser access attempted to avoid burdening the owner with app setup. The Codex
+browser is at Shopify's saved-account selection screen; handoff requested. No app
+settings or scopes changed. Required-scope updates need a new app version plus
+merchant approval per official manage-access-scopes documentation.
