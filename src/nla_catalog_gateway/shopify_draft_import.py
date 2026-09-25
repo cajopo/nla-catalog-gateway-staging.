@@ -42,6 +42,12 @@ query NlaVerifyNewDraft($id: ID!) {
 }
 """
 
+FIND_ATTEMPT_HANDLE = """
+query NlaFindAttemptHandle($identifier: ProductIdentifierInput!) {
+  product: productByIdentifier(identifier: $identifier) { id handle }
+}
+"""
+
 PRODUCT_TYPES = {
     "magic": "Magic Single",
     "pokemon": "Pokémon Single",
@@ -63,6 +69,73 @@ def _safe_draft(product: dict, handle: str) -> str:
     ):
         raise ValueError("unexpected_new_draft")
     return gid
+
+
+def inspect_draft_attempt(
+    ledger: Path,
+    *,
+    shop: str,
+    cardmarket_id: int,
+    graphql: Callable[[str, dict], dict],
+) -> dict:
+    """Read-only inspection; never adopt a handle match or unblock a reserved attempt.
+
+    A recorded GID came from the creation response. Without it, an exact handle
+    match is only a lead for manual reconciliation, not proof of ownership.
+    Absence is not permission to retry (renames/deletion/index lag are possible).
+    A matching draft still says nothing about media readiness or purchase safety.
+    """
+    if not isinstance(ledger, Path) or not ledger.is_absolute():
+        raise ValueError("persistent_absolute_ledger_required")
+    if type(cardmarket_id) is not int or not 0 < cardmarket_id < 2**63:
+        raise ValueError("invalid_import_identity")
+    with closing(sqlite3.connect(ledger.as_uri() + "?mode=ro", uri=True)) as db:
+        db.execute("PRAGMA query_only=ON")
+        row = db.execute(
+            "SELECT state,product_gid,request_sha256,request_json FROM draft_attempts "
+            "WHERE shop=? AND cardmarket_id=?",
+            (shop, cardmarket_id),
+        ).fetchone()
+    if row is None:
+        return {"status": "no_attempt", "retryAllowed": False}
+    state, gid, digest, encoded = row
+    if hashlib.sha256(encoded.encode()).hexdigest() != digest:
+        raise ValueError("attempt_request_digest_mismatch")
+    handle = f"nla-cm-{cardmarket_id}"
+    if json.loads(encoded)["variables"]["product"]["handle"] != handle:
+        raise ValueError("attempt_handle_mismatch")
+    result = {"state": state, "productGid": gid, "retryAllowed": False}
+    try:
+        if graphql(ACCESS_QUERY, {})["shop"]["myshopifyDomain"] != shop:
+            raise ValueError("inspection_shop_mismatch")
+        if gid is None:
+            found = graphql(FIND_ATTEMPT_HANDLE, {"identifier": {"handle": handle}})["product"]
+            if found is None:
+                return {**result, "status": "outcome_unknown_no_handle_match"}
+            if (
+                found["handle"] != handle
+                or not isinstance(found["id"], str)
+                or re.fullmatch(r"gid://shopify/Product/[1-9][0-9]*", found["id"]) is None
+            ):
+                raise ValueError("invalid_handle_result")
+            return {
+                **result,
+                "status": "manual_ownership_check_required",
+                "candidateProductGid": found["id"],
+            }
+        product = graphql(VERIFY_DRAFT, {"id": gid})["product"]
+        if product is None:
+            return {**result, "status": "recorded_product_not_found"}
+        if _safe_draft(product, handle) != gid:
+            raise ValueError("inspection_gid_mismatch")
+        expected = str(cardmarket_id)
+        if product.get("syncProductId") != {"type": "number_integer", "value": expected} or (
+            product.get("powertoolsId") != {"type": "single_line_text_field", "value": expected}
+        ):
+            return {**result, "status": "identity_fields_require_review"}
+        return {**result, "status": "recorded_draft_matches", "published": False}
+    except Exception:
+        return {**result, "status": "inspection_unconfirmed"}
 
 
 def create_draft_once(

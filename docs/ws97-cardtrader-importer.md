@@ -9,6 +9,26 @@ language/condition/finish. Gateway/normal refresh stay read-only.
 
 ## Current increment
 
+### Read-only interrupted-attempt inspection — 2026-09-25
+
+`inspect_draft_attempt` opens the durable ledger mode=ro/query_only, verifies the
+saved request digest and expected handle, then checks actual Shopify shop identity.
+A recorded creation-response GID is read back; without a recorded GID, exact handle
+lookup is only a manual-ownership lead. No result permits retry, adopts a product,
+changes ledger state or mutates Shopify. Missing products and read errors remain
+unconfirmed. Matching draft fields do not prove media readiness or purchase safety.
+
+Official documentation consulted before coding:
+https://shopify.dev/docs/api/admin-graphql/2026-07/queries/productByIdentifier
+Exact query schema validation PASS `nla-inspect-draft-handle-20260925` rev1;
+required scope read_products.44 focused importer/inspection tests PASS; Ruff PASS;
+independent review no material findings. No live mutation/deployment performed.
+
+Visibility remains a separate explicit owner gate: DRAFT products do not appear
+in storefront search. Do not relax ACTIVE+OnlineStore publication filtering.
+Publishing only verified importer-created records as non-purchasable SOLD OUT
+products requires owner approval, inventory tracking/policy checks, and a pilot.
+
 ### Canonical reference prerequisite resolved — 2026-09-25
 
 Helper commit `1643d6b12f434cf7562185d2baf8cb9e5587510d` extends through the existing

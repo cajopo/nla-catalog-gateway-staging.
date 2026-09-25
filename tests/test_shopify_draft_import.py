@@ -10,9 +10,11 @@ import pytest
 from nla_catalog_gateway.shopify_draft_import import (
     ACCESS_QUERY,
     CREATE_DRAFT,
+    FIND_ATTEMPT_HANDLE,
     SET_IDENTITIES,
     VERIFY_DRAFT,
     create_draft_once,
+    inspect_draft_attempt,
 )
 
 SHOP = "nla-test.myshopify.com"
@@ -77,6 +79,80 @@ def test_default_disabled_has_no_file_or_network_side_effect(tmp_path):
     api = FakeShopify()
     assert run(tmp_path, api, enabled=False) == {"status": "disabled"}
     assert not list(tmp_path.iterdir()) and not api.calls
+
+
+@pytest.mark.parametrize(
+    "case,expected",
+    [
+        ("complete", "recorded_draft_matches"),
+        ("missing_identities", "identity_fields_require_review"),
+        ("published", "inspection_unconfirmed"),
+        ("wrong_gid", "inspection_unconfirmed"),
+        ("deleted", "recorded_product_not_found"),
+        ("wrong_shop", "inspection_unconfirmed"),
+        ("timeout", "inspection_unconfirmed"),
+        ("unknown_found", "manual_ownership_check_required"),
+        ("unknown_missing", "outcome_unknown_no_handle_match"),
+    ],
+)
+def test_readonly_inspection_never_unblocks_attempt(tmp_path, case, expected):
+    api = FakeShopify()
+    assert run(tmp_path, api)["status"] == "draft_verified"
+    ledger = tmp_path / "ledger.sqlite"
+    if case.startswith("unknown"):
+        with closing(sqlite3.connect(ledger)) as db:
+            db.execute("UPDATE draft_attempts SET product_gid=NULL,state='needs_reconciliation'")
+            db.commit()
+    before = ledger.read_bytes()
+    api.calls.clear()
+    if case == "missing_identities":
+        api.product["syncProductId"] = None
+    if case == "published":
+        api.product["status"] = "ACTIVE"
+    if case == "wrong_gid":
+        api.product["id"] = "gid://shopify/Product/999"
+    if case == "deleted":
+        api.product = None
+    if case == "wrong_shop":
+        api.shop = "different.myshopify.com"
+    if case == "timeout":
+        api.fail_on = VERIFY_DRAFT
+
+    def read(query, variables):
+        assert query in (ACCESS_QUERY, VERIFY_DRAFT, FIND_ATTEMPT_HANDLE)
+        if query == FIND_ATTEMPT_HANDLE:
+            assert variables == {"identifier": {"handle": "nla-cm-42"}}
+            return {"product": api.product if case == "unknown_found" else None}
+        return api(query, variables)
+
+    result = inspect_draft_attempt(ledger, shop=SHOP, cardmarket_id=42, graphql=read)
+    assert result["status"] == expected and result["retryAllowed"] is False
+    assert ledger.read_bytes() == before
+    assert run(tmp_path, api)["status"] == "already_reserved"
+
+
+def test_inspection_missing_ledger_does_not_create_file(tmp_path):
+    ledger = tmp_path / "missing.sqlite"
+    with pytest.raises(sqlite3.OperationalError):
+        inspect_draft_attempt(ledger, shop=SHOP, cardmarket_id=42, graphql=FakeShopify())
+    assert not ledger.exists()
+
+
+def test_inspection_missing_attempt_and_corrupt_request(tmp_path):
+    api = FakeShopify()
+    run(tmp_path, api)
+    ledger = tmp_path / "ledger.sqlite"
+    api.calls.clear()
+    assert inspect_draft_attempt(ledger, shop=SHOP, cardmarket_id=43, graphql=api) == {
+        "status": "no_attempt",
+        "retryAllowed": False,
+    }
+    with closing(sqlite3.connect(ledger)) as db:
+        db.execute("UPDATE draft_attempts SET request_json='{}'")
+        db.commit()
+    with pytest.raises(ValueError, match="digest_mismatch"):
+        inspect_draft_attempt(ledger, shop=SHOP, cardmarket_id=42, graphql=api)
+    assert api.calls == []
 
 
 def test_draft_and_only_new_identity_fields_no_price_stock_or_publication_writes(tmp_path):
