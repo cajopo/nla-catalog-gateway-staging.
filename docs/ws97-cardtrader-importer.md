@@ -87,3 +87,31 @@ projection, title match or unsupported search filter is insufficient.
 The same probe confirms `write_products` remains ungranted. No mutation executed.
 
 Reference: https://shopify.dev/docs/api/admin-graphql/latest/queries/metafieldDefinitions
+
+## Completed full discovery and comparison — 2026-09-25
+
+V2 acquisition finished at11:11:53Z: systemd EXIT0/MainPID0, all2430 expansions
+and256176 source rows captured;37 source anomalies retained. No automatic importer
+or Shopify writes enabled. Full comparison uses the Sep25 09:40:10Z projection,
+manifest7a12429309ce2170ca609d2e399b5e7a0a3f3de9eefb9ab607c014a106d5cfc0,
+containing291795 Shopify products. All source rows are accounted:
+
+| Decision | Source rows |
+| --- | ---: |
+| Existing identity match | 221208 |
+| Absent from supplied snapshot | 4070 |
+| Unclassified category | 17421 |
+| Missing Cardmarket ID | 9149 |
+| Multiple Cardmarket IDs | 3986 |
+| Multiple Shopify products | 3 |
+| Non-card category | 301 |
+| Invalid Cardmarket IDs | 1 |
+| Source export conflict | 37 |
+
+Absent candidates: Magic2168, Pokemon1080, Yu-Gi-Oh474, OnePiece348.
+None is approved for creation by this comparison. Category exceptions retain
+actual category names/counts; other exceptions retain source expansion/row
+provenance. This is not proof of current Shopify absence or serving-runtime health.
+Full private evidence remains on VPS at
+`/var/tmp/nla-cardtrader-discovery-20260925-v2/full-comparison-7a12429309ce.json`;
+do not commit the source or detailed report.
