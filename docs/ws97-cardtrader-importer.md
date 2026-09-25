@@ -115,3 +115,22 @@ provenance. This is not proof of current Shopify absence or serving-runtime heal
 Full private evidence remains on VPS at
 `/var/tmp/nla-cardtrader-discovery-20260925-v2/full-comparison-7a12429309ce.json`;
 do not commit the source or detailed report.
+
+## Recent Shopify identity read — 2026-09-25
+
+`shopify_identity_changes.py` reads products updated since the baseline capture
+start, including active/draft/archived/unlisted products. It reuses the existing
+read-only HTTP transport and reads both existing merchant identity fields. It
+requires complete, consistent cursor pagination; errors or the5000-row cap fail
+without returning partial success. It does not enable filtering on shared fields,
+create products, or treat absence as permission to write. Concurrent writers,
+search indexing lag and metadata timestamp semantics are not solved by this read.
+
+Official reference: https://shopify.dev/docs/api/admin-graphql/latest/queries/products
+The exact query passed schema validation (artifact nla-recent-identities-20260925,
+revision2; revision1 failed because PowerShell stripped quoted string arguments).
+26 focused tests, Ruff and independent review passed. One actual read from capture
+start2026-09-25T09:32:46Z returned one complete empty page; none of the4070 candidate
+IDs was found in that response. This is additional evidence, not fresh atomic
+absence proof. Private report:
+`/var/tmp/nla-cardtrader-discovery-20260925-v2/recent-shopify-identities-20260925.json`.
