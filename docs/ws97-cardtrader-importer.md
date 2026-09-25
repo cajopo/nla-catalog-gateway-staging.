@@ -68,3 +68,22 @@ One-shot discovery V2 preserves every raw response plus indexed anomaly sidecars
 using a new run directory/unit; the failed run is retained. Its eventual complete
 state means acquisition, not import eligibility. Consumers must respect sidecars
 as well as record-level identity checks: sidecars retain requested-export context.
+
+## Shopify identity definitions — read-only inspection
+
+Official schema-validated query executed on 2026-09-25; both namespace pages
+complete (`hasNextPage=false`):
+
+| Existing field | Type | Admin filtering | Unique values |
+| --- | --- | --- | --- |
+| `sync.productid` | `number_integer` | disabled / NOT_FILTERABLE | disabled |
+| `powertools.id` | `single_line_text_field` | disabled / NOT_FILTERABLE | disabled |
+
+Preserve these types and merchant-owned definitions; do not create replacements
+or enable capabilities without authority. A direct metafield-filter query cannot
+currently serve as proof of product absence. Duplicate prevention must use an
+authoritative inventory and account for concurrent PowerTools changes; a stale
+projection, title match or unsupported search filter is insufficient.
+The same probe confirms `write_products` remains ungranted. No mutation executed.
+
+Reference: https://shopify.dev/docs/api/admin-graphql/latest/queries/metafieldDefinitions
