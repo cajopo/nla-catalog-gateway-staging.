@@ -134,3 +134,39 @@ start2026-09-25T09:32:46Z returned one complete empty page; none of the4070 cand
 IDs was found in that response. This is additional evidence, not fresh atomic
 absence proof. Private report:
 `/var/tmp/nla-cardtrader-discovery-20260925-v2/recent-shopify-identities-20260925.json`.
+
+## Disabled draft execution primitive — 2026-09-25
+
+`shopify_draft_import.py` implements one create-only attempt, not a rollout command.
+Default disabled. Requires the matching shop and actual `write_products` scope,
+vetted caller inputs and a reviewed current-identity check (NOT just an empty delta).
+A persistent absolute SQLite ledger reserves both source IDs before any mutation.
+Every prior reservation blocks resend, including failures and uncertain responses;
+the ledger must be preserved/backed up. Valid returned GIDs are retained even when
+other response fields are unexpected. No generic product-update operation exists.
+
+The only writes are `productCreate` with DRAFT plus source image/title and known
+product type, followed by initial `sync.productid`/`powertools.id` through
+`metafieldsSet` with `compareDigest:null` (never overwrite existing values). The
+definitions already exist and are not changed. No price, inventory, language,
+condition, finish or publication writes. Readback checks the created GID, handle,
+DRAFT state, zero aggregate inventory, unpublished Online Store state and identities.
+It does not yet verify asynchronous image readiness or PowerTools interoperability.
+
+Evidence:33 focused tests PASS,100% statement/branch coverage of this new module,
+Ruff/formatPASS. Four operation schema validations PASS (nla-draft-{access,create,
+identities,verify}-20260925 revision1). Independent review findings on persistent
+ledger, early GID recording and final-readback tests corrected. No live mutation.
+Fresh access query confirms the app still lacks `write_products`.
+
+Still required: wire validated source/candidate data and the current duplicate
+check into an operator entry point, reconcile uncertain outcomes without resend,
+run a controlled real draft test, then daily scheduling and the separate publication
+gate. This primitive neither resolves concurrent PowerTools creation nor proves
+automatic new-market ingestion complete. Shopify documents a1000-new-variants/day
+resource limit after50000 variants (subject to plan exceptions); respect the shared
+store budget rather than assuming all4070 candidates can be imported immediately.
+
+References:
+- https://shopify.dev/docs/api/admin-graphql/latest/mutations/productCreate
+- https://shopify.dev/docs/api/admin-graphql/latest/mutations/metafieldsSet
