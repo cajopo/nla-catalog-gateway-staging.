@@ -1,0 +1,24 @@
+# Render the three pinned placeholders before installation; never run this .in file.
+[Unit]
+Description=NLA missing-printing DRAFT cycle and read-only catalog refresh
+Wants=network-online.target
+After=network-online.target docker.service
+
+[Service]
+Type=oneshot
+User=root
+UMask=0077
+WorkingDirectory=@IMPORTER_PACKAGE@
+Environment=PYTHONPATH=@IMPORTER_PACKAGE@/src
+Environment=PYTHONNOUSERSITE=1
+ExecStartPre=/usr/bin/systemctl stop nla-catalog-refresh.timer
+ExecStart=/usr/bin/python3 -m scripts.refresh_market_catalog \
+    --state /opt/nla-staging/importer-state \
+    --refresh-config /opt/nla-staging/operator/catalog-refresh.json \
+    --refresh-package @REFRESH_PACKAGE@ \
+    --ledger /opt/nla-staging/importer-state/draft-attempts.sqlite3 \
+    --cardtrader-credentials /opt/nla-staging/config/cardtrader-api-credentials.json \
+    --generator-sha @IMPORTER_CODE_SHA@ \
+    --max-attempts 100 --max-batches 50 --apply-drafts
+ExecStopPost=/usr/bin/systemctl start nla-catalog-refresh.timer
+TimeoutStartSec=23h

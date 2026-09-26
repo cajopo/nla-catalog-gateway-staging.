@@ -340,7 +340,9 @@ def cycle(
                 break
         else:
             result["completionReason"] = "batch_budget_exhausted"
-        if apply_drafts and any(a["status"] == "draft_verified" for a in result["attempts"]):
+        # Refresh even an empty apply cycle: PowerTools stock/price changes remain
+        # authoritative and must reach the index independently of new printings.
+        if apply_drafts:
             refresh_index(refresh_package, refresh_config)
             _, config = drafts.config_values(refresh_config)
             if refresh.freshness(config)["status"] != "fresh":

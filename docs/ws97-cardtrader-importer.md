@@ -567,3 +567,53 @@ reference selection, empty-batch and freshness contracts, plus identity receipts
 and retention targets. No additional acquisition is needed for this review.
 Not yet deployed or exercised as a live multi-batch cycle; real throughput and
 timer coordination remain operational gates. Publication is not authorized.
+
+## Draft-only recurring unit templates — 2026-09-26
+
+`ops/systemd/nla-market-catalog.{service,timer}.in` are uninstalled templates,
+not an enabled scheduler. Before installation, render `@IMPORTER_PACKAGE@` as the
+absolute verified importer checkout, `@IMPORTER_CODE_SHA@` as its exact 40-hex
+commit, and `@REFRESH_PACKAGE@` as the separately verified refresh checkout
+(currently `/opt/nla-staging/refresh-5176337`). Do not pass an arbitrary branch or
+mutable path as a pin. Verify the installed archives and configuration, render
+the filenames without `.in`, then validate with the VPS's `systemd-analyze verify`
+and `systemd-analyze calendar '*-*-* 02,14:00:00 UTC'` before enabling anything.
+No template rendering or installation is performed by this change.
+
+The fixed existing paths are `/usr/bin/python3`,
+`/opt/nla-staging/operator/catalog-refresh.json`,
+`/opt/nla-staging/importer-state/draft-attempts.sqlite3` and
+`/opt/nla-staging/config/cardtrader-api-credentials.json`. State remains
+`/opt/nla-staging/importer-state`; credentials are read from their private file,
+never embedded in the unit. The explicit budget is 100 attempts per batch and 50 batches;
+this is not a quota or throughput guarantee and does not authorize publication.
+
+The oneshot has a 23h start timeout, no persistent active state and no automatic
+restart. Its pre-start command stops ONLY `nla-catalog-refresh.timer`; its
+post-stop command starts that timer again on success, startup failure or process
+failure. It never stops an existing `nla-catalog-refresh.service`. Existing locks
+and pending markers still reject conflicting/uncertain work; inspect pending
+evidence instead of restarting blindly. The normal timer remains the fallback;
+its already-running service is allowed to finish. The market timer requests
+02:00 and 14:00 UTC, with `Persistent=false` (no missed-run catchup). A running
+market instance is not duplicated by another timer tick. Recovery must be terminal
+and current pending state resolved before initial installation/activation.
+
+Every successful **apply** cycle now performs exactly one final read-only Shopify
+index refresh, even when `run_locked` returns its no-selection `preview` receipt.
+PowerTools price/stock changes must still reach the index without new draft
+creation. An actual preview cycle never refreshes. Uncertain cycles still stop
+before the final refresh and preserve pending evidence.
+
+Official systemd manuals consulted (upstream sources, after rendered manuals
+returned HTTP403):
+
+- https://github.com/systemd/systemd/blob/main/man/systemd.service.xml
+- https://github.com/systemd/systemd/blob/main/man/systemd.timer.xml
+- https://github.com/systemd/systemd/blob/main/man/systemd.time.xml
+
+23 targeted tests PASS; template assertions cover empty apply versus preview,
+the timer-only stop/restore hooks, explicit UTC schedule, no catchup and no restart.
+Independent main-agent review found no blocking findings against the real empty
+batch contract and installed systemd service/timer manuals. Native systemd
+validation remains required before installation; no live timer is enabled by this commit.

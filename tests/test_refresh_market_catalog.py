@@ -226,7 +226,7 @@ def test_live_guard_rejections_do_not_claim_imported_or_loop(setup, monkeypatch)
     result = market.cycle(**args, apply_drafts=True, max_batches=10)
     assert result["status"] == "draft_cycle_partial" and result["remaining"] == 2
     assert result["completionReason"] == "no_verified_progress"
-    assert events.count("batch") == 1 and "refresh" not in events
+    assert events.count("batch") == events.count("refresh") == 1
 
 
 def test_preview_does_not_repeat_same_selection(setup):
@@ -234,6 +234,27 @@ def test_preview_does_not_repeat_same_selection(setup):
     result = market.cycle(**args, max_batches=10)
     assert result["completionReason"] == "preview" and events.count("batch") == 1
     assert "refresh" not in events
+
+
+@pytest.mark.parametrize("apply", [False, True])
+def test_empty_batch_refreshes_only_for_apply_cycle(setup, monkeypatch, apply):
+    args, events, _ = setup
+
+    def empty_batch(*inputs, **kwargs):
+        events.append("batch")
+        # This is run_locked's actual no-selection contract, even with apply=True.
+        return dict(
+            status="preview", candidates=2, skippedExisting=2, selected=0, exceptions=0, attempts=[]
+        )
+
+    monkeypatch.setattr(market.drafts, "run_locked", empty_batch)
+    result = market.cycle(**args, apply_drafts=apply, max_batches=50)
+    assert events.count("batch") == 1
+    assert events.count("refresh") == int(apply)
+    assert result["indexRefreshed"] is apply
+    assert result["remaining"] == 0 and result["attempts"] == []
+    assert result["status"] == ("draft_cycle_complete" if apply else "preview_cycle_complete")
+    assert not (args["state"] / "pending-market-run.json").exists()
 
 
 def test_refresh_subprocess_uses_existing_operator_and_propagates_failure(tmp_path, monkeypatch):
