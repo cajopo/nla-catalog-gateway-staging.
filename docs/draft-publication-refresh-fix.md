@@ -25,3 +25,12 @@ reconciliation and activation are still pending; no completion/CI/merge claim.
 Official documentation consulted before implementation:
 - https://shopify.dev/docs/api/admin-graphql/latest/enums/ProductStatus
 - https://shopify.dev/docs/api/admin-graphql/latest/objects/ResourcePublicationV2
+
+Recovery provenance: activation no longer requires the acquisition revision to
+equal the package producer revision. The original acquisition SHA must still match
+between receipt/checkpoint and be valid; the independently verified package SHA
+must still match the activation plan. Manifest/summary/count/runtime checks are
+unchanged. This permits reprocessing retained exports with the fix without lying
+about their acquisition or exporting again. 122 activation tests PASS (3.16s),
+including distinct valid pins, invalid source pin and existing producer mismatch
+rejection; Ruff PASS and independent static review no blocker.
