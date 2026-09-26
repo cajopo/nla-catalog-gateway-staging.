@@ -9,6 +9,45 @@ language/condition/finish. Gateway/normal refresh stay read-only.
 
 ## Current increment
 
+### Bounded source-to-draft runner — 2026-09-26
+
+`python -m scripts.import_cardtrader_drafts` now connects the existing components:
+complete fresh source -> current pinned projection -> canonical preparation ->
+reference selection -> live identity guard -> durable create-only primitive.
+No new Shopify operation or product writer is introduced. Default is preview;
+`--apply` is explicit and `--max-attempts` defaults to1 (maximum100 per invocation,
+not a promise of store-wide daily quota). Required arguments: `--refresh-config`,
+`--capture`, `--identities`, `--run`, `--ledger`, `--generator-sha`.
+
+Use the existing private persistent ledger, never a new empty replacement. The
+run must be a new path under the ledger's parent; retain it because its reference
+bundle may become an input for future refreshes. The CLI holds the existing
+whole-pipeline lock, rejects pending/stale refresh or unresolved prior attempts,
+and checks the fresh complete identity export before preparation. On apply it
+backs up the current configuration and changes ONLY the reference path and its
+two pins. New reference files/directories are durable before config selection;
+the original reference is preserved. Do not roll back reference additions after
+creating corresponding drafts: doing so would break later reconciliation.
+
+Every attempted draft uses the existing no-resend ledger and current identity
+callback; source age/config selection are checked again at that boundary. All
+products remain DRAFT/unpublished. No existing product, selling price, quantity,
+PowerTools configuration or theme change is added. Uncertain creation stops the
+batch and blocks subsequent runs pending inspection. A ledger backup and private
+result are retained; interruption cannot produce a false complete receipt.
+
+80 focused runner/importer tests PASS. Runner fixtures exercise actual source
+capture, SQLite comparison, reference generation, config selection and SQLite
+ledger with simulated Shopify responses; current identity API guards were tested
+live separately above. Preview, bounded selection, reference-before-write,
+no-resend, missing prerequisites and interruptions covered. Ruff/help/independent
+review PASS after false-success-on-interrupt correction. No new live product write
+or daily timer by this increment. Full orchestration, real runner verification,
+retention and scheduling remain pending; publication is still separately gated.
+
+Documentation rechecked: https://shopify.dev/docs/api/admin-graphql/latest/mutations/productCreate
+(currently2026-07), https://www.cardtrader.com/it/docs/api/full/reference.
+
 ### Repeatable current Shopify identity check — 2026-09-26
 
 `python -m scripts.capture_import_identities` generalizes the successful pilot's
