@@ -459,3 +459,23 @@ No deployment, Shopify mutation, timer or GitHub push for this delta. Existing
 CardTrader capture remains the SAME service/PID184145, last observed1458/2430sets;
 never restart it merely because observation ends. Use its completed output for the
 next positive preview and authorized bounded DRAFT trial.
+
+## Complete-source live trial — 2026-09-26
+
+Installed `bdabf46dffb082a2f1070ca0f5315446d3c502e2` from archive SHA256
+64bedf355e66d4a217a28f6c4bdcb3a0be91d97f752b23a95f1e0c5f013c21ca.
+The retained CardTrader capture completed 2430 sets / 256177 blueprints, 37 source
+anomalies; no second capture. Fresh Shopify identities Bulk12534107799820 completed
+291796 products, started2026-09-26T11:05:10Z. Preview:4065candidates,1existing skipped,
+5preparation exceptions,1selected, no mutations. Its directory is
+/opt/nla-staging/importer-state/preview-complete-source-bdabf46.
+
+One explicit `import_cardtrader_drafts --apply --max-attempts 1` then succeeded:
+CM904085 / blueprint408222, Magic, Dáin Ironfoot - The Duelist Promos [001],
+gid://shopify/Product/16570959921420. Result `batch_complete`, `draft_verified`,
+publishedfalse. Retained run: importer-state/apply-complete-source-bdabf46-one;
+ledger now prevents resend. No pre-existing product changes. Existing canonical
+reference already contained this mapping; configured reference/pins stayed unchanged.
+The normal read-only index refresh was started once afterwards, invocation
+7a1ac08e8ac04759b7ea8bb2a8d62013; completion not yet observed. No recurring market
+timer enabled. Publication remains an unanswered owner gate; full goal not complete.
