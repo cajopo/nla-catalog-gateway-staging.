@@ -93,7 +93,13 @@ def run_locked(
             "SELECT 1 FROM draft_attempts WHERE state != 'draft_verified' LIMIT 1"
         ).fetchone():
             raise ValueError("previous_import_needs_reconciliation")
-    identities.read_fresh_identities(identity_run, config["shop"])
+        recorded = db.execute(
+            "SELECT cardmarket_id,blueprint_id FROM draft_attempts WHERE shop=?",
+            (config["shop"],),
+        ).fetchall()
+    recorded_ids = {str(row[0]) for row in recorded}
+    recorded_blueprints = {row[1] for row in recorded}
+    _, existing_ids = identities.read_fresh_identities(identity_run, config["shop"])
     current = refresh.document(config["run_root"] / "last-success.json")["manifestSha256"]
     if re.fullmatch(r"[0-9a-f]{64}", current) is None:
         raise ValueError("invalid_current_generation")
@@ -116,10 +122,20 @@ def run_locked(
         run / "reference",
         generator_sha,
     )
-    selected = prepared["candidates"][:max_attempts]
+    # New DRAFTs may postdate the projection. Exclude them before the batch
+    # limit, so later cycles advance instead of repeatedly selecting the same ID.
+    excluded_ids = existing_ids | recorded_ids
+    missing = [
+        c
+        for c in prepared["candidates"]
+        if str(c["cardmarketId"]) not in excluded_ids
+        and c["blueprintId"] not in recorded_blueprints
+    ]
+    selected = missing[:max_attempts]
     result = dict(
         status="preview",
         candidates=len(prepared["candidates"]),
+        skippedExisting=len(prepared["candidates"]) - len(missing),
         selected=len(selected),
         exceptions=len(prepared["exceptions"]),
         attempts=[],

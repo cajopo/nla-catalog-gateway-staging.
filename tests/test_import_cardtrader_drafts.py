@@ -140,7 +140,7 @@ def test_default_preview_uses_real_preparation_but_never_writes_shopify_or_confi
     assert not api.calls and not events
 
 
-def test_real_preparation_to_ledger_import_order_and_no_resend(setup):
+def test_real_preparation_to_ledger_import_order_and_no_resend(setup, monkeypatch):
     args, original, api, events = setup
     result = runner.run_locked(**args, apply=True)
     assert result["status"] == "batch_complete" and result["selected"] == 1
@@ -156,9 +156,31 @@ def test_real_preparation_to_ledger_import_order_and_no_resend(setup):
         runner.run_locked(**args, apply=True)
     args["run"] = args["run"].with_name("run-2")
     calls = len(api.calls)
+    selected = []
+
+    def inspect_next(ledger, **kwargs):
+        selected.append(kwargs["cardmarket_id"])
+        return dict(status="not_verified_missing")
+
+    monkeypatch.setattr(runner, "create_draft_once", inspect_next)
     repeated = runner.run_locked(**args, apply=True)
-    assert repeated["attempts"][0]["status"] == "already_reserved"
+    assert repeated["skippedExisting"] == 1 and selected == [43]
     assert len(api.calls) == calls
+
+
+def test_existing_shopify_drafts_are_skipped_before_batch_limit(setup, monkeypatch):
+    args, _, api, _ = setup
+    monkeypatch.setattr(runner.identities, "read_fresh_identities", lambda *_: ({}, {"42"}))
+    selected = []
+
+    def inspect_next(ledger, **kwargs):
+        selected.append(kwargs["cardmarket_id"])
+        return dict(status="not_verified_missing")
+
+    monkeypatch.setattr(runner, "create_draft_once", inspect_next)
+    result = runner.run_locked(**args, apply=True)
+    assert result["skippedExisting"] == 1 and selected == [43]
+    assert not api.calls
 
 
 def test_uncertain_creation_stops_batch_and_blocks_next_run(setup):

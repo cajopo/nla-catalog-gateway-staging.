@@ -439,3 +439,23 @@ Browser access attempted to avoid burdening the owner with app setup. The Codex
 browser is at Shopify's saved-account selection screen; handoff requested. No app
 settings or scopes changed. Required-scope updates need a new app version plus
 merchant approval per official manage-access-scopes documentation.
+
+## Repeatable cycle candidate — 2026-09-26
+
+`scripts/refresh_market_catalog.py` coordinates existing source capture, a single
+retained identity export, bounded draft importer and existing refresh operator.
+Default preview; explicit `--apply-drafts`; no timer installed and no publication.
+Errors retain a pending receipt and prevent blind restart. Retain run directories:
+the selected canonical reference may be inside one. Retention/scheduling and live
+positive-cycle evidence remain outstanding; new-market automation remains OFF.
+
+The batch runner now excludes current Shopify IDs and same-shop verified ledger
+CM/blueprint IDs BEFORE selecting the batch. This prevents repeated selection when
+the projection predates a created draft. Live duplicate guards remain required.
+
+Evidence: 24 targeted runner/coordinator tests PASS (14.78s), Ruff check and format
+check PASS. Independent static review by refresh_recovery_review: no Blocker/High.
+No deployment, Shopify mutation, timer or GitHub push for this delta. Existing
+CardTrader capture remains the SAME service/PID184145, last observed1458/2430sets;
+never restart it merely because observation ends. Use its completed output for the
+next positive preview and authorized bounded DRAFT trial.
