@@ -39,6 +39,22 @@ scheduling are still unfinished.
 Official documentation consulted before implementation:
 https://shopify.dev/docs/apps/build/apis/graphql-admin/bulk-operations/queries
 
+Real read-only verification completed using code038f5292fc730882797d7a652d96140468ed5f64
+in `/opt/nla-staging/importer-038f529` (separate package; normal refresh unchanged).
+Archive SHA25677fe1efeea62fc883e86f8910ea4c5ddd2670016dcdbaea52ca1c7f1ce187e71.
+Bulk12533904965900 completed2026-09-26T10:11:39Z, started10:11:08Z:
+291796 unique products, both identity fields; full counts and file verification PASS.
+File SHA2565c395698ad3ba36922df6a57b02bcf24cca7585612de79e1cc4593178321ca2e.
+Private run `/var/tmp/nla-current-identities-038f529` retains intent, operation,
+completed receipt, identities.jsonl and live-guards.json. Do NOT resubmit this run;
+future use must respect its30minute freshness limit, not pretend it stays current.
+
+Actual guard rejected pilot Cardmarket80236 as already present BEFORE further API
+calls. A different real source candidate904085 passed full snapshot + live shop,
+definition, delta and handle checks. No creation was attempted or approved by this
+probe; old CardTrader source data was used only to select a real test identifier,
+not as current import authorization. All calls/readbacks were read-only.
+
 ### Comparison-to-reference preparation — 2026-09-26
 
 `python -m scripts.prepare_cardtrader_reference` connects the verified capture and
