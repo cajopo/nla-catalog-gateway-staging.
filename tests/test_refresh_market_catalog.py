@@ -17,6 +17,7 @@ def setup(tmp_path, monkeypatch):
     monkeypatch.setattr(market.activation, "sync_directory", lambda _: None)
     monkeypatch.setattr(market.refresh, "pipeline_lock", lambda _: nullcontext())
     monkeypatch.setattr(market.drafts, "config_values", lambda _: ({}, config))
+    monkeypatch.setattr(market, "prune_completed_inputs", lambda *_: 0)
     monkeypatch.setattr(market.shutil, "disk_usage", lambda _: SimpleNamespace(free=10 * 1024**3))
     monkeypatch.setattr(market.refresh, "freshness", lambda _: {"status": "fresh"})
     behavior = dict(fail=None, identity_calls=0, batch_status="batch_complete")

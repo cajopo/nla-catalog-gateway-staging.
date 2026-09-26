@@ -9,6 +9,7 @@ import json
 import os
 import re
 import shutil
+import stat
 import subprocess
 import sys
 import time
@@ -22,6 +23,98 @@ from scripts import activate_staging_refresh as activation
 from scripts import capture_import_identities as identities
 from scripts import import_cardtrader_drafts as drafts
 from scripts import refresh_staging_catalog as refresh
+
+
+def prune_completed_inputs(state, config_path):
+    """Caller holds both locks. Keep receipts, ledger, latest two and reference rollback.
+
+    Delete only named large input files, never directories or incomplete cycles.
+    Old retained manifests describe intentionally expired raw inputs, not reusable captures.
+    """
+    raw, config = drafts.config_values(config_path)
+    if (state / "pending-market-run.json").exists() or (
+        config["run_root"] / "pending-run.json"
+    ).exists():
+        raise ValueError("retention_requires_idle_pipelines")
+    if state.resolve() != state or not state.is_dir():
+        raise ValueError("noncanonical_retention_state")
+    runs = []
+    for run in sorted(state.iterdir()):
+        if re.fullmatch(r"market-\d{8}t\d{6}z-[0-9a-f]{8}", run.name) is None:
+            continue
+        if run.resolve() != run or not (run / "completed.json").is_file():
+            raise ValueError("market_run_requires_inspection_before_retention")
+        receipt = refresh.document(run / "completed.json")
+        if receipt["run"] != run.name or receipt["status"] not in (
+            "draft_cycle_complete",
+            "preview_cycle_complete",
+        ):
+            raise ValueError("invalid_completed_market_run")
+        runs.append(run)
+    if len(runs) <= 2:
+        return 0
+    keep = set(runs[-2:])
+    current_reference = config["reference"]
+    keep.update(run for run in runs if current_reference.is_relative_to(run))
+    # Protect the before-reference of retained runs, once (not their entire history).
+    for run in tuple(keep):
+        before = run / "batch/refresh-config.before.json"
+        if before.exists():
+            reference = Path(refresh.document(before)["reference"])
+            keep.update(old for old in runs if reference.is_relative_to(old))
+    removed = 0
+    for run in runs:
+        if run in keep:
+            continue
+        targets = [
+            p
+            for p in (run / "source").glob("blueprints-*.json")
+            if re.fullmatch(r"blueprints-[1-9][0-9]*\.json", p.name)
+        ]
+        targets.extend(
+            run / name
+            for name in (
+                "identities/identities.jsonl",
+                "batch/ledger-after.sqlite3",
+                "batch/reference/bundle/canonical-names.v1.jsonl",
+            )
+            if os.path.lexists(run / name)
+        )
+        checked = {}
+        for path in targets:
+            facts = path.lstat()
+            if (
+                path.resolve() != path
+                or not path.is_relative_to(run)
+                or not stat.S_ISREG(facts.st_mode)
+                or facts.st_nlink != 1
+                or facts.st_dev != state.stat().st_dev
+                or (os.name == "posix" and facts.st_uid != os.geteuid())
+            ):
+                raise ValueError("unsafe_expired_market_input")
+            checked[path] = facts
+        if not checked:
+            continue
+        if refresh.document(config_path) != raw:
+            raise ValueError("configuration_changed_during_retention")
+        for path, facts in checked.items():
+            if path.resolve() != path or path.lstat() != facts:
+                raise ValueError("expired_market_input_changed")
+            path.unlink()
+        for parent in {p.parent for p in checked}:
+            activation.sync_directory(parent)
+        refresh.publish(
+            run / "pruned-inputs.json",
+            dict(
+                prunedAt=refresh.timestamp(),
+                files=len(checked),
+                bytes=sum(f.st_size for f in checked.values()),
+                receiptsRetained=True,
+            ),
+            replace=True,
+        )
+        removed += len(checked)
+    return removed
 
 
 def refresh_index(package, config_path):
@@ -81,6 +174,9 @@ def cycle(
     marker = state / "pending-market-run.json"
     if marker.exists():
         raise ValueError("previous_market_cycle_requires_inspection")
+    _, config = drafts.config_values(refresh_config)
+    with refresh.pipeline_lock(config["run_root"]):
+        prune_completed_inputs(state, refresh_config)
     if shutil.disk_usage(state).free < 6 * 1024**3:
         raise ValueError("insufficient_market_cycle_space")
     name = (

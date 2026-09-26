@@ -479,3 +479,28 @@ reference already contained this mapping; configured reference/pins stayed uncha
 The normal read-only index refresh was started once afterwards, invocation
 7a1ac08e8ac04759b7ea8bb2a8d62013; completion not yet observed. No recurring market
 timer enabled. Publication remains an unanswered owner gate; full goal not complete.
+
+## Bounded raw-input retention — 2026-09-26
+
+Before a new market cycle's disk-reserve check, under both existing pipeline locks,
+prune only large named inputs of completed `market-*` cycles. Keep the latest two
+cycles, the configured canonical-reference owner, and the direct before-reference
+owners of those retained cycles. Incomplete cycles or pending refreshes stop pruning.
+Targets are blueprint payloads, the identity JSONL, the per-batch ledger backup and
+unused canonical sidecars. Permanent ledger, completion/source manifests, source
+anomalies, preparation/candidate/exception reports and manual pilot directories stay.
+No directory is recursively removed. Canonical paths, file ownership/type, single
+links and unchanged file identity/configuration are checked before unlinking.
+
+Expired raw inputs are not recoverable from these receipts and are not reusable
+captures. The source manifest retains their hashes; ordinary future cycles acquire
+their own current source. An interrupted cleanup can leave only part of the old
+inputs removed; repeat cleanup skips missing files and never recreates products.
+The compact pruning receipt is written after removal, so a crash before that write
+can omit that housekeeping receipt (source manifests and importer ledger remain).
+
+Official Python filesystem documentation consulted before implementation:
+https://docs.python.org/3.12/library/shutil.html#shutil.rmtree . Individual named-file
+unlinking avoids recursive deletion of directories containing operational evidence.
+21 targeted retention/coordinator tests PASS (2.25s), independent static review no
+blocker. No production cleanup, timer activation, Shopify mutation or GitHub push.
