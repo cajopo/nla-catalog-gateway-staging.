@@ -1,0 +1,12 @@
+# All product statuses; no title matching or metafield search filter.
+query NlaImportIdentitySnapshot {
+  products(sortKey: ID) {
+    edges {
+      node {
+        id
+        syncProductId: metafield(namespace: "sync", key: "productid") { type value }
+        powertoolsId: metafield(namespace: "powertools", key: "id") { type value }
+      }
+    }
+  }
+}

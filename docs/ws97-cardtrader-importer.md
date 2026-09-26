@@ -9,6 +9,36 @@ language/condition/finish. Gateway/normal refresh stay read-only.
 
 ## Current increment
 
+### Repeatable current Shopify identity check — 2026-09-26
+
+`python -m scripts.capture_import_identities` generalizes the successful pilot's
+complete all-status, both-identity-field Bulk export. Required: `--shop`,
+`--credential-file`, `--run-root` (the existing refresh pipeline lock directory),
+`--output` (new private run directory). Run on Linux from the installed package root.
+Each call starts or polls the same saved operation; unknown submission outcomes
+retain intent and cannot resend. Failed/partial downloads require inspection, not
+automatic resubmission. No signed URL is saved in receipts or printed.
+
+Exact independent counts before/after, query/operation identity, all row types,
+unique product GIDs and SHA256 are checked. `read_fresh_identities` rechecks the
+receipt and complete file and rejects exports older than30minutes from capture
+start. `verify_missing` is reusable as the existing draft primitive's callback:
+checks both identifiers, actual shop and existing definitions, recent changes,
+and the deterministic handle. Absence is not atomic against PowerTools; it does
+not authorize publication or bypass source/reference gates. No metafield search
+filter, definition mutation or modification of an existing product is introduced.
+
+46 targeted export/preflight/recent-identity tests PASS; Ruff and CLI smoke PASS.
+Both actual GraphQL queries passed official schema validation, revision1:
+`nla-repeatable-identities-snapshot-20260926` and
+`nla-repeatable-identities-definition-20260926`. Independent review required syncing
+the new run's parent directory before API calls; fixed and regression-tested.
+Live check recorded below when performed. Source-to-draft orchestration and
+scheduling are still unfinished.
+
+Official documentation consulted before implementation:
+https://shopify.dev/docs/apps/build/apis/graphql-admin/bulk-operations/queries
+
 ### Comparison-to-reference preparation — 2026-09-26
 
 `python -m scripts.prepare_cardtrader_reference` connects the verified capture and

@@ -1,0 +1,6 @@
+query NlaImportIdentityDefinition($namespace: String!, $key: String!) {
+  metafieldDefinitions(first: 2, ownerType: PRODUCT, namespace: $namespace, key: $key) {
+    nodes { namespace key type { name } }
+    pageInfo { hasNextPage }
+  }
+}
