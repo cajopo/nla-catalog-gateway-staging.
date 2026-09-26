@@ -147,6 +147,7 @@ def run_locked(
         refresh.publish(run / "result.json", result)
         return result
 
+    verify_identity = identities.missing_guard(identity_run, config["shop"], client.graphql)
     reference = Path(prepared["reference"])
     reference_sha = prepared["referenceEvidence"]["manifestSha256"]
     reference_manifest = load_canonical_names_manifest(
@@ -176,9 +177,7 @@ def run_locked(
         ).total_seconds()
         if not 0 <= age <= 86400 or refresh.document(config_path) != updated:
             raise ValueError("source_stale_or_reference_not_selected")
-        return identities.verify_missing(
-            identity_run, config["shop"], cardmarket_id, client.graphql
-        )
+        return verify_identity(cardmarket_id)
 
     try:
         for candidate in selected:

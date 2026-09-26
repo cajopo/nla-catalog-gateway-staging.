@@ -25,6 +25,13 @@ def setup(tmp_path, monkeypatch):
     monkeypatch.setattr(runner.refresh, "document", lambda p: json.loads(p.read_bytes()))
     monkeypatch.setattr(runner.refresh, "freshness", lambda _: {"status": "fresh"})
     monkeypatch.setattr(runner.identities, "read_fresh_identities", lambda *_: ({}, set()))
+    monkeypatch.setattr(
+        runner.identities,
+        "missing_guard",
+        lambda work, shop, graphql: (
+            lambda identifier: runner.identities.verify_missing(work, shop, identifier, graphql)
+        ),
+    )
     monkeypatch.setattr(cardtrader_capture.time, "sleep", lambda _: None)
     monkeypatch.setattr(
         cardtrader_capture.shutil, "disk_usage", lambda _: SimpleNamespace(free=8 * 1024**3)

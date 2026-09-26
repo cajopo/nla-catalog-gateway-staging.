@@ -510,3 +510,22 @@ document reads, both locks, eight named fixture deletions, active/latest retenti
 idempotent repeat and pending-cycle rejection. ProductionDataChanged=false.
 Fixture evidence: /var/tmp/nla-retention-proof-8777eb3-0aoain7k and
 /var/tmp/nla-retention-fixtures-8777eb3-h5g81r68. No dependency installation needed.
+
+## Reuse validated identity baseline within a batch — 2026-09-26
+
+The per-product guard previously rescanned the complete identity JSONL for every
+candidate. `missing_guard` now fully validates it once when a batch guard is built;
+the runner still separately reads it for initial candidate exclusion (two full
+scans per batch, not per product). Before AND after each live check it rechecks
+canonical regular single-link paths and inode/device/mode/owner/size/mtime/ctime of
+all four snapshot files, and the unchanged 30-minute age limit. No global cache.
+Shop, metadata definitions, recent Shopify identity changes and deterministic
+handle remain queried separately for every candidate; remote results are not cached.
+Standalone `verify_missing` remains compatible and builds a fresh one-call guard.
+No API/query/scopes/publication behavior changed.
+
+38 identity/runner tests PASS14.54s, Ruff/formatPASS, independent static review no
+blocker. Regressions cover scan-once/live-delta-not-cached, all four local files,
+expiry before network and mutation during network. Not deployed or run live yet.
+This removes repeated work needed before multi-batch orchestration; the cycle's
+one-batch maximum remains unchanged and does not yet clear the full backlog.

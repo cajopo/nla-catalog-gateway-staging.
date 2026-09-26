@@ -207,6 +207,69 @@ def test_live_guards_of_fresh_snapshot(setup, guard):
     assert not any("productCreate" in q or "metafieldsSet" in q for q in client.calls)
 
 
+def test_batch_guard_scans_once_but_live_changes_are_not_cached(setup, monkeypatch):
+    client, work = setup
+    complete(client, work)
+    original = capture.scan_identities
+    scans = []
+
+    def scan(*args):
+        scans.append(1)
+        return original(*args)
+
+    monkeypatch.setattr(capture, "scan_identities", scan)
+    guard = capture.missing_guard(work, SHOP, client.graphql)
+    assert guard(42) is True
+    client.guard = "delta_duplicate"
+    assert guard(42) is False
+    assert scans == [1]
+    assert client.calls.count(RECENT_IDENTITIES_QUERY) == 2
+
+
+@pytest.mark.parametrize(
+    "filename", ["identities.jsonl", "completed.json", "intent.json", "operation.json"]
+)
+def test_batch_guard_rejects_changed_files_before_network(setup, filename):
+    client, work = setup
+    complete(client, work)
+    guard = capture.missing_guard(work, SHOP, client.graphql)
+    (work / filename).write_text("changed")
+    before = len(client.calls)
+    with pytest.raises(ValueError, match="identity_snapshot_changed"):
+        guard(42)
+    assert len(client.calls) == before
+
+
+def test_batch_guard_rejects_expiry_without_network(setup, monkeypatch):
+    client, work = setup
+    complete(client, work)
+    guard = capture.missing_guard(work, SHOP, client.graphql)
+
+    class Later(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return datetime.now(tz) + timedelta(seconds=1801)
+
+    monkeypatch.setattr(capture, "datetime", Later)
+    before = len(client.calls)
+    with pytest.raises(ValueError, match="identity_export_stale"):
+        guard(42)
+    assert len(client.calls) == before
+
+
+def test_batch_guard_checks_local_snapshot_again_after_network(setup):
+    client, work = setup
+    complete(client, work)
+
+    def changed_during_query(query, variables):
+        (work / "identities.jsonl").write_text("changed during network")
+        return client.graphql(query, variables)
+
+    guard = capture.missing_guard(work, SHOP, changed_during_query)
+    with pytest.raises(ValueError, match="identity_snapshot_changed"):
+        guard(42)
+
+
 def test_scanner_rejects_duplicate_product_rows(setup):
     client, work = setup
     work.mkdir()
