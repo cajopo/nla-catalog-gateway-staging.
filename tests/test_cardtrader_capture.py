@@ -1,6 +1,7 @@
 import hashlib
 import json
 from copy import deepcopy
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -15,14 +16,26 @@ class Source:
         self.calls = []
         self.games = [{"id": i} for i in (1, 4, 5, 15)]
         self.expansions = [{"id": i, "game_id": i} for i in (15, 5, 4, 1)]
-        self.rows = {i: [{"id": i * 10, "game_id": i, "expansion_id": i}] for i in (1, 4, 5, 15)}
+        self.categories = [{"id": i, "game_id": i, "name": f"Game{i}"} for i in (1, 4, 5, 15)]
+        self.rows = {
+            i: [
+                {
+                    "id": i * 10,
+                    "game_id": i,
+                    "expansion_id": i,
+                    "category_id": i,
+                    "card_market_ids": [i * 100],
+                }
+            ]
+            for i in (1, 4, 5, 15)
+        }
 
     def collection(self, kind, **kwargs):
         self.calls.append((kind, kwargs))
         if kind == "games":
             return deepcopy(self.games)
         if kind == "categories":
-            return []
+            return deepcopy(self.categories)
         if kind == "expansions":
             return deepcopy(self.expansions)
         return deepcopy(self.rows[kwargs["expansion_id"]])
@@ -125,3 +138,123 @@ def test_failed_capture_retains_evidence_without_secret_in_progress(tmp_path, mo
 def test_absolute_new_directory_required():
     with pytest.raises(ValueError, match="absolute_capture_directory_required"):
         capture.capture_catalog(Source(), Path("relative"))
+
+
+def test_capture_to_comparison_accounts_all_rows_and_preserves_provenance(tmp_path):
+    api = Source()
+    root = tmp_path / "run"
+    api.rows[4][0]["game_id"] = 5
+    capture.capture_catalog(api, root)
+    mapping = {i: (i, f"Game{i}", "single") for i in (1, 4, 5, 15)}
+    products = [
+        dict(
+            productGid="gid://shopify/Product/1",
+            game="magic",
+            productFamily="single",
+            syncSourceId="100",
+            powerToolsSourceId="100",
+        )
+    ]
+    result = capture.compare_captured_catalog(root, products, mapping)
+    assert result["sourceRows"] == 4 and result["sourceAnomalyCount"] == 1
+    assert result["creationApproved"] is False and result["shopifyChanged"] is False
+    assert [r["decision"] for r in result["details"]] == [
+        "existing_identity_match",
+        "source_export_conflict",
+        "absent_from_supplied_snapshot",
+        "absent_from_supplied_snapshot",
+    ]
+    assert [(r["sourceExpansionId"], r["sourceRowIndex"]) for r in result["details"]] == [
+        (1, 0),
+        (4, 0),
+        (5, 0),
+        (15, 0),
+    ]
+    assert all(r["creationApproved"] is False for r in result["details"])
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        "partial",
+        "stale",
+        "counts",
+        "hash",
+        "bytes",
+        "extra_file",
+        "missing_file",
+        "mapping",
+        "invalid_expansion",
+        "anomaly",
+        "progress_changed",
+        "missing_games",
+        "too_big",
+        "storage_limit",
+        "relative",
+    ],
+)
+def test_comparison_rejects_untrusted_or_incomplete_capture(tmp_path, monkeypatch, case):
+    api = Source()
+    root = tmp_path / "run"
+    if case == "anomaly":
+        api.rows[4][0]["game_id"] = 5
+    capture.capture_catalog(api, root)
+    path = root / "progress.json"
+    progress = json.loads(path.read_bytes())
+    mapping = {i: (i, f"Game{i}", "single") for i in (1, 4, 5, 15)}
+    kwargs = {}
+
+    def replace_source(name, value):
+        encoded = json.dumps(value).encode()
+        (root / name).write_bytes(encoded)
+        old = progress["files"][name]["bytes"]
+        progress["files"][name] = {
+            "sha256": hashlib.sha256(encoded).hexdigest(),
+            "bytes": len(encoded),
+        }
+        progress["bytes"] += len(encoded) - old
+
+    if case == "partial":
+        progress["status"] = "running"
+    if case == "stale":
+        kwargs["now"] = datetime.now(UTC) + timedelta(days=2)
+    if case == "counts":
+        progress["blueprints"] += 1
+    if case == "hash":
+        progress["files"]["games.json"]["sha256"] = "0" * 64
+    if case == "bytes":
+        progress["files"]["games.json"]["bytes"] += 1
+    if case == "extra_file":
+        progress["files"]["unexpected.json"] = {"sha256": "0" * 64, "bytes": 0}
+    if case == "missing_file":
+        (root / "blueprints-1.json").unlink()
+    if case == "mapping":
+        mapping[1] = (1, "Changed", "single")
+    if case == "invalid_expansion":
+        replace_source("expansions.json", [api.expansions[0]])
+    if case == "anomaly":
+        replace_source("anomalies-4.json", [])
+    if case == "missing_games":
+        replace_source("games.json", [])
+    if case == "too_big":
+        monkeypatch.setattr(capture, "MAX_RESPONSE_BYTES", 1)
+    if case == "storage_limit":
+        monkeypatch.setattr(capture, "MAX_BYTES", 1)
+    path.write_text(json.dumps(progress))
+    if case == "progress_changed":
+        original = Path.read_bytes
+        calls = 0
+
+        def read(p):
+            nonlocal calls
+            if p == path:
+                calls += 1
+                if calls == 2:
+                    return b"{}"
+            return original(p)
+
+        monkeypatch.setattr(Path, "read_bytes", read)
+    with pytest.raises((ValueError, KeyError, FileNotFoundError)):
+        capture.compare_captured_catalog(
+            Path("relative") if case == "relative" else root, [], mapping, **kwargs
+        )

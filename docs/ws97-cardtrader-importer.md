@@ -9,6 +9,27 @@ language/condition/finish. Gateway/normal refresh stay read-only.
 
 ## Current increment
 
+### Capture-to-comparison integration — 2026-09-26
+
+`compare_captured_catalog` verifies completion,24h source age, every source file
+hash/size, expansion/row/anomaly counts and exact anomaly sidecars before invoking
+the existing global identity comparison. It retains source expansion/row provenance
+and quarantines export conflicts. Unknown categories remain reportable. Only the
+five identity fields are retained across expansions to avoid retaining all media
+and property descriptions in memory.
+
+`scripts/compare_cardtrader_catalog.py` reads a checksum-pinned SQLite projection
+using mode=ro/query_only, rejects journal/WAL/SHM inputs, checks the checksum again,
+and writes a new private report without overwriting prior evidence. It explicitly
+reports the projection timestamp and scope; absence is NOT a current Shopify check
+or creation approval. New and ambiguous rows do not cause any Shopify writes.
+
+78 focused capture/comparison/CLI tests PASS, including capture -> real SQLite ->
+comparison-report integration on synthetic fixtures; capture module100% statement
+and branch coverage. Ruff and independent review PASS. Not deployed; no live
+network run or source-to-store automation was enabled. Official SQLite URI
+reference: https://docs.python.org/3/library/sqlite3.html#how-to-work-with-sqlite-uris
+
 ### Repeatable read-only source capture — 2026-09-26
 
 `scripts/capture_cardtrader_catalog.py` invokes the GET-only transport through
