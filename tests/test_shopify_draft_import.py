@@ -1,3 +1,5 @@
+import hashlib
+import json
 import sqlite3
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import closing
@@ -11,6 +13,7 @@ from nla_catalog_gateway.shopify_draft_import import (
     ACCESS_QUERY,
     CREATE_DRAFT,
     FIND_ATTEMPT_HANDLE,
+    INITIALIZE_VARIANT,
     SET_IDENTITIES,
     VERIFY_DRAFT,
     create_draft_once,
@@ -34,6 +37,22 @@ class FakeShopify:
             "status": "DRAFT",
             "totalInventory": 0,
             "publishedAt": None,
+            "variants": {
+                "nodes": [
+                    {
+                        "id": "gid://shopify/ProductVariant/456",
+                        "price": "0.00",
+                        "inventoryQuantity": 0,
+                        "inventoryPolicy": "DENY",
+                        "inventoryItem": {
+                            "id": "gid://shopify/InventoryItem/789",
+                            "tracked": False,
+                        },
+                        "selectedOptions": [{"name": "Title", "value": "Default Title"}],
+                    }
+                ],
+                "pageInfo": {"hasNextPage": False},
+            },
         }
 
     def __call__(self, query, variables):
@@ -54,6 +73,16 @@ class FakeShopify:
             self.product["syncProductId"] = {"type": "number_integer", "value": "42"}
             self.product["powertoolsId"] = {"type": "single_line_text_field", "value": "42"}
             return {"metafieldsSet": {"userErrors": errors}}
+        if query == INITIALIZE_VARIANT:
+            variant = self.product["variants"]["nodes"][0]
+            variant["inventoryItem"]["tracked"] = True
+            return {
+                "productVariantsBulkUpdate": {
+                    "product": {"id": self.product["id"]},
+                    "productVariants": [{"id": variant["id"]}],
+                    "userErrors": errors,
+                }
+            }
         assert query == VERIFY_DRAFT
         return {"product": deepcopy(self.product)}
 
@@ -158,7 +187,14 @@ def test_inspection_missing_attempt_and_corrupt_request(tmp_path):
 def test_draft_and_only_new_identity_fields_no_price_stock_or_publication_writes(tmp_path):
     api = FakeShopify()
     assert run(tmp_path, api) == {"status": "draft_verified", "productGid": GID, "published": False}
-    assert [q for q, _ in api.calls] == [ACCESS_QUERY, CREATE_DRAFT, SET_IDENTITIES, VERIFY_DRAFT]
+    assert [q for q, _ in api.calls] == [
+        ACCESS_QUERY,
+        CREATE_DRAFT,
+        SET_IDENTITIES,
+        VERIFY_DRAFT,
+        INITIALIZE_VARIANT,
+        VERIFY_DRAFT,
+    ]
     assert api.calls[1][1]["product"] == {
         "title": "Card name",
         "productType": "Magic Single",
@@ -168,10 +204,20 @@ def test_draft_and_only_new_identity_fields_no_price_stock_or_publication_writes
     for field in api.calls[2][1]["metafields"]:
         assert field["ownerId"] == GID and field["compareDigest"] is None
     assert run(tmp_path, api)["status"] == "already_reserved"
-    assert len(api.calls) == 4
+    assert api.calls[4][1] == {
+        "productId": GID,
+        "variants": [
+            {
+                "id": "gid://shopify/ProductVariant/456",
+                "inventoryPolicy": "DENY",
+                "inventoryItem": {"tracked": True},
+            }
+        ],
+    }
+    assert len(api.calls) == 6
 
 
-@pytest.mark.parametrize("query", [CREATE_DRAFT, SET_IDENTITIES, VERIFY_DRAFT])
+@pytest.mark.parametrize("query", [CREATE_DRAFT, SET_IDENTITIES, VERIFY_DRAFT, INITIALIZE_VARIANT])
 def test_ambiguous_outcome_never_resends(tmp_path, query):
     api = FakeShopify()
     api.fail_on = query
@@ -184,7 +230,7 @@ def test_ambiguous_outcome_never_resends(tmp_path, query):
         assert "remote response" not in request
 
 
-@pytest.mark.parametrize("query", [CREATE_DRAFT, SET_IDENTITIES])
+@pytest.mark.parametrize("query", [CREATE_DRAFT, SET_IDENTITIES, INITIALIZE_VARIANT])
 def test_mutation_user_errors_do_not_allow_retry(tmp_path, query):
     api = FakeShopify()
     api.errors_on = query
@@ -281,7 +327,7 @@ def test_changed_mapping_or_payload_never_reuses_reserved_identity(tmp_path):
     assert run(tmp_path, api, blueprint_id=10)["status"] == "already_reserved"
     assert run(tmp_path, api, cardmarket_id=43)["status"] == "already_reserved"
     assert run(tmp_path, api, title="Changed")["status"] == "already_reserved"
-    assert len(api.calls) == 4
+    assert len(api.calls) == 6
 
 
 @pytest.mark.parametrize(
@@ -326,3 +372,144 @@ def test_concurrent_attempts_create_once(tmp_path):
         results = [f.result(timeout=10) for f in futures]
     assert {r["status"] for r in results} == {"draft_verified", "already_reserved"}
     assert sum(q == CREATE_DRAFT for q, _ in api.calls) == 1
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"id": "gid://shopify/Product/456"},
+        {"price": "1.00"},
+        {"inventoryQuantity": 1},
+        {"inventoryQuantity": False},
+        {"inventoryPolicy": "CONTINUE"},
+        {"selectedOptions": []},
+        {"inventoryItem": {"id": "gid://shopify/InventoryItem/789", "tracked": 0}},
+        {"inventoryItem": {"id": "wrong", "tracked": False}},
+    ],
+)
+def test_changed_default_variant_is_not_initialized(tmp_path, change):
+    api = FakeShopify()
+    api.product["variants"]["nodes"][0].update(change)
+    assert run(tmp_path, api)["status"] == "needs_reconciliation"
+    assert not any(q == INITIALIZE_VARIANT for q, _ in api.calls)
+    before = len(api.calls)
+    assert run(tmp_path, api)["status"] == "already_reserved"
+    assert len(api.calls) == before
+
+
+@pytest.mark.parametrize("case", ["empty", "multiple", "more_pages"])
+def test_only_one_complete_default_variant_can_be_initialized(tmp_path, case):
+    api = FakeShopify()
+    connection = api.product["variants"]
+    if case == "empty":
+        connection["nodes"] = []
+    elif case == "multiple":
+        connection["nodes"].append(deepcopy(connection["nodes"][0]))
+    else:
+        connection["pageInfo"]["hasNextPage"] = True
+    assert run(tmp_path, api)["status"] == "needs_reconciliation"
+    assert not any(q == INITIALIZE_VARIANT for q, _ in api.calls)
+
+
+def test_already_tracked_safe_default_needs_no_variant_write(tmp_path):
+    api = FakeShopify()
+    api.product["variants"]["nodes"][0]["inventoryItem"]["tracked"] = True
+    assert run(tmp_path, api)["status"] == "draft_verified"
+    assert not any(q == INITIALIZE_VARIANT for q, _ in api.calls)
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        "wrong_product",
+        "wrong_variant",
+        "after_price",
+        "after_tracking",
+        "after_identity",
+        "after_status",
+        "after_timeout",
+        "interrupt",
+    ],
+)
+def test_initialization_uncertainty_never_retries_or_reports_verified(tmp_path, case):
+    api = FakeShopify()
+    initialized = False
+
+    def graphql(query, variables):
+        nonlocal initialized
+        if query == VERIFY_DRAFT and initialized and case == "after_timeout":
+            raise TimeoutError()
+        result = api(query, variables)
+        if query == INITIALIZE_VARIANT:
+            initialized = True
+            if case == "interrupt":
+                raise KeyboardInterrupt()
+            if case == "wrong_product":
+                result["productVariantsBulkUpdate"]["product"]["id"] = "gid://shopify/Product/999"
+            if case == "wrong_variant":
+                result["productVariantsBulkUpdate"]["productVariants"] = []
+        if query == VERIFY_DRAFT and initialized:
+            p = result["product"]
+            if case == "after_price":
+                p["variants"]["nodes"][0]["price"] = "1.00"
+            if case == "after_tracking":
+                p["variants"]["nodes"][0]["inventoryItem"]["tracked"] = False
+            if case == "after_identity":
+                p["syncProductId"] = None
+            if case == "after_status":
+                p["status"] = "ACTIVE"
+        return result
+
+    if case == "interrupt":
+        with pytest.raises(KeyboardInterrupt):
+            run(tmp_path, graphql)
+    else:
+        assert run(tmp_path, graphql)["status"] == "needs_reconciliation"
+    count = len(api.calls)
+    blocked = run(tmp_path, api)
+    assert blocked["status"] == "already_reserved" and blocked["productGid"] == GID
+    assert len(api.calls) == count
+
+
+@pytest.mark.parametrize(
+    "case", ["relative_ledger", "invalid_identity", "corrupt_handle", "invalid_lookup"]
+)
+def test_inspection_rejects_invalid_identity_evidence(tmp_path, case):
+    api = FakeShopify()
+    run(tmp_path, api)
+    ledger = tmp_path / "ledger.sqlite"
+    if case == "relative_ledger":
+        with pytest.raises(ValueError, match="persistent_absolute"):
+            inspect_draft_attempt(Path("relative"), shop=SHOP, cardmarket_id=42, graphql=api)
+        return
+    if case == "invalid_identity":
+        with pytest.raises(ValueError, match="invalid_import_identity"):
+            inspect_draft_attempt(ledger, shop=SHOP, cardmarket_id=True, graphql=api)
+        return
+    with closing(sqlite3.connect(ledger)) as db:
+        if case == "corrupt_handle":
+            encoded = db.execute("SELECT request_json FROM draft_attempts").fetchone()[0]
+            request = json.loads(encoded)
+            request["variables"]["product"]["handle"] = "other"
+            encoded = json.dumps(request)
+            db.execute(
+                "UPDATE draft_attempts SET request_json=?,request_sha256=?",
+                (encoded, hashlib.sha256(encoded.encode()).hexdigest()),
+            )
+        else:
+            db.execute("UPDATE draft_attempts SET product_gid=NULL")
+        db.commit()
+    if case == "corrupt_handle":
+        with pytest.raises(ValueError, match="attempt_handle_mismatch"):
+            inspect_draft_attempt(ledger, shop=SHOP, cardmarket_id=42, graphql=api)
+    else:
+
+        def graphql(query, variables):
+            if query == FIND_ATTEMPT_HANDLE:
+                return {"product": {"handle": "nla-cm-42", "id": "invalid"}}
+            return api(query, variables)
+
+        assert (
+            inspect_draft_attempt(ledger, shop=SHOP, cardmarket_id=42, graphql=graphql)["status"]
+            == "inspection_unconfirmed"
+        )

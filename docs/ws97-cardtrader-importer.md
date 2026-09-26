@@ -9,6 +9,36 @@ language/condition/finish. Gateway/normal refresh stay read-only.
 
 ## Current increment
 
+### Safe initial default variant — 2026-09-26
+
+The real single-draft pilot exposed a Shopify default: quantity zero and DENY,
+but inventory tracking disabled. Its initial tracking was completed under the
+create-only exception; it remains DRAFT and unpublished. No price was supplied.
+
+The execution primitive now performs that initialization for future newly created
+drafts, within the existing durable attempt. It only accepts one complete default
+variant with zero quantity, DENY, unchanged default options and Shopify's default
+zero price. Unexpected state requires reconciliation, not correction. The only new
+mutation sets `inventoryItem.tracked:true` and DENY on the variant read from the
+product returned by this call's creation response. No quantity, price, option,
+publication or pre-existing-product mutation is added. A complete readback must
+equal the pre-initialization state except for tracking. Existing reservations still
+block every retry, including an interruption after the initialization write.
+
+Evidence:70 focused importer tests PASS (including response mismatch, interrupted
+write/readback, changed variants, no-resend and recovery guards); 100% statement
+and branch coverage of this module only. Ruff check/format and independent review
+PASS, no Blocker/High findings. Actual source
+operations schema validated: `nla-initial-variant-verify_draft` and
+`nla-initial-variant-initialize_variant`, revision1, Shopify2026-07. This increment
+is local, not deployed; automatic new-market ingestion remains OFF. Publication,
+media readiness and PowerTools interoperability remain separate gates.
+
+Official documentation used before implementation:
+- https://shopify.dev/docs/api/admin-graphql/2026-07/mutations/productVariantsBulkUpdate
+- https://shopify.dev/docs/api/admin-graphql/latest/input-objects/InventoryItemInput
+- https://shopify.dev/docs/api/admin-graphql/2026-07/enums/ProductVariantInventoryPolicy
+
 ### Read-only interrupted-attempt inspection — 2026-09-25
 
 `inspect_draft_attempt` opens the durable ledger mode=ro/query_only, verifies the

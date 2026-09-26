@@ -6,6 +6,7 @@ import re
 import sqlite3
 from collections.abc import Callable
 from contextlib import closing
+from copy import deepcopy
 from datetime import UTC, datetime
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -38,6 +39,26 @@ query NlaVerifyNewDraft($id: ID!) {
     id handle status totalInventory publishedAt
     syncProductId: metafield(namespace: "sync", key: "productid") { type value }
     powertoolsId: metafield(namespace: "powertools", key: "id") { type value }
+    variants(first: 2) {
+      nodes {
+        id price inventoryQuantity inventoryPolicy
+        inventoryItem { id tracked }
+        selectedOptions { name value }
+      }
+      pageInfo { hasNextPage }
+    }
+  }
+}
+"""
+
+INITIALIZE_VARIANT = """
+mutation NlaInitializeNewDraftVariant($productId: ID!, $variants: [ProductVariantsBulkInput!]!) {
+  productVariantsBulkUpdate(
+    productId: $productId, variants: $variants, allowPartialUpdates: false
+  ) {
+    product { id }
+    productVariants { id }
+    userErrors { field code }
   }
 }
 """
@@ -69,6 +90,27 @@ def _safe_draft(product: dict, handle: str) -> str:
     ):
         raise ValueError("unexpected_new_draft")
     return gid
+
+
+def _initial_variant(product: dict) -> dict:
+    """Accept only Shopify's untouched, zero-stock default variant of the new draft."""
+    connection = product["variants"]
+    if connection["pageInfo"]["hasNextPage"] is not False or len(connection["nodes"]) != 1:
+        raise ValueError("unexpected_initial_variants")
+    variant = connection["nodes"][0]
+    item = variant["inventoryItem"]
+    if (
+        re.fullmatch(r"gid://shopify/ProductVariant/[1-9][0-9]*", variant["id"]) is None
+        or re.fullmatch(r"gid://shopify/InventoryItem/[1-9][0-9]*", item["id"]) is None
+        or type(item["tracked"]) is not bool
+        or variant["price"] != "0.00"
+        or type(variant["inventoryQuantity"]) is not int
+        or variant["inventoryQuantity"] != 0
+        or variant["inventoryPolicy"] != "DENY"
+        or variant["selectedOptions"] != [{"name": "Title", "value": "Default Title"}]
+    ):
+        raise ValueError("unexpected_initial_variant")
+    return variant
 
 
 def inspect_draft_attempt(
@@ -163,7 +205,8 @@ def create_draft_once(
     blocks resending. Manual read-only reconciliation is required after interruption.
     This guards this importer's retries, not concurrent third-party creation.
     Only the product returned by this call's productCreate can receive initial
-    metadata, using create-only CAS. No price/stock/options/publication writes.
+    metadata, using create-only CAS. Its untouched default variant is initialized
+    with quantity tracking and DENY. No price/quantity/options/publication writes.
     """
     if enabled is not True:
         return {"status": "disabled"}
@@ -277,6 +320,31 @@ def create_draft_once(
             for alias, field in zip(("syncProductId", "powertoolsId"), fields, strict=True):
                 if verified[alias] != {"type": field["type"], "value": field["value"]}:
                     raise ValueError("initial_identities_not_confirmed")
+            variant = _initial_variant(verified)
+            if not variant["inventoryItem"]["tracked"]:
+                initialized = graphql(
+                    INITIALIZE_VARIANT,
+                    {
+                        "productId": gid,
+                        "variants": [
+                            {
+                                "id": variant["id"],
+                                "inventoryPolicy": "DENY",
+                                "inventoryItem": {"tracked": True},
+                            }
+                        ],
+                    },
+                )["productVariantsBulkUpdate"]
+                if (
+                    initialized["userErrors"]
+                    or initialized["product"] != {"id": gid}
+                    or initialized["productVariants"] != [{"id": variant["id"]}]
+                ):
+                    raise ValueError("initial_variant_not_confirmed")
+                expected = deepcopy(verified)
+                expected["variants"]["nodes"][0]["inventoryItem"]["tracked"] = True
+                if graphql(VERIFY_DRAFT, {"id": gid})["product"] != expected:
+                    raise ValueError("initial_variant_verification_mismatch")
             record("draft_verified", gid)
             return {"status": "draft_verified", "productGid": gid, "published": False}
         except Exception:
