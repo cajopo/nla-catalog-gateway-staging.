@@ -529,3 +529,41 @@ blocker. Regressions cover scan-once/live-delta-not-cached, all four local files
 expiry before network and mutation during network. Not deployed or run live yet.
 This removes repeated work needed before multi-batch orchestration; the cycle's
 one-batch maximum remains unchanged and does not yet clear the full backlog.
+
+## Bounded multi-batch cycle — 2026-09-26
+
+The market coordinator now accepts `--max-batches` (default1, range1..100) in
+addition to the unchanged per-batch `--max-attempts` (range1..100). It acquires
+CardTrader once, obtains a separate fresh Shopify identity export for each batch,
+and refreshes the Shopify-derived index once at the end if any new draft was
+verified. The existing 30-minute identity and24-hour source limits, live checks,
+no-resend ledger and create-only DRAFT/unpublished/zero-stock rules are unchanged.
+Preview runs only one batch. No API/query/schema, scheduling or publication change.
+
+The first batch retains `batch/` and `identities/`; subsequent batches use
+`batch-0002/`, `identities-0002/`, and so on. Completion receipts retain cumulative
+attempts, per-batch summaries, `remaining`, `eligibleExhausted` and
+`completionReason`. A successfully bounded but unfinished cycle is explicitly
+`draft_cycle_partial`, not complete ingestion; it can close its pending marker
+after the final refresh. The backlog is conservative: live-guard rejections are
+not counted as imported. A batch with no verified progress stops rather than
+repeating the same selection. Source/preparation exceptions remain reported even
+when eligible candidates are exhausted. Uncertainty still leaves pending state
+and requires inspection; no automatic retry or recovery is introduced.
+
+After each successful batch, only the latest two identity JSONL payloads are
+retained within that cycle. Expiry verifies the completed batch and identity
+receipts, exact payload SHA256 and unchanged canonical regular single-link file;
+a durable expiry intent precedes unlink. All directories, receipts, source
+anomalies, preparation reports and the permanent ledger remain. Historical cycle
+retention also understands numbered batch/identity paths and their before-reference
+protection. These expired payloads are deliberately not recoverable from receipts.
+Filesystem reference: https://docs.python.org/3.12/library/pathlib.html#pathlib.Path.unlink
+
+Author validation:71 focused coordinator/retention/runner/identity tests PASS,
+Ruff check and format PASS. Independent main-agent review found no blocking
+findings: checked the full delta against the real runner's candidate/ledger,
+reference selection, empty-batch and freshness contracts, plus identity receipts
+and retention targets. No additional acquisition is needed for this review.
+Not yet deployed or exercised as a live multi-batch cycle; real throughput and
+timer coordination remain operational gates. Publication is not authorized.

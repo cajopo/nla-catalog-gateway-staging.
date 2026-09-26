@@ -18,6 +18,7 @@ def setup(tmp_path, monkeypatch):
     monkeypatch.setattr(market.refresh, "pipeline_lock", lambda _: nullcontext())
     monkeypatch.setattr(market.drafts, "config_values", lambda _: ({}, config))
     monkeypatch.setattr(market, "prune_completed_inputs", lambda *_: 0)
+    monkeypatch.setattr(market, "prune_batch_identities", lambda *_: None)
     monkeypatch.setattr(market.shutil, "disk_usage", lambda _: SimpleNamespace(free=10 * 1024**3))
     monkeypatch.setattr(market.refresh, "freshness", lambda _: {"status": "fresh"})
     behavior = dict(fail=None, identity_calls=0, batch_status="batch_complete")
@@ -51,6 +52,7 @@ def setup(tmp_path, monkeypatch):
         return dict(
             status=behavior["batch_status"] if applied else "preview",
             candidates=2,
+            skippedExisting=0,
             selected=1,
             exceptions=0,
             attempts=[dict(status="draft_verified", productGid="gid://shopify/Product/9")]
@@ -87,7 +89,9 @@ def test_stage_order_and_explicit_draft_apply(setup, apply):
     assert events == ["source", "identity", "pause30", "identity", "batch"] + (
         ["refresh"] if apply else []
     )
-    assert result["status"] == ("draft_cycle_complete" if apply else "preview_cycle_complete")
+    assert result["status"] == ("draft_cycle_partial" if apply else "preview_cycle_complete")
+    assert result["remaining"] == (1 if apply else 2)
+    assert result["eligibleExhausted"] is False
     assert result["published"] is False and result["indexRefreshed"] is apply
     assert not (args["state"] / "pending-market-run.json").exists()
     assert json.loads((args["state"] / "last-market-success.json").read_bytes()) == result
@@ -126,13 +130,15 @@ def test_expired_poll_waits_on_same_operation_not_a_replacement(setup, monkeypat
     assert (args["state"] / "pending-market-run.json").exists()
 
 
-@pytest.mark.parametrize("invalid", ["space", "budget", "ledger", "sha"])
+@pytest.mark.parametrize("invalid", ["space", "budget", "batch_budget", "ledger", "sha"])
 def test_bad_local_prerequisite_does_not_start_network_work(setup, monkeypatch, invalid):
     args, events, _ = setup
     if invalid == "space":
         monkeypatch.setattr(market.shutil, "disk_usage", lambda _: SimpleNamespace(free=1))
     elif invalid == "budget":
         args["max_attempts"] = 101
+    elif invalid == "batch_budget":
+        args["max_batches"] = 101
     elif invalid == "ledger":
         args["ledger"] = args["state"] / "missing.sqlite3"
     else:
@@ -140,6 +146,94 @@ def test_bad_local_prerequisite_does_not_start_network_work(setup, monkeypatch, 
     with pytest.raises(ValueError):
         market.cycle(**args)
     assert not events and not (args["state"] / "pending-market-run.json").exists()
+
+
+def test_one_source_multiple_fresh_batches_one_final_refresh(setup, monkeypatch):
+    args, events, _ = setup
+    paths = []
+
+    def batch(*inputs, **kwargs):
+        events.append("batch")
+        paths.append((inputs[2].name, inputs[3].name))
+        return dict(
+            status="batch_complete",
+            candidates=3,
+            skippedExisting=len(paths) - 1,
+            selected=1,
+            exceptions=5,
+            attempts=[dict(status="draft_verified")],
+        )
+
+    monkeypatch.setattr(market.drafts, "run_locked", batch)
+    result = market.cycle(**args, apply_drafts=True, max_batches=10)
+    assert events.count("source") == events.count("refresh") == 1
+    assert events.count("batch") == 3 and events.count("identity") == 4
+    assert events[-1] == "refresh"
+    assert paths == [
+        ("identities", "batch"),
+        ("identities-0002", "batch-0002"),
+        ("identities-0003", "batch-0003"),
+    ]
+    assert result["status"] == "draft_cycle_complete"
+    assert result["remaining"] == 0 and result["eligibleExhausted"] is True
+    assert result["completionReason"] == "eligible_exhausted"
+    assert result["selected"] == len(result["attempts"]) == len(result["batches"]) == 3
+    assert result["exceptions"] == 5  # Exceptions are not silently counted as imported.
+
+
+def test_budget_exhaustion_is_closed_but_explicitly_partial(setup):
+    args, events, _ = setup
+    result = market.cycle(**args, apply_drafts=True, max_batches=2)
+    assert result["status"] == "draft_cycle_partial" and result["remaining"] == 1
+    assert result["completionReason"] == "batch_budget_exhausted"
+    assert result["eligibleExhausted"] is False
+    assert events.count("refresh") == 1 and len(result["batches"]) == 2
+    assert not (args["state"] / "pending-market-run.json").exists()
+
+
+def test_uncertain_later_batch_retains_pending_without_refresh_or_next_batch(setup, monkeypatch):
+    args, events, _ = setup
+    original = market.drafts.run_locked
+    calls = []
+
+    def uncertain(*inputs, **kwargs):
+        calls.append(inputs[3].name)
+        result = original(*inputs, **kwargs)
+        if len(calls) == 2:
+            result.update(
+                status="needs_reconciliation", attempts=[dict(status="needs_reconciliation")]
+            )
+        return result
+
+    monkeypatch.setattr(market.drafts, "run_locked", uncertain)
+    with pytest.raises(ValueError, match="draft_batch_requires_inspection"):
+        market.cycle(**args, apply_drafts=True, max_batches=10)
+    assert calls == ["batch", "batch-0002"] and "refresh" not in events
+    assert (args["state"] / "pending-market-run.json").exists()
+    assert not (args["state"] / "last-market-success.json").exists()
+
+
+def test_live_guard_rejections_do_not_claim_imported_or_loop(setup, monkeypatch):
+    args, events, _ = setup
+    original = market.drafts.run_locked
+
+    def rejected(*inputs, **kwargs):
+        result = original(*inputs, **kwargs)
+        result["attempts"] = [dict(status="not_verified_missing")]
+        return result
+
+    monkeypatch.setattr(market.drafts, "run_locked", rejected)
+    result = market.cycle(**args, apply_drafts=True, max_batches=10)
+    assert result["status"] == "draft_cycle_partial" and result["remaining"] == 2
+    assert result["completionReason"] == "no_verified_progress"
+    assert events.count("batch") == 1 and "refresh" not in events
+
+
+def test_preview_does_not_repeat_same_selection(setup):
+    args, events, _ = setup
+    result = market.cycle(**args, max_batches=10)
+    assert result["completionReason"] == "preview" and events.count("batch") == 1
+    assert "refresh" not in events
 
 
 def test_refresh_subprocess_uses_existing_operator_and_propagates_failure(tmp_path, monkeypatch):

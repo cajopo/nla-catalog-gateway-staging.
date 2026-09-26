@@ -1,5 +1,7 @@
+import hashlib
 import json
 import os
+from pathlib import Path
 
 import pytest
 from scripts import refresh_market_catalog as market
@@ -123,3 +125,110 @@ def test_configuration_change_stops_before_removal(history, monkeypatch):
     with pytest.raises(ValueError, match="configuration_changed"):
         market.prune_completed_inputs(state, config)
     assert all((r / "source/blueprints-12.json").exists() for r in runs)
+
+
+def test_numbered_batches_and_partial_cycles_obey_reference_protection(history):
+    state, config, _, runs = history
+    for run in runs:
+        batch, identity = market.batch_paths(run, 2)
+        for path in (
+            identity / "identities.jsonl",
+            batch / "ledger-after.sqlite3",
+            batch / "reference/bundle/canonical-names.v1.jsonl",
+        ):
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("numbered payload")
+        (batch / "result.json").write_text('{"status":"batch_complete"}')
+    config.write_text(json.dumps({"reference": str(runs[1] / "batch-0002/reference/bundle")}))
+    (runs[1] / "batch-0002/refresh-config.before.json").write_text(
+        json.dumps({"reference": str(runs[0] / "batch-0002/reference/bundle")})
+    )
+    (runs[2] / "completed.json").write_text(
+        json.dumps(dict(run=runs[2].name, status="draft_cycle_partial"))
+    )
+    market.prune_completed_inputs(state, config)
+    for index in (0, 1, 4, 5):
+        assert (runs[index] / "identities-0002/identities.jsonl").exists()
+        assert (runs[index] / "batch-0002/reference/bundle/canonical-names.v1.jsonl").exists()
+    for index in (2, 3):
+        assert not (runs[index] / "identities-0002/identities.jsonl").exists()
+        assert not (runs[index] / "batch-0002/ledger-after.sqlite3").exists()
+        assert not (runs[index] / "batch-0002/reference/bundle/canonical-names.v1.jsonl").exists()
+        assert (runs[index] / "batch-0002/result.json").exists()
+    assert market.prune_completed_inputs(state, config) == 0
+
+
+@pytest.fixture
+def identity_batches(tmp_path, monkeypatch):
+    monkeypatch.setattr(market.activation, "sync_directory", lambda _: None)
+    monkeypatch.setattr(market.refresh, "document", lambda path: json.loads(path.read_bytes()))
+    payload = b'{"id":"gid://shopify/Product/1"}\n'
+    for number in range(1, 5):
+        batch, identity = market.batch_paths(tmp_path, number)
+        batch.mkdir()
+        identity.mkdir()
+        (identity / "identities.jsonl").write_bytes(payload)
+        (identity / "completed.json").write_text(
+            json.dumps(
+                dict(
+                    status="complete",
+                    shopifyChanged=False,
+                    sha256=hashlib.sha256(payload).hexdigest(),
+                )
+            )
+        )
+        (batch / "result.json").write_text('{"status":"batch_complete"}')
+        (batch / "ledger-after.sqlite3").write_text("retained backup")
+    return tmp_path
+
+
+def test_in_cycle_retention_keeps_latest_two_payloads_and_all_receipts(identity_batches):
+    run = identity_batches
+    market.prune_batch_identities(run, 2)
+    assert (run / "identities/identities.jsonl").exists()
+    market.prune_batch_identities(run, 3)
+    assert not (run / "identities/identities.jsonl").exists()
+    assert (run / "identities-0002/identities.jsonl").exists()
+    market.prune_batch_identities(run, 4)
+    market.prune_batch_identities(run, 4)  # Missing expired payloads are idempotent.
+    for number in range(1, 5):
+        batch, identity = market.batch_paths(run, number)
+        assert (identity / "identities.jsonl").exists() is (number > 2)
+        assert (identity / "completed.json").exists()
+        assert (batch / "result.json").exists()
+        assert (batch / "ledger-after.sqlite3").exists()
+        assert (identity / "payload-expiry.json").exists() is (number <= 2)
+
+
+@pytest.mark.parametrize("unsafe", ["hash", "uncertain", "hardlink"])
+def test_in_cycle_retention_rejects_unsafe_or_uncertain_input(identity_batches, unsafe):
+    run = identity_batches
+    payload = run / "identities/identities.jsonl"
+    if unsafe == "hash":
+        payload.write_text("changed")
+    elif unsafe == "uncertain":
+        (run / "batch/result.json").write_text('{"status":"needs_reconciliation"}')
+    else:
+        os.link(payload, run / "other-copy")
+    with pytest.raises(ValueError):
+        market.prune_batch_identities(run, 3)
+    assert payload.exists()
+
+
+def test_in_cycle_retention_intent_precedes_interrupted_unlink(identity_batches, monkeypatch):
+    run = identity_batches
+    original = Path.unlink
+
+    def interrupted(path, *args, **kwargs):
+        if path.name == "identities.jsonl":
+            assert (path.parent / "payload-expiry.json").exists()
+            raise KeyboardInterrupt
+        return original(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "unlink", interrupted)
+    with pytest.raises(KeyboardInterrupt):
+        market.prune_batch_identities(run, 3)
+    assert (run / "identities/identities.jsonl").exists()
+    monkeypatch.setattr(Path, "unlink", original)
+    market.prune_batch_identities(run, 3)
+    assert not (run / "identities/identities.jsonl").exists()
