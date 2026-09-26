@@ -45,6 +45,17 @@ review PASS after false-success-on-interrupt correction. No new live product wri
 or daily timer by this increment. Full orchestration, real runner verification,
 retention and scheduling remain pending; publication is still separately gated.
 
+Native VPS runner preparation: codebe23a40503e93547af7ae0a031aecb573cd14169
+installed separately at `/opt/nla-staging/importer-be23a40`; archive SHA256
+65dcd4c23a6777ec158fbd264f953aec5c416b3b2765035bf2cd7b91b14ab566.
+CLI help/import smoke passed on native Linux. Actual preview against the current
+projection/ledger/reference rejected the still-running source with
+`incomplete_capture`; hashes prove refresh configuration and ledger unchanged,
+with zero Shopify API calls. Private receipt:
+`/opt/nla-staging/importer-state/runner-negative-preflight-be23a40.json`.
+The preview directory `preflight-incomplete-be23a40` is retained, not reused.
+This is a negative prerequisite test, NOT successful live draft execution.
+
 Documentation rechecked: https://shopify.dev/docs/api/admin-graphql/latest/mutations/productCreate
 (currently2026-07), https://www.cardtrader.com/it/docs/api/full/reference.
 
