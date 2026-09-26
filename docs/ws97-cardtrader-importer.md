@@ -9,6 +9,36 @@ language/condition/finish. Gateway/normal refresh stay read-only.
 
 ## Current increment
 
+### Comparison-to-reference preparation — 2026-09-26
+
+`python -m scripts.prepare_cardtrader_reference` connects the verified capture and
+checksum-pinned projection comparison to the existing canonical-reference builder.
+Run from the repository root. Required arguments: `--capture`, `--projection`,
+`--projection-sha256`, `--parent`, `--parent-sha256`, `--output`, `--generator-sha`.
+All paths must be absolute; output must be new and private, outside Git.
+
+Each candidate retains its exact source file/row, blueprint and Cardmarket IDs.
+Only observed fixed properties supply collector number/rarity; editable-property
+defaults never become variant attributes. The public CardTrader reference documents
+image URLs and Cardmarket IDs but not these fixed-property names; their presence
+and string types are checked against the observed real export contract used by the
+successful Sep25 reference build. Missing/invalid/conflicting details are reported,
+not guessed. Existing canonical records remain unchanged; cross-game ID ambiguity
+is quarantined. No invented selling price, condition, language or finish.
+
+The new bundle is NOT activated. `preparation.json` explicitly retains
+`creationApproved:false` and `shopifyChanged:false`. Current Shopify identity
+verification and controlled reference activation must still precede any creation.
+No source file, output artifact or credential is committed.
+
+16 focused preparation/reference-builder tests PASS, including synthetic complete
+capture -> SQLite comparison -> reference roundtrip, existing mapping preservation,
+ambiguous parent IDs, malformed expansion duplicates, rejected metadata/images and
+output no-overwrite. Ruff and CLI help smoke PASS. Independent review identified
+an expansion-map filtering mismatch, corrected with its regression test. No live
+run, deployment, timer, Shopify writes or GitHub push.
+Official source reference: https://www.cardtrader.com/it/docs/api/full/reference
+
 ### Capture-to-comparison integration — 2026-09-26
 
 `compare_captured_catalog` verifies completion,24h source age, every source file
