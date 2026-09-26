@@ -117,8 +117,8 @@ not change the immutable database schema or Shopify, and it does not yet add the
   Without this flag,
   the response keeps its existing shape. With it, `facets` contains exactly `expansionCode`
   then `rarity`, each with lexically ordered `{value,count}` entries and `missingValueCount`.
-- Each count covers all matching products, not the result page. One aggregate groups the
-  two raw fields, then applies the other dimension's selection. Selected absent values
+- Each count covers all matching products, not the result page. One streaming scan reads
+  only the two raw fields, then applies the other dimension's selection. Selected absent values
   remain visible with zero counts; neither a top-100 limit nor a frequency cutoff is used.
 - Page, suggestions and counts share the same acquired generation and operation deadline.
   A failed/timed-out facet read fails the response, rather than returning partial counts.
@@ -168,3 +168,13 @@ incompatible or unretained cursors rejected before count reads. Ruff and diff ch
 PASS. Independent reviewer `/root/theme_title_review` approved the three-file delta
 without High/Blocker findings; no lease, authorization or deadline path changed.
 This follow-up has not been deployed and does not supersede the full CI gate.
+
+2026-09-26 runtime-storage correction (#10): integrated image `5daca757` failed the
+real-data component smoke with `database or disk is full` under the runtime's 64 MB
+temporary filesystem. SQLite 3.46.1 EXPLAIN showed the metadata GROUP BY sorter
+retaining full source JSON payloads. Stream the two extracted values and aggregate
+their counts in Python instead; no new index, schema, service or storage allowance.
+139 focused metadata tests PASS, Ruff/diff checks PASS; independent reviewer
+`/root/refresh_recovery_review` approved the delta. Regression checks counts and
+absence of temporary sorter instructions. Real 64 MB smoke remains the release gate.
+See [SQLite temporary files](https://www.sqlite.org/tempfiles.html).

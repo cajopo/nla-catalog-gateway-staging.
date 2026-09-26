@@ -1,12 +1,13 @@
 """SQL facets against the independent in-memory oracle and complete vocabularies."""
 
+import json
 import sqlite3
 from dataclasses import replace
 
 import pytest
 
 import test_metadata_filters as metadata
-from nla_catalog_gateway import pagination
+from nla_catalog_gateway import pagination, search_sql
 from nla_catalog_gateway.facets import (
     FacetDimension,
     evaluate_facets,
@@ -26,6 +27,42 @@ from test_metadata_filters import metadata_card, selected
 from test_pagination import _paginator, _projection
 
 metadata_projection = metadata.metadata_projection
+
+
+def test_facet_scan_does_not_sort_large_product_payloads():
+    with sqlite3.connect(":memory:") as database:
+        database.execute(
+            "CREATE TABLE products (game TEXT, product_family TEXT, is_public INTEGER, "
+            "product_record_json BLOB)"
+        )
+        payload = json.dumps(
+            {
+                "cardMetadata": {"expansionCode": "SET", "rarity": "Rare"},
+                "unrelatedPayload": "x" * 65536,
+            }
+        ).encode()
+        database.executemany(
+            "INSERT INTO products VALUES (?, 'single', 1, ?)",
+            [
+                ("magic", payload),
+                ("magic", payload),
+                ("pokemon", payload),
+            ],
+        )
+        calls = []
+
+        class Scan:
+            def execute(self, sql, parameters):
+                calls.append((sql, parameters))
+                return database.execute(sql, parameters)
+
+        facets = search_sql.select_metadata_facets(Scan(), selected(query=None))
+        assert len(calls) == 1
+        assert [(value.value, value.count) for value in facets[0].values] == [("SET", 2)]
+        assert [(value.value, value.count) for value in facets[1].values] == [("Rare", 2)]
+        sql, parameters = calls[0]
+        instructions = database.execute("EXPLAIN " + sql, parameters).fetchall()
+        assert not {"SorterOpen", "OpenEphemeral"} & {row[1] for row in instructions}
 
 
 @pytest.mark.parametrize("expansion", [None, "SET", "OTHER", "MISSING"])
