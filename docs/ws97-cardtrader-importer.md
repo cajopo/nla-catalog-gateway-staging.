@@ -504,3 +504,9 @@ https://docs.python.org/3.12/library/shutil.html#shutil.rmtree . Individual name
 unlinking avoids recursive deletion of directories containing operational evidence.
 21 targeted retention/coordinator tests PASS (2.25s), independent static review no
 blocker. No production cleanup, timer activation, Shopify mutation or GitHub push.
+
+Native Linux fixture proof also PASS for executable commit8777eb3: real root/0600
+document reads, both locks, eight named fixture deletions, active/latest retention,
+idempotent repeat and pending-cycle rejection. ProductionDataChanged=false.
+Fixture evidence: /var/tmp/nla-retention-proof-8777eb3-0aoain7k and
+/var/tmp/nla-retention-fixtures-8777eb3-h5g81r68. No dependency installation needed.
