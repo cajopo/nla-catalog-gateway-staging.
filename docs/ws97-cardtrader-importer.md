@@ -9,6 +9,29 @@ language/condition/finish. Gateway/normal refresh stay read-only.
 
 ## Current increment
 
+### Repeatable read-only source capture — 2026-09-26
+
+`scripts/capture_cardtrader_catalog.py` invokes the GET-only transport through
+`cardtrader_capture.py`, extracting the already exercised one-shot capture logic.
+Read credentials from a private file, not a command-line token. Each execution
+requires a new absolute output directory; no old run is overwritten or deleted.
+It reads every expansion of the four approved games, not just larger IDs/new sets,
+so additions to old sets can be discovered. Source anomalies remain in raw files
+and per-expansion sidecars; file hashes, byte counts and progress are recorded.
+Failures, disk/size/deadline limits yield failed status, never a complete snapshot.
+Consumers must verify all files/hashes/counts before using a completed run.
+
+18 focused capture/CLI tests PASS; capture module alone has100% statement/branch
+coverage. Ruff and independent component/CLI review PASS (no Blocker/High).
+CLI --help smoke PASS. The CLI has no Shopify client or mutation path. No live acquisition or
+timer was started by this increment; it is the reusable acquisition entry point,
+not a claim that scheduled source-to-store ingestion is active. Caller supplies
+the existing private credential path and a fresh run directory outside Git.
+
+Official source contract: https://www.cardtrader.com/it/docs/api/full/reference
+The documented shared limit is200 requests/10seconds; this uses at most1 request
+per second. Export is per expansion; no documented new-release cursor is assumed.
+
 ### Safe initial default variant — 2026-09-26
 
 The real single-draft pilot exposed a Shopify default: quantity zero and DENY,
