@@ -617,3 +617,38 @@ the timer-only stop/restore hooks, explicit UTC schedule, no catchup and no rest
 Independent main-agent review found no blocking findings against the real empty
 batch contract and installed systemd service/timer manuals. Native systemd
 validation remains required before installation; no live timer is enabled by this commit.
+
+## Owner-approved publication stage — 2026-09-28
+
+The owner's reply authorizes automatic Online Store publication of verified
+importer-created SOLD OUT cards. This supersedes the historical draft-only
+publication gate above, not the gateway's read-only boundary or PowerTools ownership.
+
+`shopify_draft_publication` selects only `draft_verified` creation-ledger rows,
+verifies saved request digest/identities against live Shopify, and requires the
+unchanged zero-price/default variant, tracked zero stock at every location, DENY,
+one ready image and no other app publication. It identifies the target as Shopify's
+Online Store app, not by a display name. Only product status ACTIVE and that single
+publication are written. Readback after each write verifies unchanged commercial
+fields. A pending snapshot is committed first; lost responses stop and are resolved
+by live reads on a later invocation, not blind mutation retries. Terminal published
+receipts are excluded forever: subsequent merchant/PowerTools edits are not reset.
+Already published importer pilots are recorded without mutations.
+
+The cycle accepts an explicit `--publish-online-store gid://shopify/Publication/…`
+only together with `--apply-drafts`, before its one final read-only index refresh.
+The unmodified unit template is still draft-only; deployment must append this
+owner-approved option to ExecStart. Standalone `scripts.publish_imported_drafts`
+can publish existing verified rows without acquiring any catalog source, using
+`--refresh-config`, `--ledger`, `--publication`, `--max-products` and explicit
+`--apply`. Both paths use importer→refresh lock order and private durable receipts.
+There is no write to price, inventory, variants, metadata, existing products,
+themes or PowerTools configuration. Failure retains evidence for inspection.
+
+Official 2026-07 contract consulted and four operations schema-validated:
+https://shopify.dev/docs/apps/build/sales-channels/product-publishing
+https://shopify.dev/docs/api/admin-graphql/2026-07/mutations/productUpdate
+Independent product_presentation_review APPROVE: no blocking findings in module,
+CLI or cycle ordering.150 focused publisher/CLI/coordinator/retention/unit-template
+tests PASS8.57s; Ruff check/format PASS. All tests use synthetic data; deployment
+and real publication evidence are separate operational steps.

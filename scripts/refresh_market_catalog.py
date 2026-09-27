@@ -1,4 +1,4 @@
-"""Coordinate one market-source -> draft -> Shopify-index cycle. No publication.
+"""Coordinate market-source -> drafts -> optional approved publication -> index.
 
 No timer is installed by this command. A pending cycle is never restarted blindly.
 Retain cycle directories: an applied batch can own the active canonical reference.
@@ -19,6 +19,7 @@ from pathlib import Path
 from nla_catalog_gateway.cardtrader_capture import capture_catalog
 from nla_catalog_gateway.cardtrader_catalog import CardTraderCatalogClient
 from nla_catalog_gateway.shopify_capture_http import ShopifyCaptureHttp
+from nla_catalog_gateway.shopify_draft_publication import publish_verified_drafts
 from scripts import activate_staging_refresh as activation
 from scripts import capture_import_identities as identities
 from scripts import import_cardtrader_drafts as drafts
@@ -237,6 +238,7 @@ def cycle(
     apply_drafts=False,
     max_attempts=1,
     max_batches=1,
+    publish_online_store=None,
     pause=time.sleep,
 ):
     """Caller holds state's pipeline lock; individual stages use refresh's lock.
@@ -252,6 +254,12 @@ def cycle(
         or not 1 <= max_batches <= 100
     ):
         raise ValueError("invalid_cycle_controls")
+    if publish_online_store is not None and (
+        not apply_drafts
+        or not isinstance(publish_online_store, str)
+        or re.fullmatch(r"gid://shopify/Publication/[1-9][0-9]*", publish_online_store) is None
+    ):
+        raise ValueError("publication_requires_apply_and_explicit_channel")
     if re.fullmatch(r"[0-9a-f]{40}", generator_sha) is None:
         raise ValueError("invalid_generator_sha")
     for path in (state, refresh_config, refresh_package, ledger):
@@ -290,6 +298,7 @@ def cycle(
         maxBatches=max_batches,
         remaining=None,
         eligibleExhausted=False,
+        publicationEnabled=publish_online_store is not None,
     )
     try:
         source = capture_catalog(cardtrader, run / "source")
@@ -369,13 +378,39 @@ def cycle(
         # Refresh even an empty apply cycle: PowerTools stock/price changes remain
         # authoritative and must reach the index independently of new printings.
         if apply_drafts:
+            if publish_online_store is not None:
+                _, config = drafts.config_values(refresh_config)
+                with refresh.pipeline_lock(config["run_root"]):
+                    if (config["run_root"] / "pending-run.json").exists():
+                        raise ValueError("catalog_refresh_pending")
+                    # A pending publication receipt makes any lost response
+                    # inspectable. Only importer-owned verified rows are eligible.
+                    result["publicationState"] = "started_inspect_ledger_if_interrupted"
+                    result["published"] = None  # Unknown until the durable result, not False.
+                    publication = publish_verified_drafts(
+                        ledger,
+                        shop=config["shop"],
+                        publication_id=publish_online_store,
+                        graphql=shopify.graphql,
+                        enabled=True,
+                        max_products=10000,
+                    )
+                refresh.publish(run / "publication.json", publication)
+                result["publicationState"] = publication["status"]
+                result["published"] = publication["published"] > 0
+                result["publication"] = {k: v for k, v in publication.items() if k != "results"}
+                if publication["status"] != "publication_complete":
+                    raise ValueError("publication_requires_inspection")
             refresh_index(refresh_package, refresh_config)
             _, config = drafts.config_values(refresh_config)
             if refresh.freshness(config)["status"] != "fresh":
                 raise ValueError("post_import_index_not_fresh")
             result["indexRefreshed"] = True
         result["status"] = "draft_cycle_complete" if apply_drafts else "preview_cycle_complete"
-        if apply_drafts and not result["eligibleExhausted"]:
+        if apply_drafts and (
+            not result["eligibleExhausted"]
+            or result.get("publication", {}).get("remaining", 0) != 0
+        ):
             result["status"] = "draft_cycle_partial"
         result["finishedAt"] = refresh.timestamp()
         refresh.publish(run / "completed.json", result)
@@ -397,6 +432,7 @@ def main():
     parser.add_argument("--max-attempts", type=int, default=1)
     parser.add_argument("--max-batches", type=int, default=1)
     parser.add_argument("--apply-drafts", action="store_true")
+    parser.add_argument("--publish-online-store", default=None)
     args = parser.parse_args()
     try:
         if not __debug__ or sys.platform != "linux" or os.geteuid() != 0:
@@ -424,11 +460,21 @@ def main():
                 apply_drafts=args.apply_drafts,
                 max_attempts=args.max_attempts,
                 max_batches=args.max_batches,
+                publish_online_store=args.publish_online_store,
             )
         print(json.dumps(result))
         return 0
     except (Exception, KeyboardInterrupt):
-        print(json.dumps(dict(status="market_cycle_stopped_inspect_pending", published=False)))
+        print(
+            json.dumps(
+                dict(
+                    status="market_cycle_stopped_inspect_pending",
+                    publicationState="inspect_receipts"
+                    if args.publish_online_store
+                    else "disabled",
+                )
+            )
+        )
         return 1
 
 

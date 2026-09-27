@@ -295,3 +295,61 @@ def test_refresh_subprocess_uses_existing_operator_and_propagates_failure(tmp_pa
     monkeypatch.setattr(market.subprocess, "run", fail)
     with pytest.raises(market.subprocess.CalledProcessError):
         market.refresh_index(tmp_path, tmp_path / "config.json")
+
+
+@pytest.mark.parametrize(
+    "apply,channel", [(False, "gid://shopify/Publication/12"), (True, "bad"), (True, True)]
+)
+def test_publication_gate_before_any_network_work(setup, apply, channel):
+    args, events, _ = setup
+    with pytest.raises(ValueError, match="publication_requires_apply"):
+        market.cycle(**args, apply_drafts=apply, publish_online_store=channel)
+    assert events == []
+    assert not (args["state"] / "pending-market-run.json").exists()
+
+
+@pytest.mark.parametrize("failed", [False, True])
+def test_authorized_publication_precedes_only_refresh_and_records_partial_writes(
+    setup, monkeypatch, failed
+):
+    args, events, _ = setup
+    args["shopify"] = SimpleNamespace(graphql=object())
+
+    def publish(ledger, **kwargs):
+        events.append("publication")
+        assert ledger == args["ledger"]
+        assert kwargs == dict(
+            shop="test.myshopify.com",
+            publication_id="gid://shopify/Publication/12",
+            graphql=args["shopify"].graphql,
+            enabled=True,
+            max_products=10000,
+        )
+        return dict(
+            status="publication_stopped_inspect" if failed else "publication_complete",
+            published=2,
+            alreadyPublished=5,
+            remaining=1 if failed else 0,
+            results=[],
+        )
+
+    monkeypatch.setattr(market, "publish_verified_drafts", publish)
+    if failed:
+        with pytest.raises(ValueError, match="publication_requires_inspection"):
+            market.cycle(
+                **args, apply_drafts=True, publish_online_store="gid://shopify/Publication/12"
+            )
+        marker = json.loads((args["state"] / "pending-market-run.json").read_bytes())
+        run = args["state"] / marker["run"]
+        result = json.loads((run / "stopped.json").read_bytes())
+        assert "refresh" not in events and not (run / "completed.json").exists()
+    else:
+        result = market.cycle(
+            **args, apply_drafts=True, publish_online_store="gid://shopify/Publication/12"
+        )
+        run = args["state"] / result["run"]
+        assert events[-2:] == ["publication", "refresh"]
+        assert events.count("source") == events.count("refresh") == 1
+    assert result["published"] is True and result["publication"]["published"] == 2
+    receipt = json.loads((run / "publication.json").read_bytes())
+    assert receipt["published"] == 2 and result["publicationState"] == receipt["status"]
