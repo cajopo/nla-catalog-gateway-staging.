@@ -1,5 +1,28 @@
 # Import-batch diagnostics and bounded recovery — issue #97
 
+## Deployment outcome — 2026-09-28 CEST
+
+Reviewed commit ccd8d4ce5c9c84b272acc97f66cff0e2535c6b65 installed at
+/opt/nla-staging/importer-ccd8d4c. Full git archive SHA256:
+58b9f83162140e42deac17a0c6ce25cd96c523e5d38d5c13492746e69512e4e0.
+Initial minimal archive missed graphql/; module import failed before any recovery
+or service change. Replaced with verified FULL commit archive before proceeding.
+Native systemd255 validation passed. Same service arguments/limits/timers, only
+package and generator SHA changed. Backup unit preserved as
+/opt/nla-staging/nla-market-catalog.before-ccd8d4c.service.
+
+One-off reviewed recovery helper validated all306 ledger rows and each attempt
+from the original53, diagnostic51 and final100 against its GID/CM identity under
+both pipeline locks. Wrote explicit inspection and archived marker at23:12:14UTC
+Sep27; active pending marker removed only AFTER durable evidence. Did not create
+a completed receipt, publish products, refresh the index or reacquire data.
+On-server retention preflight returned0, no files removed. Timers remain enabled,
+next market04:00CEST Sep28, normal05:00CEST. Entire automatic cycle not yet proven.
+
+Rollback: restore the saved old unit and reload systemd; retain the new package,
+receipts, ledger and references. Do NOT reinsert the old pending marker or repeat
+created products. No GitHub push/CI performed pending owner quota reset.
+
 ## Verified cause and fix
 
 LIVE VALIDATION PASSED: session7672 exited0, batch_complete,100/100 new
@@ -31,9 +54,9 @@ no Shopify mutation is retried.57 capture/identity tests PASS, Ruff PASS; indepe
 reviewer product_presentation_review approved this additional delta.
 Installed package importer-b9733cd-retry-20260928; capture script SHA256
 edcaf82eb9e19ce97cda305bc6b1e131fa0a88bade01c407dbd3eb08e266c098 verified.
-Live validation uses SAME <30min identity snapshot and <24h source, permanent
-ledger, max100, new batch-retry-fix directory. SSH session7672 active at launch;
-poll it, do not duplicate. Service unit still unchanged pending actual result.
+Live validation used the SAME <30min identity snapshot and <24h source, permanent
+ledger, max100, new batch-retry-fix directory. SSH session7672 is now TERMINAL
+exit0; do not poll/restart it. See the deployment outcome above for the new unit.
 
 ## Diagnostic change
 
@@ -67,7 +90,8 @@ Recovery uses the existing CardTrader source from market-20260927t020013z-a35568
 while still younger than 24h, the SAME permanent draft-attempts.sqlite3 ledger,
 and a fresh identity-only check under recovery-20260928-2246. Its saved Bulk
 operation is 12541737009420; poll that operation, never create a replacement on timeout.
-The old pending-market marker is preserved until the failure is reconciled.
+The old pending-market marker was subsequently archived after reconciliation,
+as recorded in the deployment outcome above.
 No CardTrader reacquisition or extra Online Store publication is authorized by this.
 
 Official reference consulted:
