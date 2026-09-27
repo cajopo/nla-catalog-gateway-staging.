@@ -652,3 +652,25 @@ Independent product_presentation_review APPROVE: no blocking findings in module,
 CLI or cycle ordering.150 focused publisher/CLI/coordinator/retention/unit-template
 tests PASS8.57s; Ruff check/format PASS. All tests use synthetic data; deployment
 and real publication evidence are separate operational steps.
+
+### VPS evidence — 2026-09-28 CEST
+
+Code bd693e68b71bf2f215d6fd0d8065afb73d2fd9bd installed at
+`/opt/nla-staging/importer-bd693e6` from full git archive SHA256
+`a089c5582191146ef8e2ed3f63993db85bd5cc81250ffef7dae277e18fe43035`.
+Native disabled-default invocation PASS. Two applied batches completed:
+5 newly published +5 already published without writes, then296 newly published,
+zero remaining. Thus306 importer-owned products have terminal publication receipts
+(301 new publications this turn). All new products were individually read back
+ACTIVE, Online Store published, tracked0/DENY, ready image and unchanged commercial
+data. Existing5 pilot publications were not mutated. No catalog reacquisition.
+Private receipts retained in importer-state: publication-2867b18f667f46b284ab1732371e7ddb.json
+and publication-9bfd78df5dfb4078a02322e16e3a9899.json. Sessions52752/6138 terminal exit0.
+
+Service now pins bd693e6 and explicit Online Store162078753036 before its single
+final index refresh. Native systemd validation/readback PASS, no early cycle
+started; next market04:00CEST Sep28. Complete unattended cycle/index visibility
+is still unproven. The existing first-cycle heartbeat remains; no duplicate monitor.
+Rollback unit retained as `/opt/nla-staging/nla-market-catalog.before-bd693e6.service`:
+restoring it removes future automatic publication, not already-published products.
+No MAIN, PowerTools, commercial-data, pre-existing-product or GitHub changes.
