@@ -202,6 +202,83 @@ def test_uncertain_creation_stops_batch_and_blocks_next_run(setup):
     assert sum(query == CREATE_DRAFT for query, _ in api.calls) == 1
 
 
+@pytest.mark.parametrize(
+    ("error", "reason"),
+    [
+        (ValueError("inconsistent_identity_page"), "inconsistent_identity_page"),
+        (ValueError("identity_export_stale"), "identity_export_stale"),
+        (ValueError("secret_remote_payload"), "unexpected_batch_error"),
+        (ValueError(["secret_remote_payload"]), "unexpected_batch_error"),
+        (RuntimeError("secret_remote_payload"), "unexpected_batch_error"),
+        (runner.CaptureHttpError(), "shopify_request_failed"),
+        (sqlite3.OperationalError("secret_remote_payload"), "ledger_database_error"),
+    ],
+)
+def test_guard_failure_records_safe_cause_without_retry_or_creation(
+    setup, monkeypatch, error, reason
+):
+    args, _, api, _ = setup
+
+    def fail(*_):
+        raise error
+
+    monkeypatch.setattr(runner.identities, "verify_missing", fail)
+    result = runner.run_locked(**args, apply=True, max_attempts=2)
+    assert result["status"] == "stopped_inspect_before_retry"
+    assert result["failure"] == dict(reason=reason, cardmarketId=42)
+    assert result["attempts"] == []
+    assert all(query != CREATE_DRAFT for query, _ in api.calls)
+    receipt = (args["run"] / "result.json").read_text()
+    assert "secret_remote_payload" not in receipt
+    assert json.loads(receipt) == result
+    with closing(sqlite3.connect(args["ledger"])) as db:
+        assert db.execute("SELECT COUNT(*) FROM draft_attempts").fetchone()[0] == 0
+
+
+def test_failure_after_verified_attempt_retains_progress_and_next_identity(setup, monkeypatch):
+    args, _, api, _ = setup
+
+    def verify(_work, _shop, identifier, _graphql):
+        if identifier == 43:
+            raise ValueError("inconsistent_identity_page")
+        return True
+
+    monkeypatch.setattr(runner.identities, "verify_missing", verify)
+    result = runner.run_locked(**args, apply=True, max_attempts=2)
+    assert result["failure"] == dict(reason="inconsistent_identity_page", cardmarketId=43)
+    assert len(result["attempts"]) == 1
+    assert result["attempts"][0]["status"] == "draft_verified"
+    assert sum(query == CREATE_DRAFT for query, _ in api.calls) == 1
+    with closing(sqlite3.connect(args["run"] / "ledger-after.sqlite3")) as db:
+        assert db.execute("SELECT cardmarket_id,state FROM draft_attempts").fetchall() == [
+            (42, "draft_verified")
+        ]
+
+
+@pytest.mark.parametrize("invalid_id", [False, True])
+def test_preparation_error_never_reuses_previous_candidate_id(setup, monkeypatch, invalid_id):
+    args, _, api, _ = setup
+    original = runner.prepare
+
+    def prepare(*a, **kw):
+        result = original(*a, **kw)
+        candidate = result["candidates"][1]
+        candidate["creationApproved"] = True
+        if invalid_id:
+            candidate["cardmarketId"] = "secret_remote_payload"
+        return result
+
+    monkeypatch.setattr(runner, "prepare", prepare)
+    result = runner.run_locked(**args, apply=True, max_attempts=2)
+    assert len(result["attempts"]) == 1
+    assert result["failure"] == dict(
+        reason="unexpected_batch_error" if invalid_id else "unexpected_preparation_approval",
+        cardmarketId=None if invalid_id else 43,
+    )
+    assert "secret_remote_payload" not in (args["run"] / "result.json").read_text()
+    assert sum(query == CREATE_DRAFT for query, _ in api.calls) == 1
+
+
 @pytest.mark.parametrize("interrupted_operation", [CREATE_DRAFT, INITIALIZE_VARIANT])
 def test_interrupt_cannot_publish_false_success_or_allow_retry(setup, interrupted_operation):
     args, _, api, _ = setup

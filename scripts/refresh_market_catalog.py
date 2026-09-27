@@ -110,11 +110,34 @@ def prune_completed_inputs(state, config_path):
     if state.resolve() != state or not state.is_dir():
         raise ValueError("noncanonical_retention_state")
     runs = []
+    inspected = set()
     for run in sorted(state.iterdir()):
         if re.fullmatch(r"market-\d{8}t\d{6}z-[0-9a-f]{8}", run.name) is None:
             continue
-        if run.resolve() != run or not (run / "completed.json").is_file():
+        if run.resolve() != run:
             raise ValueError("market_run_requires_inspection_before_retention")
+        if not (run / "completed.json").is_file():
+            resolution = run / "inspection-resolved.json"
+            stopped = run / "stopped.json"
+            if not resolution.is_file() or not stopped.is_file():
+                raise ValueError("market_run_requires_inspection_before_retention")
+            receipt = refresh.document(resolution)
+            failure = refresh.document(stopped)
+            if (
+                receipt.get("run") != run.name
+                or receipt.get("status") != "stopped_inspected"
+                or type(receipt.get("uncertainAttempts")) is not int
+                or receipt["uncertainAttempts"] != 0
+                or receipt.get("stoppedSha256") != activation.digest(stopped)
+                or failure.get("run") != run.name
+                or failure.get("status") != "stopped_inspect_pending_cycle"
+            ):
+                raise ValueError("invalid_market_inspection_receipt")
+            # Explicit operator inspection is not success. Retain its entire
+            # run and rollback references; never turn this into automatic recovery.
+            inspected.add(run)
+            runs.append(run)
+            continue
         receipt = refresh.document(run / "completed.json")
         if receipt["run"] != run.name or receipt["status"] not in (
             "draft_cycle_complete",
@@ -125,7 +148,8 @@ def prune_completed_inputs(state, config_path):
         runs.append(run)
     if len(runs) <= 2:
         return 0
-    keep = set(runs[-2:])
+    completed = [run for run in runs if run not in inspected]
+    keep = set(completed[-2:]) | inspected
     current_reference = config["reference"]
     keep.update(run for run in runs if current_reference.is_relative_to(run))
     # Protect the before-reference of retained runs, once (not their entire history).
@@ -308,6 +332,8 @@ def cycle(
             result["selected"] += batch["selected"]
             result["exceptions"] = batch["exceptions"]
             if batch["status"] not in ("preview", "batch_complete"):
+                if "failure" in batch:
+                    result["batchFailure"] = batch["failure"]
                 raise ValueError("draft_batch_requires_inspection")
             verified = sum(
                 a["status"] == "draft_verified"

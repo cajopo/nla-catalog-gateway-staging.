@@ -207,6 +207,74 @@ def test_live_guards_of_fresh_snapshot(setup, guard):
     assert not any("productCreate" in q or "metafieldsSet" in q for q in client.calls)
 
 
+def test_drifting_pages_restart_read_and_still_reject_existing_identity(setup, monkeypatch):
+    client, work = setup
+    complete(client, work)
+    original = client.graphql
+    recent = capture.read_identity_changes
+    monkeypatch.setattr(
+        capture, "read_identity_changes", lambda g, s: recent(g, s, pause=lambda _: None)
+    )
+    pauses, cursors = [], []
+    monkeypatch.setattr(capture.time, "sleep", pauses.append)
+
+    def graphql(query, variables):
+        if query != RECENT_IDENTITIES_QUERY:
+            return original(query, variables)
+        cursors.append(variables["after"])
+        node = dict(client.row, updatedAt=client.started)
+        retry = len(cursors) == 3
+        if retry:
+            node["powertoolsId"] = dict(type="single_line_text_field", value="42")
+        return dict(
+            products=dict(
+                nodes=[node],
+                pageInfo=dict(hasNextPage=len(cursors) == 1, endCursor="next"),
+            )
+        )
+
+    assert capture.verify_missing(work, SHOP, 42, graphql) is False
+    assert cursors == [None, "next", None]
+    assert pauses == [2]
+    assert FIND_ATTEMPT_HANDLE not in client.calls
+
+
+@pytest.mark.parametrize("reason", ["inconsistent_identity_page", "identity_definition_changed"])
+def test_read_retry_is_bounded_and_only_for_drifting_pages(setup, monkeypatch, reason):
+    client, work = setup
+    complete(client, work)
+    calls, pauses = [], []
+
+    def fail(*_):
+        calls.append(1)
+        raise ValueError(reason)
+
+    monkeypatch.setattr(capture, "_live_missing", fail)
+    monkeypatch.setattr(capture.time, "sleep", pauses.append)
+    with pytest.raises(ValueError, match=reason):
+        capture.verify_missing(work, SHOP, 42, client.graphql)
+    assert len(calls) == (3 if reason == "inconsistent_identity_page" else 1)
+    assert pauses == ([2, 2] if reason == "inconsistent_identity_page" else [])
+
+
+def test_read_retry_rechecks_snapshot_before_another_request(setup, monkeypatch):
+    client, work = setup
+    complete(client, work)
+    calls = []
+
+    def fail(*_):
+        calls.append(1)
+        raise ValueError("inconsistent_identity_page")
+
+    monkeypatch.setattr(capture, "_live_missing", fail)
+    monkeypatch.setattr(
+        capture.time, "sleep", lambda _: (work / "identities.jsonl").write_bytes(b"changed")
+    )
+    with pytest.raises(ValueError, match="identity_snapshot_changed"):
+        capture.verify_missing(work, SHOP, 42, client.graphql)
+    assert calls == [1]
+
+
 def test_batch_guard_scans_once_but_live_changes_are_not_cached(setup, monkeypatch):
     client, work = setup
     complete(client, work)

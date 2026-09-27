@@ -114,6 +114,47 @@ def test_linked_input_is_not_deleted(history):
     assert target.exists()
 
 
+@pytest.mark.parametrize("run_index", [1, 5])
+@pytest.mark.parametrize("invalid", [None, "missing", "hash", "run", "uncertain", "boolean"])
+def test_inspected_stop_preserved_without_claiming_success(history, invalid, run_index):
+    state, config, _, runs = history
+    run = runs[run_index]
+    (run / "completed.json").unlink()
+    stopped = run / "stopped.json"
+    stopped.write_text(json.dumps(dict(run=run.name, status="stopped_inspect_pending_cycle")))
+    receipt = dict(
+        run=run.name,
+        status="stopped_inspected",
+        uncertainAttempts=0,
+        stoppedSha256=hashlib.sha256(stopped.read_bytes()).hexdigest(),
+    )
+    if invalid == "hash":
+        receipt["stoppedSha256"] = "0" * 64
+    elif invalid == "run":
+        receipt["run"] = runs[0].name
+    elif invalid == "uncertain":
+        receipt["uncertainAttempts"] = 1
+    elif invalid == "boolean":
+        receipt["uncertainAttempts"] = False
+    if invalid != "missing":
+        (run / "inspection-resolved.json").write_text(json.dumps(receipt))
+    (run / "batch/refresh-config.before.json").write_text(
+        json.dumps({"reference": str(runs[0] / "batch/reference/bundle")})
+    )
+    if invalid is not None:
+        with pytest.raises(ValueError):
+            market.prune_completed_inputs(state, config)
+        assert all((r / "source/blueprints-12.json").exists() for r in runs)
+    else:
+        assert market.prune_completed_inputs(state, config) == 8
+        completed = [r for r in runs if r != run]
+        for retained in (runs[0], run, *completed[-2:]):
+            assert (retained / "source/blueprints-12.json").exists()
+            assert (retained / "batch/reference/bundle/canonical-names.v1.jsonl").exists()
+        assert not (run / "completed.json").exists()
+        assert stopped.exists()
+
+
 def test_configuration_change_stops_before_removal(history, monkeypatch):
     state, config, _, runs = history
     document = market.refresh.document

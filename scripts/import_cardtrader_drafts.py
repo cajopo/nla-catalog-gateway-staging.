@@ -22,12 +22,45 @@ from nla_catalog_gateway.canonical_names import (
     load_canonical_names,
     load_canonical_names_manifest,
 )
-from nla_catalog_gateway.shopify_capture_http import ShopifyCaptureHttp
+from nla_catalog_gateway.shopify_capture_http import CaptureHttpError, ShopifyCaptureHttp
 from nla_catalog_gateway.shopify_draft_import import create_draft_once
 from scripts import activate_staging_refresh as activation
 from scripts import capture_import_identities as identities
 from scripts import refresh_staging_catalog as refresh
 from scripts.prepare_cardtrader_reference import prepare
+
+
+def failure_reason(error):
+    """Only local, fixed codes may enter receipts; never copy remote error text."""
+    reasons = {
+        "unexpected_preparation_approval",
+        "source_stale_or_reference_not_selected",
+        "identity_snapshot_changed",
+        "identity_export_stale",
+        "identity_guard_wrong_shop",
+        "identity_definition_changed",
+        "invalid_identity_timestamp",
+        "future_identity_timestamp",
+        "invalid_identity_page_limit",
+        "invalid_identity_metafield",
+        "invalid_identity_page",
+        "inconsistent_identity_page",
+        "invalid_identity_cursor",
+        "identity_page_limit_requires_fresh_baseline",
+        "import_access_not_granted",
+        "invalid_import_identity",
+        "invalid_import_product",
+        "invalid_import_image",
+    }
+    if isinstance(error, CaptureHttpError):
+        return "shopify_request_failed"
+    if type(error) is ValueError and len(error.args) == 1:
+        reason = error.args[0]
+        if type(reason) is str and reason in reasons:
+            return reason
+    if isinstance(error, sqlite3.Error):
+        return "ledger_database_error"
+    return "unexpected_batch_error"
 
 
 def config_values(path):
@@ -179,11 +212,13 @@ def run_locked(
             raise ValueError("source_stale_or_reference_not_selected")
         return verify_identity(cardmarket_id)
 
+    identifier = None
     try:
         for candidate in selected:
+            identifier = None
+            identifier = int(candidate["cardmarketId"])
             if candidate["creationApproved"] is not False:
                 raise ValueError("unexpected_preparation_approval")
-            identifier = int(candidate["cardmarketId"])
             attempt = create_draft_once(
                 ledger,
                 shop=config["shop"],
@@ -204,8 +239,9 @@ def run_locked(
                 break
         else:
             result["status"] = "batch_complete"
-    except Exception:
+    except Exception as error:
         result["status"] = "stopped_inspect_before_retry"
+        result["failure"] = dict(reason=failure_reason(error), cardmarketId=identifier)
     finally:
         # A crash before this backup still leaves the original durable ledger.
         with (

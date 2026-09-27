@@ -130,6 +130,24 @@ def test_expired_poll_waits_on_same_operation_not_a_replacement(setup, monkeypat
     assert (args["state"] / "pending-market-run.json").exists()
 
 
+def test_batch_failure_reason_reaches_cycle_receipt(setup, monkeypatch):
+    args, _, _ = setup
+    original = market.drafts.run_locked
+
+    def failed(*a, **kw):
+        result = original(*a, **kw)
+        result["status"] = "stopped_inspect_before_retry"
+        result["failure"] = dict(reason="inconsistent_identity_page", cardmarketId=43)
+        return result
+
+    monkeypatch.setattr(market.drafts, "run_locked", failed)
+    with pytest.raises(ValueError, match="draft_batch_requires_inspection"):
+        market.cycle(**args, apply_drafts=True)
+    marker = json.loads((args["state"] / "pending-market-run.json").read_bytes())
+    receipt = json.loads((args["state"] / marker["run"] / "stopped.json").read_bytes())
+    assert receipt["batchFailure"] == dict(reason="inconsistent_identity_page", cardmarketId=43)
+
+
 @pytest.mark.parametrize("invalid", ["space", "budget", "batch_budget", "ledger", "sha"])
 def test_bad_local_prerequisite_does_not_start_network_work(setup, monkeypatch, invalid):
     args, events, _ = setup

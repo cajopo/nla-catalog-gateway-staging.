@@ -11,6 +11,7 @@ import os
 import re
 import stat
 import sys
+import time
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -148,10 +149,18 @@ def missing_guard(work, shop, graphql):
             raise ValueError("identity_export_stale")
 
     def verify(cardmarket_id):
-        check()
-        result = _live_missing(receipt, known, shop, cardmarket_id, graphql)
-        check()
-        return result
+        for attempt in range(3):
+            check()
+            try:
+                result = _live_missing(receipt, known, shop, cardmarket_id, graphql)
+            except ValueError as error:
+                if error.args != ("inconsistent_identity_page",) or attempt == 2:
+                    raise
+                # Re-read from page one; never accept partial pages or retry a write.
+                time.sleep(2)
+            else:
+                check()
+                return result
 
     return verify
 
