@@ -700,3 +700,41 @@ publication flag and04:00CEST schedule preserved. Previous unit backup:
 `/opt/nla-staging/nla-market-catalog.before-8adf76c.service`.
 Read-only ledger check:306 terminal published receipts, no pending publications.
 No early run, source acquisition or additional Shopify mutation.
+
+### Local delivery validation and preflight false positives — 2026-09-28
+
+Baseline HEAD6f951f1200a547a1c1c593c19226c325d5e87065 received one full local
+Windows validation. Ruff and formatting PASS (153 files), package build with
+`python -m build --no-isolation` PASS. The single complete pytest run reported
+3565 passed,1 failed,0 skipped in1522.62s. Its failing repository-entrypoint test
+matched the standalone preflight failure: four runtime credential lookups were
+misidentified as literal credential assignments, plus one synthetic test sentinel.
+
+Normalize the four client constructors to the same positional signature already
+used by capture_shopify_bulk and refresh_staging_catalog. Use the explicitly
+synthetic `test-only-secret` sentinel and assert all four constructor arguments
+in the publication CLI test. No secret-detector rules, exclusions, API behavior,
+credentials, product data or runtime guards changed. Independent delivery_validation
+review found no findings in the six-file staged diff.
+
+Post-fix validation: preflight PASS over183 staged files; Ruff and format checks
+PASS for the six changed files; `git diff --cached --check` PASS. Focused command:
+`python -m pytest -p no:cacheprovider tests/test_capture_import_identities.py tests/test_import_cardtrader_drafts.py tests/test_publish_imported_drafts.py tests/test_refresh_market_catalog.py tests/test_capture_cardtrader_cli.py tests/test_preflight_repo.py::test_module_entrypoint_executes_repository_preflight`
+reported88 passed,0 failed,0 skipped in70.58s, without rerunning the full suite.
+
+Coverage remains explicitly NOT a full release pass: the earlier full run produced
+99.41%, below the100% gate. generation_bundle's native Linux backend accounts for
+57 uncovered statements and one partial branch; its Linux tests return early on
+Windows, so0 skipped does not establish Linux coverage. Every other reported module,
+including importer and publisher, reached100%. Linux/exact-head CI remains required;
+no threshold waiver, GitHub push, remote CI claim or deployment is authorized by this
+local diff review. The pre-existing coverage file was preserved; the new private
+coverage output and build artifacts are not committed.
+
+Separately, the already-running VPS package remains8adf76c, PID237423, same run
+market-20260928t000647z-1b1a8344. At05:50:01UTC it had34 completed100-product batches,
+3706 verified creations in the permanent ledger and306 prior publications.
+This cycle's3400 creations still await terminal publication/index receipts; do not
+restart or reacquire the source. Five former name-difference cases (CM818500–4)
+are now ledger-verified creations, not merely prepared candidates. No MAIN or
+PowerTools changes, and no assertion of final search visibility yet.

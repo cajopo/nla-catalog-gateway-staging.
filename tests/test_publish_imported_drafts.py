@@ -33,13 +33,22 @@ def test_lock_order_pending_guard_and_durable_receipt(tmp_path, monkeypatch, pen
         assert db == ledger and kwargs["publication_id"] == "gid://shopify/Publication/12"
         return dict(status="publication_complete", published=1, remaining=0, results=[])
 
+    def client(shop, version, client_id, credential):
+        assert (shop, version, client_id, credential) == (
+            config["shop"],
+            "2026-07",
+            "fixture-id",
+            "fixture-only",
+        )
+        return SimpleNamespace(graphql=object())
+
     monkeypatch.setattr(cli.refresh, "pipeline_lock", lock)
     monkeypatch.setattr(
         cli.refresh,
         "document",
         lambda _: {"client_id": "fixture-id", "client_secret": "fixture-only"},
     )
-    monkeypatch.setattr(cli, "ShopifyCaptureHttp", lambda **kw: SimpleNamespace(graphql=object()))
+    monkeypatch.setattr(cli, "ShopifyCaptureHttp", client)
     monkeypatch.setattr(cli, "publish_verified_drafts", publish)
     monkeypatch.setattr(cli.refresh.activation, "sync_directory", lambda _: None)
     if pending:

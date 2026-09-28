@@ -32,10 +32,10 @@ def run(config_path, ledger, publication_id, *, apply=False, max_products=100):
             raise ValueError("pending_cycle_requires_inspection")
         credentials = refresh.document(config["config"] / "shopify-app-credentials.json")
         client = ShopifyCaptureHttp(
-            shop_domain=config["shop"],
-            api_version="2026-07",
-            client_id=credentials["client_id"],
-            client_secret=credentials["client_secret"],
+            config["shop"],
+            "2026-07",
+            credentials["client_id"],
+            credentials["client_secret"],
         )
         result = publish_verified_drafts(
             ledger,
