@@ -915,3 +915,14 @@ unavailable source sets still yield partial completion, never false full coverag
 Verification:162 focused coordinator/retention/systemd/CLI/data-boundary tests pass;
 Ruff and diff checks pass. Independent deferred_export_review APPROVED. No full
 suite, source reacquisition, Shopify write or GitHub CI run for this correction.
+
+Installed code d7e6fc991e36618da994bb511e8b0a37688a0255 for future starts at
+`/opt/nla-staging/importer-d7e6fc9`; archive SHA256
+5fa4212311ce18ca47057b1feeea4d5f0a1a5739d15f8a17ea897b331d588db6.
+Native162 tests PASS with service UMask0077 (first runner omitted it:5 permission
+fixture failures,157pass; corrected runner, no weakened tests/guards).
+Unit SHA2569d0bbf64324cfbfc2b735a3a651573a19e866c525494d1005cd9869cbf04e9fb;
+backup `/opt/nla-staging/nla-market-catalog-before-d7e6fc9.service`.
+Only package/SHA changed; no starts/restarts/schedule changes. At17:04:32UTC,
+separate recovery PID263793 still uses66c82ee, unit hash unchanged; its existing
+refresh20260928t164953z-e53698bc continues. No final recovery receipt yet.
