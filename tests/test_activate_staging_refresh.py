@@ -19,6 +19,10 @@ import pytest
 from scripts import activate_staging_refresh as operator
 
 
+def port_bindings(port):
+    return {"10000/tcp": [{"HostIp": "127.0.0.1", "HostPort": str(port)}]}
+
+
 def plan_values():
     return {
         "capture": "/private/capture",
@@ -80,6 +84,7 @@ class StagingActivationOfflineTests(unittest.TestCase):
             "Id": self.plan.expected_id,
             "Image": self.plan.image,
             "State": {"Running": True},
+            "HostConfig": {"PortBindings": port_bindings(10000)},
         }
         self.containers = {self.plan.current: self.old.copy()}
         self.operations = []
@@ -108,6 +113,8 @@ class StagingActivationOfflineTests(unittest.TestCase):
             "create_runtime": self.create_runtime,
             "select": self.select,
             "ready": self.ready,
+            "serving": self.serving,
+            "retire": self.retire,
             "sync_directory": lambda *_: None,
             "note": self.note,
         }
@@ -140,6 +147,11 @@ class StagingActivationOfflineTests(unittest.TestCase):
         if args[0] == "ps":
             return "\n".join(self.containers)
         if args[0] == "stop":
+            if self.containers[args[-1]]["Id"] == self.plan.expected_id:
+                # Both forward activation and rollback commit a ready replacement
+                # before they may stop the original, still-serving process.
+                assert self.resulting_env() != self.env
+                assert self.ready_checks
             self.containers[args[-1]]["State"] = {"Running": False}
         elif args[0] == "rename":
             assert args[2] not in self.containers
@@ -153,9 +165,10 @@ class StagingActivationOfflineTests(unittest.TestCase):
             raise AssertionError("UNEXPECTED_DOCKER_COMMAND")
         return ""
 
-    def create_runtime(self, plan, name, env_path, reference, values):
+    def create_runtime(self, plan, name, env_path, reference, values, port):
         assert name not in self.containers
         assert reference["Id"] == self.plan.expected_id
+        assert port in operator.RUNTIME_PORTS and port != operator.runtime_port(reference)
         written = dict(line.split("=", 1) for line in env_path.read_text().splitlines())
         self.assertEqual(written, values)
         self.assertEqual(set(written), set(self.env))
@@ -167,6 +180,7 @@ class StagingActivationOfflineTests(unittest.TestCase):
             "Id": identifier,
             "Image": self.plan.image,
             "State": {"Running": False},
+            "HostConfig": {"PortBindings": port_bindings(port)},
         }
         self.created.append((name, written.copy(), identifier))
         return identifier
@@ -195,16 +209,29 @@ class StagingActivationOfflineTests(unittest.TestCase):
         else:
             self.fail("unexpected selection action")
 
-    def ready(self, plan, identifier, expected_pin):
+    def ready(self, plan, name, identifier, expected_pin, port):
         self.ready_checks.append((identifier, expected_pin))
-        self.assertEqual(self.containers[self.plan.current]["Id"], identifier)
+        self.assertEqual(self.containers[name]["Id"], identifier)
+        self.assertEqual(operator.runtime_port(self.containers[name]), port)
         self.assertEqual(self.current_pin, expected_pin)
+        original = next(c for c in self.containers.values() if c["Id"] == self.plan.expected_id)
+        assert original["State"]["Running"], "old process stopped during warmup"
         if identifier == "candidate-id":
             if self.failure == "readiness":
                 raise RuntimeError("INJECTED_READINESS_FAILURE")
             if self.failure == "external_pointer":
                 self.current_pin = "c" * 64
                 raise RuntimeError("INJECTED_EXTERNAL_POINTER_CHANGE")
+
+    def serving(self, name, identifier, port):
+        assert self.containers[name]["Id"] == identifier == self.plan.expected_id
+        assert self.containers[name]["State"]["Running"]
+        assert operator.runtime_port(self.containers[name]) == port
+
+    def retire(self, plan):
+        assert self.containers[plan.backup]["Id"] == plan.expected_id
+        self.docker("update", "--restart", "no", plan.backup)
+        self.docker("stop", "-t", "30", plan.backup)
 
     def note(self, plan, stage):
         self.stages.append(stage)
@@ -354,6 +381,42 @@ class StagingActivationOfflineTests(unittest.TestCase):
         self.assertEqual(self.selections, [])
         self.assertEqual(self.operations, [])
         self.assertEqual(self.resulting_env(), self.env)
+
+    def test_next_cycle_alternates_back_to_first_port(self):
+        self.old["HostConfig"]["PortBindings"] = port_bindings(10001)
+        self.module.apply(self.plan, self.checked)
+        self.assertEqual(operator.runtime_port(self.containers[self.plan.current]), 10000)
+        self.assertFalse(self.containers[self.plan.backup]["State"]["Running"])
+
+    def test_rollback_warmup_failure_keeps_original_serving(self):
+        self.failure = "readiness"
+
+        def ready(*args):
+            self.ready(*args)
+            raise RuntimeError("restoration_warmup_failed")
+
+        with patch.object(self.module, "ready", ready):
+            with self.assertRaisesRegex(RuntimeError, "restoration_warmup_failed"):
+                self.module.apply(self.plan, self.checked)
+        self.assertTrue(self.containers[self.plan.current]["State"]["Running"])
+        self.assertEqual(self.containers[self.plan.current]["Id"], self.plan.expected_id)
+        self.assertEqual(self.resulting_env(), self.env)
+
+    def test_unready_survivor_does_not_stop_candidate(self):
+        self.failure = "readiness"
+        with patch.object(self.module, "serving", side_effect=OSError("old_unready")):
+            with self.assertRaisesRegex(OSError, "old_unready"):
+                self.module.apply(self.plan, self.checked)
+        self.assertTrue(self.containers[self.plan.candidate]["State"]["Running"])
+        self.assertEqual([s[0] for s in self.selections], ["promote"])
+
+    def test_retirement_failure_is_not_completion_or_automatic_rollback(self):
+        with patch.object(self.module, "retire", side_effect=OSError("stop_failed")):
+            with self.assertRaisesRegex(self.module.InspectBeforeRetry, "committed_state"):
+                self.module.apply(self.plan, self.checked)
+        self.assertTrue(self.containers[self.plan.backup]["State"]["Running"])
+        self.assertEqual(self.resulting_env()["NLA_ACTIVATION_SHA256"], self.promoted_pin)
+        self.assertFalse(any(s.startswith("ACTIVATED_READY") for s in self.stages))
 
 
 def test_plan_names_and_evidence_are_not_tied_to_one_capture():
@@ -530,14 +593,23 @@ def test_selection_preserves_existing_pointer_cli_contract(monkeypatch, action, 
 @pytest.mark.parametrize("response", [200, 503, OSError("unavailable")])
 def test_readiness_has_pinned_container_and_pointer_and_bounded_wait(monkeypatch, response):
     plan = operator.load_plan(plan_values())
-    observations = iter([0, 1, 1200])
+    observations = iter([0, 1, 1, 8, 8] if response == 200 else [0, 1, 1200])
     monkeypatch.setattr(operator.time, "monotonic", lambda: next(observations))
     monkeypatch.setattr(operator.time, "sleep", lambda _: None)
-    monkeypatch.setattr(operator, "inspect", lambda _: {"Id": "new", "State": {"Running": True}})
+
+    def inspect(name):
+        assert name == plan.candidate
+        return {
+            "Id": "new",
+            "State": {"Running": True},
+            "HostConfig": {"PortBindings": port_bindings(10001)},
+        }
+
+    monkeypatch.setattr(operator, "inspect", inspect)
     monkeypatch.setattr(operator, "pointer", lambda _: ({}, "new-pin"))
 
     def open_url(url, timeout):
-        assert url == "http://127.0.0.1:10000/readyz" and timeout == 3
+        assert url == "http://127.0.0.1:10001/readyz" and timeout == 3
         if isinstance(response, OSError):
             raise response
         return nullcontext(SimpleNamespace(status=response))
@@ -546,10 +618,10 @@ def test_readiness_has_pinned_container_and_pointer_and_bounded_wait(monkeypatch
         operator.urllib.request, "build_opener", lambda _: SimpleNamespace(open=open_url)
     )
     if response == 200:
-        operator.ready(plan, "new", "new-pin")
+        operator.ready(plan, plan.candidate, "new", "new-pin", 10001)
     else:
         with pytest.raises(RuntimeError, match="readiness_timeout"):
-            operator.ready(plan, "new", "new-pin")
+            operator.ready(plan, plan.candidate, "new", "new-pin", 10001)
 
 
 def test_stage_note_is_exclusive_and_contains_no_runtime_values(tmp_path, capsys):
@@ -663,6 +735,7 @@ def preflight_case(tmp_path, monkeypatch):
             "Image": plan.image,
             "State": {"Running": True},
             "Config": {"Env": operator.env_bytes(values).decode().splitlines()},
+            "HostConfig": {"PortBindings": port_bindings(10000)},
         },
         plan.verifier: {
             "Image": plan.image,
@@ -856,7 +929,7 @@ def test_directory_fsync_closes_descriptor_even_on_failure(monkeypatch, fail):
 
 
 @pytest.mark.parametrize(
-    "mismatch", [None, "Image", "Config", "HostConfig", "env-key", "env-value", "expected"]
+    "mismatch", [None, "Image", "Config", "HostConfig", "env-key", "env-value", "expected", "port"]
 )
 def test_runtime_creation_preserves_image_security_environment_and_mount(monkeypatch, mismatch):
     plan = operator.load_plan(plan_values())
@@ -893,7 +966,9 @@ def test_runtime_creation_preserves_image_security_environment_and_mount(monkeyp
         "NLA_EVIDENCE_CODE_SHA": "new-code",
         "OTHER": "unchanged",
     }
+    reference["HostConfig"]["PortBindings"] = port_bindings(10000)
     new = {**deepcopy(reference), "Image": plan.image, "Id": "new-id"}
+    new["HostConfig"]["PortBindings"] = port_bindings(10001)
     new["Config"]["Env"] = operator.env_bytes(expected).decode().splitlines()
     if mismatch == "Image":
         new["Image"] = "other"
@@ -907,15 +982,17 @@ def test_runtime_creation_preserves_image_security_environment_and_mount(monkeyp
         new["Config"]["Env"][-1] = "OTHER=changed"
     elif mismatch == "expected":
         expected["NLA_ACTIVATION_SHA256"] = "unexpected"
+    elif mismatch == "port":
+        new["HostConfig"]["PortBindings"] = port_bindings(10000)
     calls = []
     monkeypatch.setattr(operator, "docker", lambda *args: calls.append(args))
     monkeypatch.setattr(operator, "inspect", lambda name: new)
     if mismatch:
         with pytest.raises(AssertionError):
-            operator.create_runtime(plan, plan.candidate, "private.env", reference, expected)
+            operator.create_runtime(plan, plan.candidate, "private.env", reference, expected, 10001)
     else:
         assert (
-            operator.create_runtime(plan, plan.candidate, "private.env", reference, expected)
+            operator.create_runtime(plan, plan.candidate, "private.env", reference, expected, 10001)
             == "new-id"
         )
     args = calls[0]
@@ -929,7 +1006,7 @@ def test_runtime_creation_preserves_image_security_environment_and_mount(monkeyp
         ("--cpus", "2"),
         ("--cap-drop", "ALL"),
         ("--pids-limit", "128"),
-        ("-p", "127.0.0.1:10000:10000"),
+        ("-p", "127.0.0.1:10001:10000"),
         ("--security-opt", "no-new-privileges"),
         ("--env-file", "private.env"),
     ):
@@ -937,7 +1014,7 @@ def test_runtime_creation_preserves_image_security_environment_and_mount(monkeyp
     assert "--read-only" in args
 
 
-@pytest.mark.parametrize("mismatch", ["container", "stopped", "pointer"])
+@pytest.mark.parametrize("mismatch", ["container", "stopped", "pointer", "port"])
 def test_readiness_rejects_identity_change_before_http(monkeypatch, mismatch):
     plan = operator.load_plan(plan_values())
     monkeypatch.setattr(
@@ -946,6 +1023,7 @@ def test_readiness_rejects_identity_change_before_http(monkeypatch, mismatch):
         lambda _: {
             "Id": "other" if mismatch == "container" else "new",
             "State": {"Running": mismatch != "stopped"},
+            "HostConfig": {"PortBindings": port_bindings(10000 if mismatch == "port" else 10001)},
         },
     )
     monkeypatch.setattr(
@@ -959,7 +1037,7 @@ def test_readiness_rejects_identity_change_before_http(monkeypatch, mismatch):
         ),
     )
     with pytest.raises(AssertionError):
-        operator.ready(plan, "new", "pin")
+        operator.ready(plan, plan.candidate, "new", "pin", 10001)
 
 
 def test_optimized_python_refuses_preflight(monkeypatch):
@@ -982,3 +1060,127 @@ def test_malformed_arguments_do_not_echo_values(capsys):
     assert operator.main(["--plan", "/private/plan", "--secret=SYNTHETIC_PRIVATE_VALUE"]) == 1
     output = capsys.readouterr()
     assert not output.err and "SYNTHETIC_PRIVATE_VALUE" not in output.out
+
+
+@pytest.mark.parametrize(
+    "bindings",
+    [
+        {},
+        {"10000/tcp": [{"HostIp": "0.0.0.0", "HostPort": "10000"}]},  # noqa: S104 -- rejection fixture
+        {"10000/tcp": [{"HostIp": "::1", "HostPort": "10001"}]},
+        port_bindings(10002),
+        {**port_bindings(10000), "9000/tcp": [{"HostIp": "127.0.0.1", "HostPort": "9000"}]},
+    ],
+)
+def test_only_exact_private_port_bindings_are_accepted(bindings):
+    with pytest.raises(operator.InspectBeforeRetry, match="port_binding"):
+        operator.runtime_port({"HostConfig": {"PortBindings": bindings}})
+
+
+@pytest.mark.parametrize("failure", [None, "identity", "stopped", "port", "http"])
+def test_survivor_must_be_the_expected_ready_private_runtime(monkeypatch, failure):
+    state = {
+        "Id": "other" if failure == "identity" else "old",
+        "State": {"Running": failure != "stopped"},
+        "HostConfig": {"PortBindings": port_bindings(10001 if failure == "port" else 10000)},
+    }
+    monkeypatch.setattr(operator, "inspect", lambda _: state)
+    requests = []
+
+    def open_url(url, timeout):
+        requests.append((url, timeout))
+        return nullcontext(SimpleNamespace(status=503 if failure == "http" else 200))
+
+    monkeypatch.setattr(
+        operator.urllib.request, "build_opener", lambda _: SimpleNamespace(open=open_url)
+    )
+    with pytest.raises(AssertionError) if failure else nullcontext():
+        operator.serving("old-name", "old", 10000)
+    assert requests == (
+        [] if failure in {"identity", "stopped", "port"} else [("http://127.0.0.1:10000/readyz", 3)]
+    )
+
+
+@pytest.mark.parametrize("failure", [None, "identity", "still-running", "edge-down"])
+def test_retirement_checks_actual_stop_and_edge_before_completion(monkeypatch, failure):
+    plan = operator.load_plan(plan_values())
+    state = {
+        "Id": "other" if failure == "identity" else plan.expected_id,
+        "State": {"Running": True},
+    }
+    monkeypatch.setattr(operator, "inspect", lambda _: state)
+    commands = []
+
+    def docker(*args):
+        commands.append(args)
+        if args[0] == "stop" and failure != "still-running":
+            state["State"]["Running"] = False
+
+    monkeypatch.setattr(operator, "docker", docker)
+    observations = iter([0, 1, 20])
+    monkeypatch.setattr(operator.time, "monotonic", lambda: next(observations))
+    monkeypatch.setattr(operator.time, "sleep", lambda _: None)
+
+    def open_url(url, timeout):
+        assert not state["State"]["Running"]
+        assert url == operator.EDGE_READY_URL and timeout == 3
+        if failure == "edge-down":
+            raise OSError("not ready")
+        return nullcontext(SimpleNamespace(status=200))
+
+    monkeypatch.setattr(
+        operator.urllib.request, "build_opener", lambda _: SimpleNamespace(open=open_url)
+    )
+    expected = operator.InspectBeforeRetry if failure == "edge-down" else AssertionError
+    with pytest.raises(expected) if failure else nullcontext():
+        operator.retire(plan)
+    assert commands == (
+        []
+        if failure == "identity"
+        else [("update", "--restart", "no", plan.backup), ("stop", "-t", "30", plan.backup)]
+    )
+
+
+def test_readiness_requires_uninterrupted_healthy_settle_window(monkeypatch):
+    plan = operator.load_plan(plan_values())
+    state = {
+        "Id": "new",
+        "State": {"Running": True},
+        "HostConfig": {"PortBindings": port_bindings(10001)},
+    }
+    monkeypatch.setattr(operator, "inspect", lambda _: state)
+    monkeypatch.setattr(operator, "pointer", lambda _: ({}, "pin"))
+    # 200 at1; unhealthy at5 resets; then 200 at8 and15 are required.
+    observations = iter([0, 1, 1, 5, 8, 8, 15, 15])
+    statuses = iter([200, 503, 200, 200])
+    monkeypatch.setattr(operator.time, "monotonic", lambda: next(observations))
+    monkeypatch.setattr(operator.time, "sleep", lambda _: None)
+    monkeypatch.setattr(
+        operator.urllib.request,
+        "build_opener",
+        lambda _: SimpleNamespace(
+            open=lambda *args, **kwargs: nullcontext(SimpleNamespace(status=next(statuses)))
+        ),
+    )
+    operator.ready(plan, plan.candidate, "new", "pin", 10001)
+    assert list(statuses) == []
+
+
+def test_static_edge_config_preserves_policy_and_enables_both_private_upstreams():
+    config = (Path(operator.__file__).parents[1] / "ops/caddy/Caddyfile.staging").read_text()
+    assert config.count("reverse_proxy 127.0.0.1:10000 127.0.0.1:10001 {") == 2
+    assert config.count("import nla_catalog_upstreams") == 2
+    for directive in (
+        "admin off",
+        "lb_policy first",
+        "health_uri /readyz",
+        "health_interval 2s",
+        "health_timeout 1s",
+        "fail_duration 3s",
+        "lb_try_duration 5s",
+        "max_size 64KB",
+        'respond "Not found" 404',
+        "method POST",
+        "strict_sni_host on",
+    ):
+        assert directive in config

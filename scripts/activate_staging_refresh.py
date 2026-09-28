@@ -26,6 +26,11 @@ FILES = {
     "catalog-projection.v1.sqlite3",
 }
 ENV_KEYS = {"NLA_ACTIVATION_SHA256", "NLA_EVIDENCE_CODE_SHA"}
+RUNTIME_PORTS = (10000, 10001)
+# Caddy probes every 2s (1s timeout), with passive failures retained for 3s.
+# Observe sustained direct readiness before retiring the other upstream.
+READY_SETTLE_SECONDS = 6
+EDGE_READY_URL = "https://catalog-staging.nextlevelarena.it/readyz"
 
 
 @dataclass(frozen=True)
@@ -234,6 +239,7 @@ def preflight(plan):
     assert verifier["State"]["ExitCode"] == 0 and not verifier["State"]["OOMKilled"]
     old = inspect(plan.current)
     assert old["Id"] == plan.expected_id and old["Image"] == plan.image and old["State"]["Running"]
+    runtime_port(old)
     names = docker("ps", "-a", "--format", "{{.Names}}").splitlines()
     for name in (
         plan.backup,
@@ -294,7 +300,16 @@ def install(source, destination):
     sync_directory(destination.parent)
 
 
-def create_runtime(plan, name, env_path, reference, expected_values):
+def runtime_port(container):
+    bindings = container["HostConfig"]["PortBindings"]
+    for port in RUNTIME_PORTS:
+        if bindings == {"10000/tcp": [{"HostIp": "127.0.0.1", "HostPort": str(port)}]}:
+            return port
+    raise InspectBeforeRetry("unexpected_runtime_port_binding")
+
+
+def create_runtime(plan, name, env_path, reference, expected_values, port):
+    assert port in RUNTIME_PORTS and port != runtime_port(reference)
     docker(
         "create",
         "--name",
@@ -323,11 +338,12 @@ def create_runtime(plan, name, env_path, reference, expected_values):
         "--tmpfs",
         "/tmp:rw,noexec,nosuid,size=64m",  # noqa: S108 -- isolated container tmpfs, not host /tmp
         "-p",
-        "127.0.0.1:10000:10000",
+        f"127.0.0.1:{port}:10000",
         plan.image,
     )
     new = inspect(name)
     assert new["Image"] == plan.image
+    assert runtime_port(new) == port
     for key in ("User", "Entrypoint", "Cmd", "WorkingDir", "ExposedPorts"):
         assert new["Config"][key] == reference["Config"][key]
     for key in (
@@ -339,7 +355,6 @@ def create_runtime(plan, name, env_path, reference, expected_values):
         "NanoCpus",
         "PidsLimit",
         "Tmpfs",
-        "PortBindings",
         "Mounts",
         "LogConfig",
         "NetworkMode",
@@ -386,25 +401,65 @@ def select(plan, action, expected, target=None):
         raise InspectBeforeRetry("selection_outcome_requires_inspection")
 
 
-def ready(plan, expected_id, expected_pin):
+def ready(plan, name, expected_id, expected_pin, port):
+    assert port in RUNTIME_PORTS
     opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
     started = time.monotonic()
+    stable_since = None
     while time.monotonic() - started < 1200:
-        state = inspect(plan.current)
+        state = inspect(name)
         assert state["Id"] == expected_id and state["State"]["Running"]
+        assert runtime_port(state) == port
         assert pointer(plan)[1] == expected_pin
         try:
-            with opener.open("http://127.0.0.1:10000/readyz", timeout=3) as response:
+            with opener.open(f"http://127.0.0.1:{port}/readyz", timeout=3) as response:
                 if response.status == 200:
-                    return
+                    now = time.monotonic()
+                    if stable_since is None:
+                        stable_since = now
+                    elif now - stable_since >= READY_SETTLE_SECONDS:
+                        return
+                else:
+                    stable_since = None
         except OSError:
-            pass
+            stable_since = None
         time.sleep(5)
     raise RuntimeError("readiness_timeout")
 
 
+def serving(name, expected_id, port):
+    """The survivor must still serve before a possibly serving candidate stops."""
+    state = inspect(name)
+    assert state["Id"] == expected_id and state["State"]["Running"]
+    assert runtime_port(state) == port
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    with opener.open(f"http://127.0.0.1:{port}/readyz", timeout=3) as response:
+        assert response.status == 200
+
+
+def retire(plan):
+    assert inspect(plan.backup)["Id"] == plan.expected_id
+    docker("update", "--restart", "no", plan.backup)
+    docker("stop", "-t", "30", plan.backup)
+    state = inspect(plan.backup)
+    assert state["Id"] == plan.expected_id and not state["State"]["Running"]
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    started = time.monotonic()
+    while time.monotonic() - started < 20:
+        try:
+            with opener.open(EDGE_READY_URL, timeout=3) as response:
+                if response.status == 200:
+                    return
+        except OSError:
+            pass
+        time.sleep(1)
+    raise InspectBeforeRetry("edge_readiness_requires_inspection")
+
+
 def apply(plan, checked):
     old, old_bytes, values, before, manifest, source, destination = checked
+    old_port = runtime_port(old)
+    new_port = next(port for port in RUNTIME_PORTS if port != old_port)
     plan.work.mkdir(mode=0o700)
     private_write(plan.work / "before-runtime.env", old_bytes)
     note(plan, "PREFLIGHT_ACCEPTED")
@@ -413,7 +468,7 @@ def apply(plan, checked):
     updated = {**values, "NLA_ACTIVATION_SHA256": new_pin, "NLA_EVIDENCE_CODE_SHA": plan.new_code}
     new_env = plan.work / "candidate-runtime.env"
     private_write(new_env, env_bytes(updated))
-    new_id = create_runtime(plan, plan.candidate, new_env, old, updated)
+    new_id = create_runtime(plan, plan.candidate, new_env, old, updated, new_port)
     assert inspect(plan.current)["Id"] == plan.expected_id and pointer(plan)[1] == plan.old_pin
     assert private_read(plan.config / "accepted-runtime.env") == old_bytes
     select(plan, "promote", plan.old_pin, manifest)
@@ -422,17 +477,17 @@ def apply(plan, checked):
     committed = False
     try:
         note(plan, "DATASET_POINTER_PROMOTED")
-        docker("stop", "-t", "30", plan.current)
+        docker("start", plan.candidate)
+        note(plan, "REPLACEMENT_STARTED_OLD_RUNTIME_SERVING")
+        ready(plan, plan.candidate, new_id, new_pin, new_port)
+        assert inspect(plan.current)["Id"] == plan.expected_id
         docker("rename", plan.current, plan.backup)
-        docker("update", "--restart", "no", plan.backup)
         docker("rename", plan.candidate, plan.current)
-        docker("start", plan.current)
-        note(plan, "REPLACEMENT_STARTED")
-        ready(plan, new_id, new_pin)
         assert private_read(plan.config / "accepted-runtime.env") == old_bytes
         os.replace(new_env, plan.config / "accepted-runtime.env")
         committed = True
         sync_directory(plan.config)
+        retire(plan)
         note(plan, "ACTIVATED_READY_OLD_PACKAGE_AND_CONTAINER_RETAINED")
     except Exception:
         if committed:
@@ -440,20 +495,21 @@ def apply(plan, checked):
         if pointer(plan)[1] != new_pin:
             raise InspectBeforeRetry("external_pointer_change_no_automatic_rollback") from None
         names = docker("ps", "-a", "--format", "{{.Names}}").splitlines()
-        if plan.current in names:
-            current = inspect(plan.current)
-            if current["Id"] == plan.expected_id:
-                docker("stop", "-t", "30", plan.current)
-                docker("rename", plan.current, plan.backup)
-                docker("update", "--restart", "no", plan.backup)
-            elif current["Id"] == new_id:
-                docker("stop", "-t", "30", plan.current)
-                docker("rename", plan.current, plan.failed)
-                docker("update", "--restart", "no", plan.failed)
-            else:
-                raise InspectBeforeRetry("unexpected_runtime_no_automatic_rollback") from None
-        assert inspect(plan.backup)["Id"] == plan.expected_id
-        docker("update", "--restart", "no", plan.backup)
+        # Keep the original process alive: its loaded generation remains valid,
+        # but restarting it with its original activation pin would not be safe.
+        old_name = plan.backup if plan.backup in names else plan.current
+        survivor = inspect(old_name)
+        if survivor["Id"] != plan.expected_id or not survivor["State"]["Running"]:
+            raise InspectBeforeRetry("unexpected_runtime_no_automatic_rollback") from None
+        serving(old_name, plan.expected_id, old_port)
+        failed_name = plan.candidate if plan.candidate in names else plan.current
+        failed = inspect(failed_name)
+        if failed["Id"] != new_id:
+            raise InspectBeforeRetry("unexpected_candidate_no_automatic_rollback") from None
+        docker("update", "--restart", "no", failed_name)
+        if failed["State"]["Running"]:
+            docker("stop", "-t", "30", failed_name)
+        docker("rename", failed_name, plan.failed)
         select(plan, "rollback", new_pin)
         rollback_pin = pointer_pin(before["currentManifestSha256"], manifest)
         if pointer(plan)[1] != rollback_pin:
@@ -461,13 +517,18 @@ def apply(plan, checked):
         restored_values = {**values, "NLA_ACTIVATION_SHA256": rollback_pin}
         restored_env = plan.work / "rollback-runtime.env"
         private_write(restored_env, env_bytes(restored_values))
-        restored_id = create_runtime(plan, plan.restored, restored_env, old, restored_values)
+        restored_id = create_runtime(
+            plan, plan.restored, restored_env, old, restored_values, new_port
+        )
+        docker("start", plan.restored)
+        ready(plan, plan.restored, restored_id, rollback_pin, new_port)
+        if old_name == plan.current:
+            docker("rename", plan.current, plan.backup)
         docker("rename", plan.restored, plan.current)
-        docker("start", plan.current)
-        ready(plan, restored_id, rollback_pin)
         assert private_read(plan.config / "accepted-runtime.env") == old_bytes
         os.replace(restored_env, plan.config / "accepted-runtime.env")
         sync_directory(plan.config)
+        retire(plan)
         note(plan, "ROLLBACK_READY_ACTUAL_POINTER_REPINNED")
         raise RuntimeError("candidate_not_accepted_rollback_completed") from None
 
