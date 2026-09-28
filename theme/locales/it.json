@@ -4,6 +4,7 @@
     "family": "Tipo di prodotto", "family_all": "Tutto", "family_single": "Singole",
     "family_sealed": "Sigillato", "family_accessory": "Accessori",
     "submit_search": "Premi Cerca per trovare i prodotti di questa categoria.",
+    "product_search_label": "Nome prodotto", "product_placeholder": "Digita il nome di un prodotto",
     "magic": "Magic", "pokemon": "Pokémon", "yugioh": "Yu-Gi-Oh!", "one_piece": "One Piece",
     "search_label": "Nome o codice", "placeholder": "Digita un nome o codice", "search": "Cerca",
     "stock_only": "Solo prodotti disponibili", "suggestions": "Suggerimenti", "retry": "Riprova",

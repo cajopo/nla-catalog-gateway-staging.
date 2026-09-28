@@ -4,6 +4,7 @@
     "family": "Product type", "family_all": "All products", "family_single": "Single cards",
     "family_sealed": "Sealed products", "family_accessory": "Accessories",
     "submit_search": "Press Search to find products in this category.",
+    "product_search_label": "Product name", "product_placeholder": "Enter a product name",
     "magic": "Magic", "pokemon": "Pokémon", "yugioh": "Yu-Gi-Oh!", "one_piece": "One Piece",
     "search_label": "Name or code", "placeholder": "Enter a name or code", "search": "Search",
     "stock_only": "In-stock products only", "suggestions": "Suggestions", "retry": "Try again",

@@ -210,6 +210,7 @@ assert.equal(page.expansion.children.at(-1).value, rawSet);
 const pending = [];
 for (const family of ['all', 'single', 'sealed', 'accessory']) {
   const familyPage = component();
+  familyPage.message = key => key;
   familyPage.family.value = family;
   familyPage.input.value = 'Élite display %_'; familyPage.stock.checked = true;
   familyPage.resetMetadata('OLD', 'Rare');
@@ -222,6 +223,10 @@ for (const family of ['all', 'single', 'sealed', 'accessory']) {
   assert.equal(familyLoad.request.filters.inStock, true);
   assert.deepEqual(clone(familyLoad.options), { navigate: true }, 'family change resets cursor');
   assert.equal(familyPage.metadataFilters.hidden, family !== 'single');
+  assert.equal(familyPage.querySelector('[data-query-label]').textContent,
+    family === 'single' ? 'search_label' : 'product_search_label');
+  assert.equal(familyPage.input.attributes.get('placeholder'),
+    family === 'single' ? 'placeholder' : 'product_placeholder');
   const familyUrl = familyPage.url(familyLoad.request, 'family-cursor', generation);
   assert.equal(familyUrl.searchParams.get('family'), family);
   location.href = familyUrl.href;

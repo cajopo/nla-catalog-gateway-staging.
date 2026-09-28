@@ -34,7 +34,7 @@ Renders game-scoped gateway search without native predictive-search fallback.
         </select>
       </label>
       <label class="nla-catalog__query">
-        <span>{{ 'nla_catalog.search_label' | t }}</span>
+        <span data-query-label>{{ 'nla_catalog.search_label' | t }}</span>
         <input name="q" type="search" maxlength="256" autocomplete="off" spellcheck="false"
           role="combobox" aria-autocomplete="list" aria-expanded="false"
           aria-controls="NlaSuggestions-{{ instance_id | escape }}"
@@ -87,6 +87,10 @@ Renders game-scoped gateway search without native predictive-search fallback.
     <span data-message="all_expansions">{{ 'nla_catalog.all_expansions' | t }}</span>
     <span data-message="all_rarities">{{ 'nla_catalog.all_rarities' | t }}</span>
     <span data-message="submit_search">{{ 'nla_catalog.submit_search' | t }}</span>
+    <span data-message="search_label">{{ 'nla_catalog.search_label' | t }}</span>
+    <span data-message="placeholder">{{ 'nla_catalog.placeholder' | t }}</span>
+    <span data-message="product_search_label">{{ 'nla_catalog.product_search_label' | t }}</span>
+    <span data-message="product_placeholder">{{ 'nla_catalog.product_placeholder' | t }}</span>
   </div>
   <noscript><p>{{ 'nla_catalog.javascript_required' | t }}</p></noscript>
 </nla-catalog-search>
@@ -224,6 +228,9 @@ Renders game-scoped gateway search without native predictive-search fallback.
         if (this.metadataFilters) {
           this.metadataFilters.hidden = this.dataset.mode === 'header' || this.family.value !== 'single';
           this.metadataFilters.disabled = this.metadataFilters.hidden || !this.game.value;
+          const single = this.family.value === 'single';
+          this.querySelector('[data-query-label]').textContent = this.message(single ? 'search_label' : 'product_search_label');
+          this.input.setAttribute('placeholder', this.message(single ? 'placeholder' : 'product_placeholder'));
         }
       }
 
