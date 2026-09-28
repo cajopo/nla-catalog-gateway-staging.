@@ -24,6 +24,15 @@ Renders game-scoped gateway search without native predictive-search fallback.
           <option value="one-piece">{{ 'nla_catalog.one_piece' | t }}</option>
         </select>
       </label>
+      <label>
+        <span>{{ 'nla_catalog.family' | t }}</span>
+        <select name="family">
+          <option value="all">{{ 'nla_catalog.family_all' | t }}</option>
+          <option value="single" selected>{{ 'nla_catalog.family_single' | t }}</option>
+          <option value="sealed">{{ 'nla_catalog.family_sealed' | t }}</option>
+          <option value="accessory">{{ 'nla_catalog.family_accessory' | t }}</option>
+        </select>
+      </label>
       <label class="nla-catalog__query">
         <span>{{ 'nla_catalog.search_label' | t }}</span>
         <input name="q" type="search" maxlength="256" autocomplete="off" spellcheck="false"
@@ -77,6 +86,7 @@ Renders game-scoped gateway search without native predictive-search fallback.
     <span data-message="image_notice">{{ 'nla_catalog.image_notice' | t }}</span>
     <span data-message="all_expansions">{{ 'nla_catalog.all_expansions' | t }}</span>
     <span data-message="all_rarities">{{ 'nla_catalog.all_rarities' | t }}</span>
+    <span data-message="submit_search">{{ 'nla_catalog.submit_search' | t }}</span>
   </div>
   <noscript><p>{{ 'nla_catalog.javascript_required' | t }}</p></noscript>
 </nla-catalog-search>
@@ -86,9 +96,9 @@ Renders game-scoped gateway search without native predictive-search fallback.
   nla-catalog-search [hidden] { display: none !important; }
   nla-catalog-search * { box-sizing: border-box; }
   nla-catalog-search form { margin: 0; }
-  .nla-catalog__bar { display: flex; align-items: end; gap: 12px; }
+  .nla-catalog__bar { display: flex; flex-wrap: wrap; align-items: end; gap: 12px; }
   .nla-catalog__bar label { display: grid; gap: 6px; min-width: 0; font-size: 14px; }
-  .nla-catalog__query { flex: 1; }
+  .nla-catalog__query { flex: 1 1 220px; }
   nla-catalog-search input[type="search"], nla-catalog-search select, nla-catalog-search button {
     min-height: 44px; border: 1px solid #646a78; border-radius: 8px; padding: 10px 12px;
     background: #15171d; color: #f6f8fb; font: inherit; max-width: 100%;
@@ -138,6 +148,7 @@ Renders game-scoped gateway search without native predictive-search fallback.
         this.imageCache ||= new Map();
         this.form = this.querySelector('form');
         this.game = this.form.elements.game;
+        this.family = this.form.elements.family;
         this.input = this.form.elements.q;
         this.stock = this.form.elements.stock;
         this.expansion = this.form.elements.expansionCode;
@@ -168,6 +179,11 @@ Renders game-scoped gateway search without native predictive-search fallback.
         });
         on(this.stock, 'change', () => {
           this.cancel(); this.hideSuggestions();
+          if (this.dataset.mode === 'header') this.load({ suggest: true }); else this.submit();
+        });
+        on(this.family, 'change', () => {
+          this.resetMetadata();
+          this.cancel(); this.page.hidden = true; this.hideSuggestions();
           if (this.dataset.mode === 'header') this.load({ suggest: true }); else this.submit();
         });
         for (const select of [this.expansion, this.rarity]) on(select, 'change', () => this.submit());
@@ -205,7 +221,10 @@ Renders game-scoped gateway search without native predictive-search fallback.
 
       cancel() {
         clearTimeout(this.timer); this.controller?.abort(); this.imageController?.abort(); this.sequence += 1;
-        if (this.metadataFilters) this.metadataFilters.disabled = this.dataset.mode === 'header' || !this.game.value;
+        if (this.metadataFilters) {
+          this.metadataFilters.hidden = this.dataset.mode === 'header' || this.family.value !== 'single';
+          this.metadataFilters.disabled = this.metadataFilters.hidden || !this.game.value;
+        }
       }
 
       hideSuggestions() {
@@ -215,11 +234,11 @@ Renders game-scoped gateway search without native predictive-search fallback.
 
       request() {
         const filters = { inStock: this.stock.checked ? true : null, productSubtype: null };
-        if (this.dataset.mode !== 'header') {
+        if (this.dataset.mode !== 'header' && this.family.value === 'single') {
           if (this.expansion.value) filters.expansionCode = this.expansion.value;
           if (this.rarity.value) filters.rarity = this.rarity.value;
         }
-        return { contractVersion: 1, game: this.game.value, productFamily: 'single', q: this.input.value.trim() || null,
+        return { contractVersion: 1, game: this.game.value, productFamily: this.family.value, q: this.input.value.trim() || null,
           filters, pageSize: 24, sort: 'product_gid_asc' };
       }
 
@@ -249,18 +268,23 @@ Renders game-scoped gateway search without native predictive-search fallback.
         this.nextCursor = null; this.generation = null; this.pageRequest = null; this.status.textContent = '';
         const state = new URL(location.href).searchParams;
         this.game.value = state.get('game') || '';
+        this.family.value = state.has('family') ? state.get('family') : 'single';
         this.input.value = state.get('q') || '';
         this.stock.checked = state.get('stock') === '1';
-        const invalid = ['expansionCode', 'rarity'].some(key => state.getAll(key).length > 1
-          || (state.has(key) && !this.metadataValue(state.get(key))));
+        const invalid = state.getAll('family').length > 1
+          || !['all', 'single', 'sealed', 'accessory'].includes(this.family.value)
+          || ['expansionCode', 'rarity'].some(key => state.getAll(key).length > 1
+            || (state.has(key) && (!this.metadataValue(state.get(key)) || this.family.value !== 'single')));
         this.resetMetadata(...(!invalid && this.dataset.mode !== 'header'
           ? [state.get('expansionCode') || '', state.get('rarity') || ''] : []));
+        this.cancel();
         if (this.dataset.mode !== 'header') this.load({ cursor: state.get('cursor'), generation: state.get('generation'), invalid });
       }
 
       url(request, cursor = null, generation = null) {
         const url = new URL(this.dataset.searchUrl, location.origin);
         url.searchParams.set('view', 'nla-catalog'); url.searchParams.set('game', request.game);
+        url.searchParams.set('family', request.productFamily);
         if (request.q) url.searchParams.set('q', request.q);
         if (request.filters.inStock) url.searchParams.set('stock', '1');
         for (const key of ['expansionCode', 'rarity']) {
@@ -314,6 +338,9 @@ Renders game-scoped gateway search without native predictive-search fallback.
           this.status.textContent = this.game.options[0].textContent; return;
         }
         if (options.suggest && !request.q) return;
+        if (options.suggest && ['all', 'sealed', 'accessory'].includes(request.productFamily)) {
+          this.hideSuggestions(); this.status.textContent = this.message('submit_search'); return;
+        }
         this.lastLoad = options;
         this.recovery.hidden = true;
         if (!options.suggest) {
@@ -326,12 +353,15 @@ Renders game-scoped gateway search without native predictive-search fallback.
           if (!this.dataset.endpoint || endpoint.origin !== location.origin || !endpoint.pathname.startsWith('/apps/') || endpoint.search || endpoint.hash) throw new Error('unconfigured');
           if ((request.q?.length || 0) > 256 || (options.cursor?.length || 0) > 16384 || Boolean(options.cursor) !== Boolean(options.generation)) throw new Error('invalid');
           if (options.invalid || ['expansionCode', 'rarity'].some(key => request.filters[key] !== undefined
-            && !this.metadataValue(request.filters[key]))) throw new Error('invalid');
+            && (!this.metadataValue(request.filters[key]) || request.productFamily !== 'single'))
+            || !['all', 'single', 'sealed', 'accessory'].includes(request.productFamily)) throw new Error('invalid');
           const controller = new AbortController(); this.controller = controller;
           timer = setTimeout(() => controller.abort(), 8000);
           const body = { contractVersion: 1, cursor: options.cursor || null, request };
-          if (request.q && !body.cursor) body.includeSuggestions = true;
-          if (this.dataset.mode !== 'header' && !options.suggest) body.includeFacets = true;
+          if (request.productFamily === 'single') {
+            if (request.q && !body.cursor) body.includeSuggestions = true;
+            if (this.dataset.mode !== 'header' && !options.suggest) body.includeFacets = true;
+          }
           const response = await fetch(endpoint, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
             body: JSON.stringify(body), credentials: 'same-origin', signal: controller.signal, redirect: 'error', cache: 'no-store' });
           const data = await response.json();
@@ -369,7 +399,7 @@ Renders game-scoped gateway search without native predictive-search fallback.
           this.querySelector('[data-action="restart"]').hidden = key !== 'restart';
         } finally {
           clearTimeout(timer);
-          if (sequence === this.sequence) this.metadataFilters.disabled = this.dataset.mode === 'header';
+          if (sequence === this.sequence) this.metadataFilters.disabled = this.metadataFilters.hidden || !this.game.value;
         }
       }
 
@@ -386,8 +416,12 @@ Renders game-scoped gateway search without native predictive-search fallback.
         const ids = new Set();
         for (const item of page.items) {
           if (!/^gid:\/\/shopify\/Product\/[1-9][0-9]*$/.test(item.productGid) || ids.has(item.productGid)
-            || item.game !== body.request.game || item.productFamily !== 'single' || typeof item.handle !== 'string' || !item.handle
-            || typeof item.canonicalCardName !== 'string' || typeof item.commercialTitle !== 'string'
+            || item.game !== body.request.game || !['single', 'sealed', 'accessory'].includes(item.productFamily)
+            || (body.request.productFamily !== 'all' && item.productFamily !== body.request.productFamily)
+            || typeof item.handle !== 'string' || !item.handle
+            || (item.productFamily === 'single' ? typeof item.canonicalCardName !== 'string'
+              : item.canonicalCardName !== null && typeof item.canonicalCardName !== 'string')
+            || typeof item.commercialTitle !== 'string'
             || !Array.isArray(item.variants) || !item.variants.length) throw new Error('unavailable');
           ids.add(item.productGid);
           for (const key of ['expansionCode', 'rarity']) {
@@ -414,6 +448,7 @@ Renders game-scoped gateway search without native predictive-search fallback.
             if (selected !== undefined && !values.has(selected)) throw new Error('unavailable');
           });
         } else if (data.facets !== undefined) throw new Error('unavailable');
+        if (data.suggestions !== undefined && body.request.productFamily !== 'single') throw new Error('unavailable');
         if (body.includeSuggestions && !Array.isArray(data.suggestions)) throw new Error('unavailable');
         if (data.suggestions !== undefined && (!Array.isArray(data.suggestions) || data.suggestions.length > 10
           || data.suggestions.some(item => typeof item.canonicalCardName !== 'string' || !item.canonicalCardName.trim()

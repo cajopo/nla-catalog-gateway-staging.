@@ -18,7 +18,8 @@ class Component extends Element {
     this.dataset = { mode: 'header', searchUrl: '/search', endpoint: '/apps/nla/catalog' };
     this.nodes = new Map();
     const form = this.querySelector('form');
-    form.elements = { game: new Element(), q: new Element(), stock: new Element(), expansionCode: new Element(), rarity: new Element() };
+    form.elements = { game: new Element(), family: new Element(), q: new Element(), stock: new Element(), expansionCode: new Element(), rarity: new Element() };
+    form.elements.family.value = 'single';
     form.elements.game.options = [
       { value: '', textContent: 'Choose a game' },
       { value: 'magic', textContent: 'Magic' },
@@ -53,6 +54,7 @@ const Catalog = classes.get('nla-catalog-search');
 const header = new Catalog();
 header.connectedCallback();
 assert.equal(header.game.value, 'magic');
+assert.equal(header.family.value, 'single');
 assert.equal(context.document.title, 'Native search: 1000 results', 'header must not change other page titles');
 const page = new Catalog();
 page.restore = () => {};
@@ -61,21 +63,23 @@ page.connectedCallback();
 page.validate = () => {};
 page.renderPage = () => {};
 page.querySelector('[data-message="results"]').textContent = 'Results';
-page.game.value = 'pokemon'; page.input.value = 'Pikachu'; page.stock.checked = true;
+page.game.value = 'pokemon'; page.family.value = 'sealed'; page.input.value = 'Box'; page.stock.checked = true;
 header.controller = new AbortController();
 const pendingHeaderRequest = header.controller;
 await page.load({ navigate: true });
 assert.equal(header.game.value, 'pokemon');
-assert.equal(header.input.value, 'Pikachu');
+assert.equal(header.family.value, 'sealed');
+assert.equal(header.input.value, 'Box');
 assert.equal(header.stock.checked, true);
 assert.equal(header.list.hidden, true);
 assert.equal(pendingHeaderRequest.signal.aborted, true);
 assert.equal(fetches, 1, 'syncing the header must not duplicate a catalog request');
-assert.equal(context.document.title, 'Results — Pokémon: Pikachu');
-page.game.value = 'yugioh'; page.input.value = 'Dragon';
+assert.equal(context.document.title, 'Results — Pokémon: Box');
+page.game.value = 'yugioh'; page.family.value = 'accessory'; page.input.value = 'Dragon';
 responseOk = false;
 await page.load({ navigate: true });
 assert.equal(header.game.value, 'pokemon', 'failed navigation must not change the header');
+assert.equal(header.family.value, 'sealed', 'failed navigation must not change the header family');
 assert.equal(context.document.title, 'Results — Yu-Gi-Oh!: Dragon', 'failure must not leave an old title/count');
 responseOk = true;
 await page.load();

@@ -24,7 +24,8 @@ class Component extends Element {
     this.dataset = { mode: 'page', searchUrl: '/search', endpoint: '/apps/nla/catalog' };
     this.nodes = new Map();
     this.querySelector('form').elements = Object.fromEntries(
-      ['game', 'q', 'stock', 'expansionCode', 'rarity'].map(key => [key, new Element()]));
+      ['game', 'family', 'q', 'stock', 'expansionCode', 'rarity'].map(key => [key, new Element()]));
+    this.querySelector('form').elements.family.value = 'single';
     this.querySelector('form').elements.game.options = [
       { value: '', textContent: 'Choose game' }, { value: 'magic', textContent: 'Magic' },
       { value: 'pokemon', textContent: 'Pokémon' },
@@ -207,6 +208,89 @@ assert.equal(page.expansion.children.at(-1).textContent, `${rawSet} (0)`);
 assert.equal(page.expansion.children.at(-1).value, rawSet);
 
 const pending = [];
+for (const family of ['all', 'single', 'sealed', 'accessory']) {
+  const familyPage = component();
+  familyPage.family.value = family;
+  familyPage.input.value = 'Élite display %_'; familyPage.stock.checked = true;
+  familyPage.resetMetadata('OLD', 'Rare');
+  let familyLoad;
+  familyPage.load = options => { familyLoad = { options, request: clone(familyPage.request()) }; };
+  familyPage.family.dispatchEvent(new Event('change'));
+  assert.equal(familyPage.expansion.value, ''); assert.equal(familyPage.rarity.value, '');
+  assert.equal(familyLoad.request.productFamily, family);
+  assert.equal(familyLoad.request.q, 'Élite display %_', 'family change must never discard a typed query');
+  assert.equal(familyLoad.request.filters.inStock, true);
+  assert.deepEqual(clone(familyLoad.options), { navigate: true }, 'family change resets cursor');
+  assert.equal(familyPage.metadataFilters.hidden, family !== 'single');
+  const familyUrl = familyPage.url(familyLoad.request, 'family-cursor', generation);
+  assert.equal(familyUrl.searchParams.get('family'), family);
+  location.href = familyUrl.href;
+  familyPage.restore();
+  assert.equal(familyLoad.options.invalid, false);
+  assert.equal(familyLoad.options.cursor, 'family-cursor');
+  assert.equal(familyLoad.request.productFamily, family);
+  delete familyPage.load;
+  await familyPage.load({ cursor: 'family-cursor', generation });
+  assert.equal(sent.at(-1).body.request.productFamily, family);
+  assert.equal(sent.at(-1).body.request.q, 'Élite display %_');
+  assert.equal(sent.at(-1).body.includeFacets, family === 'single' ? true : undefined);
+  assert.equal(sent.at(-1).body.includeSuggestions, undefined);
+  assert.equal(familyPage.metadataFilters.disabled, family !== 'single');
+  const count = sent.length;
+  await familyPage.load({ suggest: true });
+  assert.equal(sent.length - count, family === 'single' ? 1 : 0, 'non-single typing does not request unsupported suggestions');
+  if (family !== 'single') {
+    await familyPage.load();
+    assert.equal(sent.at(-1).body.includeSuggestions, undefined);
+    assert.equal(sent.at(-1).body.includeFacets, undefined);
+    const familyBody = { contractVersion: 1, cursor: null, request: clone(familyPage.request()) };
+    const response = payload(familyBody);
+    response.page.items = (family === 'all' ? ['single', 'sealed', 'accessory'] : [family]).map((kind, index) => ({
+      ...clone(item), productGid: `gid://shopify/Product/${index + 1}`, productFamily: kind,
+      canonicalCardName: kind === 'single' ? 'Bolt' : null,
+    }));
+    response.page.returnedProductCount = response.page.items.length;
+    assert.doesNotThrow(() => familyPage.validate(response, familyBody, generation));
+    for (const mutate of [
+      value => { value.page.items[0].game = 'pokemon'; },
+      value => { value.page.items[0].productFamily = 'unclassified'; },
+      value => { value.page.items[0].canonicalCardName = {}; },
+      value => { value.suggestions = []; },
+      value => { value.facets = []; },
+    ]) {
+      const changed = clone(response); mutate(changed);
+      assert.throws(() => familyPage.validate(changed, familyBody, generation), /unavailable/);
+    }
+    if (family !== 'all') {
+      response.page.items[0].productFamily = 'single';
+      assert.throws(() => familyPage.validate(response, familyBody, generation), /unavailable/);
+    }
+  }
+}
+for (const suffix of ['family=', 'family=wrong', 'family=all&family=single',
+  'family=sealed&rarity=Rare', 'family=all&expansionCode=M11']) {
+  location.href = `https://example.test/search?game=magic&q=box&${suffix}`;
+  const before = sent.length;
+  let done;
+  page.load = options => { done = Catalog.prototype.load.call(page, options); return done; };
+  page.restore(); await done; delete page.load;
+  assert.equal(sent.length, before, `invalid family/filter URL ${suffix} must not fetch`);
+  assert.equal(page.recovery.hidden, false);
+}
+location.href = 'https://example.test/search?game=magic&q=Bolt';
+page.load = () => {}; page.restore(); delete page.load;
+assert.equal(page.family.value, 'single', 'existing links remain single-card searches');
+assert.equal(page.metadataFilters.hidden, false);
+header.family.value = 'sealed'; header.input.value = 'Box';
+const oldHeader = new AbortController(); header.controller = oldHeader;
+const beforeFamily = sent.length;
+header.family.dispatchEvent(new Event('change'));
+assert.equal(oldHeader.signal.aborted, true);
+assert.equal(header.list.hidden, true);
+assert.equal(sent.length, beforeFamily);
+assert.equal(header.input.value, 'Box');
+assert.equal(header.url(header.request()).searchParams.get('family'), 'sealed');
+page.family.value = 'single'; page.input.value = 'Bolt';
 transport = body => new Promise(resolve => pending.push({ body, resolve }));
 const oldLoad = page.load();
 assert.equal(page.metadataFilters.disabled, true);
@@ -233,4 +317,4 @@ page.game.value = ''; page.cancel();
 assert.equal(page.metadataFilters.disabled, true, 'no game cannot enable metadata controls');
 
 for (const value of components) value.disconnectedCallback();
-console.log('PASS metadata URL/cursor restore, game/header scope, strict response validation, complete literal options, stale responses and cancellation');
+console.log('PASS metadata + four-family URL/cursor restore, family/query/stock retention, single-only suggestions/facets, strict game/family validation, stale responses and cancellation');
