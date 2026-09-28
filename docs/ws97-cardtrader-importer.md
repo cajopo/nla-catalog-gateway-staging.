@@ -773,3 +773,34 @@ format and diff checks PASS. Full latest-head Linux/CI verification still pendin
 no repeat full Windows suite, coverage waiver, push or MAIN/PowerTools modification.
 Operational recovery is separate, limited to the existing source/run and fresh
 Shopify identity data; no new CardTrader capture is needed or authorized by this fix.
+
+### Close operator-script coverage on native Linux — 2026-09-28
+
+One full native Linux run on dfb9b12:3576 tests passed,0 failures/skips,
+1474.54s. Install/Ruff/format/preflight/build passed. Including scripts as CI does
+exposed159 uncovered statements/89 branches in seven operator scripts; all gateway
+modules were100%. This was not the earlier platform-specific generation gap.
+
+Add88 offline boundary/entrypoint cases in two test files, reusing existing fixtures.
+Independent root review found no findings. Targeted Windows proof:223+3 tests passed,
+seven scripts100% (882 statements/372 branches). The only script edit is an inline
+`no branch` annotation for the bounded retry loop's impossible natural exit; explicit
+tests prove success on attempts1/2/3, failure on3 and nonretryable failure on1.
+Executable AST and line positions are unchanged. This follows Coverage7.16's
+documented structurally-partial-branch handling, not a threshold reduction:
+https://coverage.readthedocs.io/en/7.16.0/branch.html#structurally-partial-branches
+
+Native new-case run initially had65 passes, one incorrect test expectation and22
+MemoryErrors caused by the test runner's virtual-address-space limit. The publisher
+entrypoint test now explicitly selects --apply before testing missing inputs; no
+runtime behavior changed. Repeat ONLY those23 cases using the established native
+MemoryMax512M/CPUQuota50% isolation:23 passed in15.34s, exit0. All88 new cases now
+pass natively. Append measurements to copies of the original data, never overwrite
+the full-run evidence: aggregate15315/15315 statements and5316/5316 branches=100%.
+The3576 baseline cases plus88 new cases establish3664 distinct passing cases without
+another full run. Private reproducible receipts/JUnit/coverage remain under
+`/opt/nla-staging/validation-dfb9b12` (full-*, tail-result.json, boundaries-native-*,
+boundaries-native-r2-*); original .coverage-full hash verified unchanged.
+No product mutation, source recapture, service restart, MAIN or PowerTools change
+for this test-only correction. GitHub CI/CodeQL and final storefront QA remain
+separate gates; local evidence does not authorize a merge or live cutover.
