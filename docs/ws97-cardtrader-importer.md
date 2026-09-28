@@ -804,3 +804,29 @@ boundaries-native-r2-*); original .coverage-full hash verified unchanged.
 No product mutation, source recapture, service restart, MAIN or PowerTools change
 for this test-only correction. GitHub CI/CodeQL and final storefront QA remain
 separate gates; local evidence does not authorize a merge or live cutover.
+
+### Recovery complete; automatic next cycle confirmed — 2026-09-28
+
+The same recovery run `market-20260928t000647z-1b1a8344` completed at11:50:17UTC:
+3764 new products published/indexed, remaining0, eligibleExhausted=true,
+published=true, indexRefreshed=true. All4070 importer-owned publications are terminal
+and present/public/SOLD OUT in the active index; zero uncertain ledger entries.
+37 source conflicts remain quarantined; they were not guessed or silently imported.
+Completed receipt SHA256
+`22dfeb4ab20063d26b08d8b225bbb241880325beb196e5b5ffa87e03772cb693`.
+
+Final refresh `20260928t100300z-274ebd98` activated manifest
+`fc3c75e0b1dbb4e70a5d2f5acda3d38feaf0d43d038ffc3f1ac348dd9394b9db`.
+Its direct signed backend HTTP/immutable SQL check passed:295865 products,
+295861 public items; one new verified GID per game found beyond catalog position25k;
+eight prefix cases each returned10 distinct names without cross-game results.
+Lightning Bolt returned74 unique products; Pokemon Lightning Bolt returned0.
+Private proof: Temp/nla-aruba-staging-20260918/market-20260928-final-search.json.
+This is backend proof, not final storefront browser QA. Previous observer is closed.
+
+At14:46UTC, systemd confirmed the next scheduled unit `nla-market-catalog.service`
+started autonomously at14:00:14UTC, MainPID257913, activating/start. `/proc/257913`
+confirmed a live python3 process for run `market-20260928t140015z-217fbba9`, in
+source acquisition. This new scheduled cycle is NOT yet claimed complete.
+Market timer active/running; ordinary refresh timer temporarily inactive by the
+documented coordination hooks. No manual acquisition, restart or duplicate worker.
