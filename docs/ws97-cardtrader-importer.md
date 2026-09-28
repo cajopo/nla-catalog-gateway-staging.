@@ -691,3 +691,12 @@ https://www.cardtrader.com/it/docs/api/full/reference#blueprints
 106 focused preparation/candidate/capture/reference/runner tests PASS48.82s;
 Ruff PASS, independent product_presentation_review APPROVE. No new acquisition
 or product mutation for this fix; next scheduled cycle will reevaluate current data.
+
+Deployed code8adf76c8e12bd2de512d9bac73322f6e5cd42063 in isolated
+`/opt/nla-staging/importer-8adf76c`; archive SHA256
+09affaf240d19dabfff887d52282b1300850d2b28c927607acc5e1bc7dfaa8a9 verified.
+Native import/help and systemd validation/readback PASS; service pin updated,
+publication flag and04:00CEST schedule preserved. Previous unit backup:
+`/opt/nla-staging/nla-market-catalog.before-8adf76c.service`.
+Read-only ledger check:306 terminal published receipts, no pending publications.
+No early run, source acquisition or additional Shopify mutation.
