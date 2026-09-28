@@ -875,3 +875,24 @@ captures are covered. Independent `deferred_export_review` found no remaining
 findings after its deadline-boundary correction. No full suite or GitHub CI rerun.
 Deployment and inspected recovery are separate subsequent steps; the failed
 source receipt is not rewritten as a success.
+
+Deployment: code66c82ee67737666114b2d66dd8fde349fdf857a5 installed at
+`/opt/nla-staging/importer-66c82ee`; archive SHA256
+900fdc672366e9230ebc17dac4d6c5bcf9f9a7b58c545e05d85c72b7e9fb0d91.
+Native Linux100 focused tests passed. Existing recurring unit now points to this
+package/SHA ONLY; schedule, limits and channel unchanged. Original unit backed up
+at `/opt/nla-staging/nla-market-catalog-before-66c82ee.service`.
+
+One-run source recovery independently reviewed and read-only inspection PASS:
+all2430 cached exports hash-valid, zero prior attempts, three missing IDs. It
+preserves original failed evidence/source age, retries only the three unavailable
+exports and explicitly accounts for404s, then delegates to the existing guarded
+import/publication/refresh coordinator. No complete source reacquisition. Helper
+SHA256 c61b9c8ed825f8b78776d4e9f645558fd39e9511032878039d59e3c50fd6bbec.
+Explicit non-optimized execution guard tested; systemd unit validation PASS.
+
+Activation output confirms job440600 `nla-source-recovery-66c82ee.service` WAITING
+after existing job435697 `nla-catalog-refresh.service` RUNNING. This is queued,
+NOT proof of recovery completion. No restart/interruption of ordinary refresh.
+Follow these existing jobs/receipts, do not launch another recovery or full capture.
+GitHub remains owner-held; no push or CI rerun. Goal active, not complete.
