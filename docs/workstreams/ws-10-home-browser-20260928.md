@@ -75,3 +75,17 @@ is superseded. Password protection and clone preview were retained.
 
 Remaining delivery gates are separate: native deferred-source recovery completion,
 GitHub quota/CI, remaining final QA and Jacopo's cutover. Not overall completion.
+
+## Additional live pagination/filter acceptance
+
+Next goal turn verified the unchanged deployed clone through its real controls:
+Magic Lightning Bolt traversed four pages (24/24/24/2), 74 distinct product links,
+zero duplicates, next hidden at the end. Applying M11 from the last page reset to
+the first page with exactly Lightning Bolt M11-149. Combining Common retained that
+one result and both filters in the address. Enabling stock-only produced the correct
+empty result and retained removable M11 (0)/Common (0) selections; disabling it
+restored the card. No catalog request was substituted by a native Shopify search.
+At desktop 1280px: filters visible, product image loaded, document width1265px,
+no horizontal overflow. Temporary viewport override reset to the original size.
+Private screenshot `live-filter-qa.png` records the combined filters and SOLD OUT.
+No source/deployment changes were needed for these checks.
