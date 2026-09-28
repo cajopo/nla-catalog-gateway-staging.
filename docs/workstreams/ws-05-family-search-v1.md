@@ -90,6 +90,27 @@ the scoped commit, conditional on these regression and Ruff checks passing. The
 review did not authorize deployment. No full-repository/native coverage gate or
 deployed real-data query timing is claimed.
 
+## Runtime deployment and browser evidence
+
+Deployment update 2026-09-28: code `ed24a61` and the candidate image above were
+activated using the existing generation, without source acquisition. Run
+`20260928t193738z-06c1ef95`, completed19:46:58UTC; current container
+`6a79982c43dc36e3057fdef3a7ac1160d191a1bdbbeca52e82694f84d6076c3f`.
+Manifest, accepted environment and source time16:50:11UTC are unchanged.
+HTTPS readiness200, freshness fresh, no pending markers, both source jobs idle.
+Future operator `881b9ca` preserves warm activation and image-upgrade retention;
+272 focused native tests passed. Both timers restored (market02/14UTC,
+refresh03/15UTC), with no immediate extra capture.
+
+Independent review found no installer signature/pin/recovery blocker; the known
+one-time cold-start outage was explicitly reported, not represented as warm.
+Native immutable receipts are in `/var/lib/nla-catalog-refresh/20260928t193738z-06c1ef95`
+and `/opt/nla-staging/family-rollout-ed24a61/completed.json`. Do not rerun installer.
+Clone browser confirms four real Magic booster boxes for sealed `booster`, mixed
+ALL results, SINGLE separation, stock/query retention, Back/reload and no leakage
+to Pokemon for Magic `Outlaws`. Detailed evidence is in the theme workstream's
+`ws-10-family-selector.md`. No overall goal-completion or unattended-cycle claim.
+
 ## Official references consulted before implementation
 
 - [SQLite application-defined functions and trusted schema](https://www.sqlite.org/appfunc.html)
