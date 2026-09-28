@@ -1,7 +1,8 @@
 """One application-specific staging replacement; default is read-only preflight.
 
 A private activation plan supplies expected capture evidence and current runtime
-identity. No Shopify calls, new export, image upgrade, timer or cleanup. A failed
+identity, including separate pinned previous/candidate images for an upgrade.
+No Shopify calls, new export, timer or cleanup. A failed
 or interrupted operation retains named resources and requires inspection before
 retry. Run under an exclusive pipeline lock and a bounded service.
 """
@@ -16,7 +17,7 @@ import stat
 import subprocess
 import time
 import urllib.request
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from pathlib import Path, PurePosixPath
 
@@ -43,6 +44,7 @@ class ActivationPlan:
     current: str
     expected_id: str
     image: str
+    old_image: str
     old_pin: str
     old_code: str
     new_code: str
@@ -79,8 +81,11 @@ class ActivationPlan:
 
 def load_plan(value):
     """Expected evidence is supplied by the coordinator, not inferred from files."""
-    if type(value) is not dict or set(value) != set(ActivationPlan.__annotations__):
+    if type(value) is not dict or set(value) - {"old_image"} != set(
+        ActivationPlan.__annotations__
+    ) - {"old_image"}:
         raise ValueError("invalid activation plan fields")
+    value = {**value, "old_image": value.get("old_image", value["image"])}
     for key in ("capture", "store", "config", "work"):
         path = value[key]
         if (
@@ -106,6 +111,8 @@ def load_plan(value):
     if (
         type(value["image"]) is not str
         or re.fullmatch("sha256:[0-9a-f]{64}", value["image"]) is None
+        or type(value["old_image"]) is not str
+        or re.fullmatch("sha256:[0-9a-f]{64}", value["old_image"]) is None
         or type(value["shop"]) is not str
         or re.fullmatch("[a-z0-9][a-z0-9-]*\\.myshopify\\.com", value["shop"]) is None
     ):
@@ -238,7 +245,9 @@ def preflight(plan):
     assert verifier["Image"] == plan.image and verifier["State"]["Status"] == "exited"
     assert verifier["State"]["ExitCode"] == 0 and not verifier["State"]["OOMKilled"]
     old = inspect(plan.current)
-    assert old["Id"] == plan.expected_id and old["Image"] == plan.image and old["State"]["Running"]
+    assert (
+        old["Id"] == plan.expected_id and old["Image"] == plan.old_image and old["State"]["Running"]
+    )
     runtime_port(old)
     names = docker("ps", "-a", "--format", "{{.Names}}").splitlines()
     for name in (
@@ -510,6 +519,8 @@ def apply(plan, checked):
         if failed["State"]["Running"]:
             docker("stop", "-t", "30", failed_name)
         docker("rename", failed_name, plan.failed)
+        # The candidate image's selector verifies BOTH packages for promotion and
+        # rollback. Only the restored serving runtime uses the previous image.
         select(plan, "rollback", new_pin)
         rollback_pin = pointer_pin(before["currentManifestSha256"], manifest)
         if pointer(plan)[1] != rollback_pin:
@@ -518,7 +529,12 @@ def apply(plan, checked):
         restored_env = plan.work / "rollback-runtime.env"
         private_write(restored_env, env_bytes(restored_values))
         restored_id = create_runtime(
-            plan, plan.restored, restored_env, old, restored_values, new_port
+            replace(plan, image=plan.old_image),
+            plan.restored,
+            restored_env,
+            old,
+            restored_values,
+            new_port,
         )
         docker("start", plan.restored)
         ready(plan, plan.restored, restored_id, rollback_pin, new_port)

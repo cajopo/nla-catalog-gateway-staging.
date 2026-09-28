@@ -178,7 +178,7 @@ class StagingActivationOfflineTests(unittest.TestCase):
         identifier = "candidate-id" if name == self.plan.candidate else "restored-id"
         self.containers[name] = {
             "Id": identifier,
-            "Image": self.plan.image,
+            "Image": plan.image,
             "State": {"Running": False},
             "HostConfig": {"PortBindings": port_bindings(port)},
         }
@@ -187,6 +187,7 @@ class StagingActivationOfflineTests(unittest.TestCase):
 
     def select(self, plan, action, expected, target=None):
         m = self.module
+        self.assertEqual(plan.image, self.plan.image)
         self.selections.append((action, expected, target))
         self.assertEqual(expected, self.current_pin)
         if action == "promote":
@@ -268,6 +269,27 @@ class StagingActivationOfflineTests(unittest.TestCase):
         self.assertEqual(self.containers[self.plan.current]["Id"], "candidate-id")
         self.assertEqual(self.containers[self.plan.backup]["Id"], self.plan.expected_id)
         self.assertEqual([s[0] for s in self.selections], ["promote"])
+        self.assert_original_never_restarted()
+
+    def test_image_upgrade_keeps_original_serving_until_candidate_is_ready(self):
+        self.plan = replace(self.plan, image="sha256:" + "9" * 64)
+        self.module.apply(self.plan, self.checked)
+        self.assertEqual(self.containers[self.plan.current]["Image"], self.plan.image)
+        self.assertEqual(self.containers[self.plan.backup]["Image"], self.plan.old_image)
+        self.assertEqual(self.resulting_env()["NLA_EVIDENCE_CODE_SHA"], self.plan.new_code)
+        self.assert_original_never_restarted()
+
+    def test_failed_image_upgrade_warms_previous_image_with_actual_rollback_pin(self):
+        self.plan = replace(self.plan, image="sha256:" + "9" * 64)
+        self.failure = "readiness"
+        with self.assertRaisesRegex(RuntimeError, "rollback_completed"):
+            self.module.apply(self.plan, self.checked)
+        self.assertEqual(self.containers[self.plan.current]["Image"], self.plan.old_image)
+        self.assertEqual(self.containers[self.plan.failed]["Image"], self.plan.image)
+        self.assertEqual(self.containers[self.plan.backup]["Image"], self.plan.old_image)
+        self.assertEqual(
+            self.resulting_env(), {**self.env, "NLA_ACTIVATION_SHA256": self.rollback_pin}
+        )
         self.assert_original_never_restarted()
 
     def test_readiness_failure_restores_new_container_with_actual_rollback_pin(self):
@@ -765,6 +787,40 @@ def preflight_case(tmp_path, monkeypatch):
         commands=commands,
         values=values,
     )
+
+
+@pytest.mark.parametrize("mismatch", [None, "current", "verifier"])
+def test_upgrade_preflight_binds_previous_and_candidate_images_separately(preflight_case, mismatch):
+    case = preflight_case
+    plan = replace(case.plan, image="sha256:" + "9" * 64)
+    case.containers[plan.verifier]["Image"] = plan.image
+    if mismatch == "current":
+        case.containers[plan.current]["Image"] = plan.image
+    elif mismatch == "verifier":
+        case.containers[plan.verifier]["Image"] = plan.old_image
+    if mismatch:
+        with pytest.raises(AssertionError):
+            operator.preflight(plan)
+    else:
+        checked = operator.preflight(plan)
+        assert checked[0]["Image"] == plan.old_image
+    assert not plan.work.exists()
+
+
+def test_old_image_defaults_to_candidate_without_mutating_plan_input():
+    values = plan_values()
+    assert operator.load_plan(values).old_image == values["image"]
+    old_image = "sha256:" + "a" * 64
+    assert operator.load_plan({**values, "old_image": old_image}).old_image == old_image
+    assert "old_image" not in values
+
+
+@pytest.mark.parametrize(
+    "value", [None, True, "latest", "sha256:" + "A" * 64, "sha256:" + "a" * 63]
+)
+def test_old_image_requires_exact_lowercase_digest(value):
+    with pytest.raises(ValueError, match="runtime identity"):
+        operator.load_plan({**plan_values(), "old_image": value})
 
 
 def test_real_preflight_accepts_bound_evidence_without_writing(preflight_case):
