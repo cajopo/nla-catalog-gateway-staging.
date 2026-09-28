@@ -830,3 +830,27 @@ confirmed a live python3 process for run `market-20260928t140015z-217fbba9`, in
 source acquisition. This new scheduled cycle is NOT yet claimed complete.
 Market timer active/running; ordinary refresh timer temporarily inactive by the
 documented coordination hooks. No manual acquisition, restart or duplicate worker.
+
+### Scheduled cycle stopped on new source exports — 2026-09-28
+
+Later inspection supersedes the running observation above: market service exited1,
+MainPID0. Run `market-20260928t140015z-217fbba9/stopped.json` reports selected0,
+attempts/batches empty, published=false, indexRefreshed=false. Source progress is
+FAILED:2430/2433 expansions,256177 blueprints,37 source anomalies, HTTP404.
+This new scheduled cycle did NOT complete; previous successful cycle remains valid.
+
+Official CardTrader v2 reference was consulted again. It documents404 for an
+absent/invalid expansion_id. Minimal authenticated GET diagnostics found the first
+failing ID4887 still in /expansions; /blueprints/export returned404 again. Two more
+bounded GETs confirmed404 for both other pending new expansion IDs:
+- 4887: Championship Prize Cards2026 (Yu-Gi-Oh!).
+- 4888: Secret Lair Commander Deck: Odds and Ends (Magic).
+- 4890: Winner's Pack2026-2027 (Yu-Gi-Oh!).
+
+This source-list/export discrepancy does not authorize treating404 as an empty
+success or dropping the missing sets. Existing capture/stop receipts are preserved;
+no repeated full capture, importer restart or Shopify write. Ordinary refresh
+timer was restored and its17:00CEST service was independently live (PID258579).
+Pending market marker blocks another blind run: source recovery/inspection is
+still required once exports are available. Do not claim the next timer alone
+will clear it, or that the full new-release automation is now finally verified.
