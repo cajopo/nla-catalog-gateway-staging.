@@ -116,3 +116,32 @@ port guard and survivor/rollback ordering, not the old stop-before-warm variant.
 Semantic image compatibility is now implemented, but the branches are NOT merged.
 Runtime, importer/operator and theme remain separate delivery lines. GitHub hold
 remains in force; no push, merge or CI rerun was performed.
+
+## Compatibility fixes installed — 2026-09-28 19:46 UTC
+
+Operator `881b9ca08dd2bc3ba9875b10d59ccb1a825a9246` now replaces61be173 in
+the future refresh configuration and both relevant service paths. It includes
+the separate previous-image rollback fix above and restores strict image-upgrade
+receipt handling in retention, byte-equivalent to runtime9b56fdd's existing logic.
+The missing retention case would otherwise fail cleanup after a code-only update.
+272 activation/refresh/retention tests pass locally and on native Linux; independent
+review approved. No warm ordering or security guard was relaxed.
+
+Package `/opt/nla-staging/refresh-881b9ca`; archive SHA256
+`291d967a77ca1295a385ebc6a72be72d64c721a32f3aac82d95d4d1a3600dcbd`.
+Native command used the existing validation venv with UMask0077:
+`python -m pytest tests/test_activate_staging_refresh.py tests/test_refresh_staging_catalog.py tests/test_refresh_retention.py --no-cov -o addopts= -p no:cacheprovider -q`.
+
+Installed alongside family-runtimeed24a61, using the old code-only helper from
+that package with its own module signatures. This one-time runtime replacement
+was cold (~9m20s), NOT a demonstration of warm activation. Dataset, accepted
+environment and source age were unchanged. Independent installer review confirmed
+signature/pin coherence and fail-closed pending evidence on installation failure.
+Actual attempt completed successfully:20260928t193738z-06c1ef95,
+`/opt/nla-staging/family-rollout-ed24a61/completed.json`; do not rerun it.
+
+HTTPSready200, fresh, no pending markers; both jobs idle and both timers restored.
+Next market29Sep02UTC, ordinary29Sep03UTC. Importer d7e6fc9 and Caddy unchanged.
+First real scheduled warm activation is STILL unobserved. Existing heartbeat was
+updated to inspect that outcome, not to start work or repeat acquisition.
+No MAIN, PowerTools, product writes, GitHub push/merge or CI rerun.
