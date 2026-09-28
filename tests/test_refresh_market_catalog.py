@@ -386,8 +386,19 @@ def test_preview_does_not_repeat_same_selection(setup):
 
 
 @pytest.mark.parametrize("apply", [False, True])
-def test_empty_batch_refreshes_only_for_apply_cycle(setup, monkeypatch, apply):
+@pytest.mark.parametrize("source_complete", [False, True])
+def test_empty_batch_reuses_fresh_index_without_claiming_refresh(
+    setup, monkeypatch, apply, source_complete
+):
     args, events, _ = setup
+    original_source = market.capture_catalog
+
+    def source(*inputs):
+        result = original_source(*inputs)
+        result["deferredExpansions"] = (
+            [] if source_complete else [dict(expansionId=4, httpStatus=404)]
+        )
+        return result
 
     def empty_batch(*inputs, **kwargs):
         events.append("batch")
@@ -397,13 +408,81 @@ def test_empty_batch_refreshes_only_for_apply_cycle(setup, monkeypatch, apply):
         )
 
     monkeypatch.setattr(market.drafts, "run_locked", empty_batch)
+    monkeypatch.setattr(market, "capture_catalog", source)
     result = market.cycle(**args, apply_drafts=apply, max_batches=50)
     assert events.count("batch") == 1
-    assert events.count("refresh") == int(apply)
-    assert result["indexRefreshed"] is apply
+    assert "refresh" not in events
+    assert result["indexRefreshed"] is False
+    if apply:
+        assert result["indexRefreshSkippedReason"] == "no_importer_changes_index_fresh"
+        assert result["indexFreshness"] == {"status": "fresh"}
+    else:
+        assert "indexRefreshSkippedReason" not in result
     assert result["remaining"] == 0 and result["attempts"] == []
-    assert result["status"] == ("draft_cycle_complete" if apply else "preview_cycle_complete")
+    prefix = "draft" if apply else "preview"
+    assert result["status"] == prefix + ("_cycle_complete" if source_complete else "_cycle_partial")
+    assert result["sourceComplete"] is source_complete
     assert not (args["state"] / "pending-market-run.json").exists()
+
+
+@pytest.mark.parametrize(
+    "case",
+    ["empty", "stale", "pending", "invalid_runtime", "published", "reconciled", "attempted"],
+)
+def test_empty_cycle_refresh_decision_preserves_freshness_and_write_guards(
+    setup, monkeypatch, case
+):
+    args, events, _ = setup
+    args["shopify"] = SimpleNamespace(graphql=object())
+
+    def batch(*inputs, **kwargs):
+        events.append("batch")
+        return dict(
+            status="preview",
+            candidates=0,
+            skippedExisting=0,
+            selected=0,
+            exceptions=0,
+            attempts=[dict(status="not_verified_missing")] if case == "attempted" else [],
+        )
+
+    def publish(*inputs, **kwargs):
+        events.append("publication")
+        if case == "pending":
+            (args["state"] / "refresh-runs" / "pending-run.json").touch()
+        return dict(
+            status="publication_complete",
+            published=int(case == "published"),
+            alreadyPublished=int(case == "reconciled"),
+            remaining=0,
+            results=[],
+        )
+
+    def freshness(config):
+        events.append("freshness")
+        if case == "invalid_runtime":
+            raise ValueError("freshness receipt does not describe current runtime")
+        return {"status": "stale" if case == "stale" and "refresh" not in events else "fresh"}
+
+    monkeypatch.setattr(market.drafts, "run_locked", batch)
+    monkeypatch.setattr(market, "publish_verified_drafts", publish)
+    monkeypatch.setattr(market.refresh, "freshness", freshness)
+    options = dict(apply_drafts=True, publish_online_store="gid://shopify/Publication/12")
+    if case in ("pending", "invalid_runtime"):
+        reason = "catalog_refresh_pending" if case == "pending" else "freshness receipt"
+        with pytest.raises(ValueError, match=reason):
+            market.cycle(**args, **options)
+        assert "refresh" not in events
+        assert (args["state"] / "pending-market-run.json").exists()
+        assert not (args["state"] / "last-market-success.json").exists()
+    else:
+        result = market.cycle(**args, **options)
+        assert result["indexRefreshed"] is (case != "empty")
+        assert events.count("refresh") == int(case != "empty")
+        assert ("indexRefreshSkippedReason" in result) is (case == "empty")
+        assert result["status"] == "draft_cycle_complete"
+        assert not (args["state"] / "pending-market-run.json").exists()
+    assert events.count("source") == events.count("batch") == events.count("publication") == 1
 
 
 def test_refresh_subprocess_uses_existing_operator_and_propagates_failure(tmp_path, monkeypatch):

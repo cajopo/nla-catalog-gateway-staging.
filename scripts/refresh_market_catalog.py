@@ -389,8 +389,6 @@ def cycle(
                 break
         else:
             result["completionReason"] = "batch_budget_exhausted"
-        # Refresh even an empty apply cycle: PowerTools stock/price changes remain
-        # authoritative and must reach the index independently of new printings.
         if apply_drafts:
             if result["deferred"]:
                 # A read-only deferral may not hide any earlier uncertain write.
@@ -426,11 +424,29 @@ def cycle(
                 result["publication"] = {k: v for k, v in publication.items() if k != "results"}
                 if publication["status"] != "publication_complete":
                     raise ValueError("publication_requires_inspection")
-            refresh_index(refresh_package, refresh_config)
             _, config = drafts.config_values(refresh_config)
-            if refresh.freshness(config)["status"] != "fresh":
-                raise ValueError("post_import_index_not_fresh")
-            result["indexRefreshed"] = True
+            reuse_index = False
+            if (
+                result["selected"] == 0
+                and not result["attempts"]
+                and result["published"] is False
+                and result.get("publication", {}).get("alreadyPublished", 0) == 0
+            ):
+                # No importer changes: the independent ordinary refresh handles
+                # PowerTools updates. Reuse only its verified, still-fresh runtime.
+                with refresh.pipeline_lock(config["run_root"]):
+                    if (config["run_root"] / "pending-run.json").exists():
+                        raise ValueError("catalog_refresh_pending")
+                    index_freshness = refresh.freshness(config)
+                reuse_index = index_freshness["status"] == "fresh"
+                if reuse_index:
+                    result["indexRefreshSkippedReason"] = "no_importer_changes_index_fresh"
+                    result["indexFreshness"] = index_freshness
+            if not reuse_index:
+                refresh_index(refresh_package, refresh_config)
+                if refresh.freshness(config)["status"] != "fresh":
+                    raise ValueError("post_import_index_not_fresh")
+                result["indexRefreshed"] = True
         result["status"] = "draft_cycle_complete" if apply_drafts else "preview_cycle_complete"
         if apply_drafts and (
             not result["eligibleExhausted"]

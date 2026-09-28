@@ -896,3 +896,22 @@ after existing job435697 `nla-catalog-refresh.service` RUNNING. This is queued,
 NOT proof of recovery completion. No restart/interruption of ordinary refresh.
 Follow these existing jobs/receipts, do not launch another recovery or full capture.
 GitHub remains owner-held; no push or CI rerun. Goal active, not complete.
+
+### Avoid redundant index rebuilds in empty cycles — 2026-09-28
+
+Recovery `market-20260928t164759z-16735a08` reused2430 exports/256177 blueprints,
+deferred4887/4888/4890 explicitly, and found zero candidates/attempts/publications.
+It nevertheless started refresh20260928t164953z-e53698bc immediately after the
+successful15:00UTC refresh. That existing process is not interrupted or modified.
+
+Future apply cycles now reuse the current index only with zero selections/attempts,
+zero new or reconciled publications, and the ordinary freshness check verifying
+the actual active manifest/container and source age under24h under the refresh lock.
+Pending work or mismatched runtime stops; stale data or any possible changes still
+require refresh. The independent ordinary timer continues handling PowerTools.
+Receipts explicitly record `indexRefreshed=false`, the reuse reason and freshness;
+unavailable source sets still yield partial completion, never false full coverage.
+
+Verification:162 focused coordinator/retention/systemd/CLI/data-boundary tests pass;
+Ruff and diff checks pass. Independent deferred_export_review APPROVED. No full
+suite, source reacquisition, Shopify write or GitHub CI run for this correction.
