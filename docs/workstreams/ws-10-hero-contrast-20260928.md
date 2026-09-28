@@ -42,3 +42,17 @@ https://shopify.dev/docs/storefronts/themes/best-practices/javascript-and-styles
 https://shopify.dev/docs/api/admin-graphql/2026-07/mutations/themeFilesUpsert
 
 GitHub push/CI/merge remain on hold. Prior product-presentation files were preserved.
+
+## Owner storefront screenshot accepted
+
+Owner supplied `codex-clipboard-da46991e-c852-4840-a2ff-7cf73f4e8a65.png`
+(private Temp attachment, not committed). Clone preview bar is visible; Magic is
+selected, query LIGHT, available-only unchecked. The open autocomplete visibly
+contains seven fully readable distinct names plus an eighth partially visible:
+Light 'Em Up, Light from Within, Light of Day, Light of Hope, Light of Judgment,
+Light of Promise, Light of Sanction, Light of the Legion. Visible entries include
+red SOLD OUT labels; the multiline homepage hero is now white and legible.
+This closes the requested Magic/light suggestion and hero-contrast visual check.
+A still image alone does not prove keyboard/variant interactions, other games,
+all-record traversal or product-page presentation; retain their separate evidence
+and outstanding checks. Do not request this same screenshot again.
