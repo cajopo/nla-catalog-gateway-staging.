@@ -145,3 +145,36 @@ Next market29Sep02UTC, ordinary29Sep03UTC. Importer d7e6fc9 and Caddy unchanged.
 First real scheduled warm activation is STILL unobserved. Existing heartbeat was
 updated to inspect that outcome, not to start work or repeat acquisition.
 No MAIN, PowerTools, product writes, GitHub push/merge or CI rerun.
+
+## Code-only helper integration fix — local, not deployed
+
+A non-ref-updating merge-tree preview of runtime `8da5d4c` and operator `585c0ea`
+produced tree `5099568b3555517681bd2f405e3c4d950f3f3466`. Its exported source
+revealed five real test failures: the runtime's code-only helper still used the
+old activation helper signatures. No branch was merged or live package changed.
+
+Backport `scripts/replace_staging_image.py` and its tests here with the warm API:
+use the alternate validated loopback port, keep the original serving through
+candidate readiness and both durable receipts, then retire it. Before rollback,
+verify the old survivor before stopping the candidate. Ambiguous receipt writes
+retain both runtimes and pending evidence for inspection. Dataset, accepted
+environment, original source time and installation-pending semantics are unchanged.
+The existing dual-upstream edge prerequisite above also applies to this helper.
+
+Evidence on 2026-09-28:
+
+- Initial exported integration: **5 failed, 215 passed**, old helper signatures.
+- Corrected exported integration: **252 passed** (replacement, activation, family).
+- This operator branch: **275 passed** (replacement, activation, refresh), command:
+  `python -B -m pytest tests/test_replace_staging_image.py tests/test_activate_staging_refresh.py tests/test_refresh_staging_catalog.py --no-cov -o addopts= -p no:cacheprovider -q`.
+- Ruff check and format check pass for both new files. Tests cover both port
+  directions, unsafe bindings, readiness rollback, interruption and failures at
+  each durable receipt. Independent `deferred_export_review`: approved, no blocker.
+
+The exported conflict resolution preserves the warm activation implementation
+AND runtime's existing separation of acquisition/producer code pins. Keep that
+separation when the real branch integration is authorized. Private export:
+`Temp/nla-delivery-compatibility-20260928`; it is not a Git worktree or a release.
+No native rollout claimed for this fix. Installed operator remains `881b9ca`;
+its scheduled refresh path does not call this manual code-only replacement helper.
+GitHub push/merge/CI hold and pending scheduled operational acceptance remain.
