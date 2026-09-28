@@ -98,3 +98,21 @@ at18:35:34UTC. That run used the old operator: the first scheduled real two-runt
 warm replacement has not yet been observed. Current evidence is the native proxy
 exercise, offline fault tests and verified edge/operator deployment, not a claim
 that the already-completed run used the new procedure.
+
+## Local delivery compatibility follow-up — not deployed
+
+Commit `f523d3978346e6a0de2ba25737f973e4e02046d7` preserves separate pinned
+previous/candidate images during warm upgrades. Optional `old_image` defaults to
+`image` for existing plans; fresh preflight binds both images, rollback uses the
+candidate selector and restores the previous runtime image with the new pointer pin.
+The warm readiness/commit/retirement order is unchanged. The activation and refresh
+suites pass 219 tests locally; Ruff check/format and diff check pass. Independent
+`deferred_export_review` approved. No native test or rollout is claimed for this SHA;
+the installed operator remains61be173.
+
+Read-only Git merge-tree preview against `agent/staging-ready-release` still has
+one textual conflict in `scripts/activate_staging_refresh.py`: retain the warm
+port guard and survivor/rollback ordering, not the old stop-before-warm variant.
+Semantic image compatibility is now implemented, but the branches are NOT merged.
+Runtime, importer/operator and theme remain separate delivery lines. GitHub hold
+remains in force; no push, merge or CI rerun was performed.
