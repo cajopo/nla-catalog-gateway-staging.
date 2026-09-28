@@ -1738,8 +1738,6 @@ def _validate_request_scope(request: CatalogRequestV1) -> None:
     _validate_query_bound(query)
     if type(request.product_family) is not RequestFamily:
         raise RuntimeApiContractError("catalog family is invalid")
-    if query not in (None, "") and request.product_family is not RequestFamily.SINGLE:
-        raise IncompatibleCatalogRequestError("catalog query is incompatible with family")
 
 
 def _validate_query_bound(query: Any) -> None:

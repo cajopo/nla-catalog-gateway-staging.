@@ -1,8 +1,11 @@
-"""Literal name/code search over the existing immutable catalog database.
+"""Literal family-scoped search over the existing immutable catalog database.
 
 SKU and barcode come from the retained Shopify variant records, never from titles.
-Collector numbers come from source-ID-joined CSV metadata. Expansion names and
-rarity are never searched. No printed-code punctuation is inferred from SKUs.
+Collector numbers come from source-ID-joined CSV metadata. Single-card search
+never matches expansion names or rarity. Sealed/accessory search uses commercial
+titles; sealed also uses its classified subtype. The current projection has no
+structured expansion field for sealed products; none is inferred from card data.
+No printed-code punctuation is inferred from SKUs.
 """
 
 from __future__ import annotations
@@ -97,12 +100,32 @@ def search_scope(request: CatalogRequestV1) -> tuple[str, tuple[object, ...]]:
         parameters.append(request.product_family.value)
     query = normalized_query(request)
     if query:
-        clauses.append(
+        single_match = (
             "(instr(normalized_card_name, ?) > 0 OR EXISTS "
             "(SELECT 1 FROM json_each(search_codes_json) AS code "
             "WHERE instr(code.value, ?) > 0))"
         )
-        parameters.extend((query, query))
+        # Evaluate titles at read time: the persisted, verified search facts and
+        # projection schema stay compatible with already-built generations.
+        commercial_match = (
+            "(instr(nla_search_text(commercial_title), ?) > 0 OR "
+            "CASE WHEN product_family = 'sealed' THEN "
+            "instr(nla_search_text(coalesce(product_subtype, '')), ?) > 0 ELSE 0 END)"
+        )
+        if request.product_family.value == "single":
+            clauses.append(single_match)
+            parameters.extend((query, query))
+        elif request.product_family.value == "all":
+            # CASE is lazy: singles never normalize their commercial title or
+            # accidentally match its expansion/version suffixes.
+            clauses.append(
+                f"(CASE WHEN product_family = 'single' THEN {single_match} "
+                f"ELSE {commercial_match} END)"
+            )
+            parameters.extend((query,) * 4)
+        else:
+            clauses.append(commercial_match)
+            parameters.extend((query, query))
     if request.filters.in_stock is not None:
         clauses.append("has_positive_inventory = ?")
         parameters.append(int(request.filters.in_stock))
