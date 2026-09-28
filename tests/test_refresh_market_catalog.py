@@ -100,6 +100,50 @@ def test_stage_order_and_explicit_draft_apply(setup, apply):
     assert json.loads((run / "completed.json").read_bytes()) == result
 
 
+@pytest.mark.parametrize("apply", [False, True])
+def test_deferred_source_does_not_block_available_imports_or_next_cycle(setup, monkeypatch, apply):
+    args, events, _ = setup
+    args["shopify"] = SimpleNamespace(graphql=lambda *args, **kwargs: None)
+    original = market.capture_catalog
+    deferred = [dict(expansionId=4, httpStatus=404, reason="export_http_404")]
+
+    def source(client, path):
+        return {**original(client, path), "deferredExpansions": deferred}
+
+    def batch(*inputs, **kwargs):
+        events.append("batch")
+        return dict(
+            status="batch_complete" if apply else "preview",
+            candidates=1,
+            skippedExisting=0,
+            selected=1,
+            exceptions=0,
+            attempts=[dict(status="draft_verified")] if apply else [],
+        )
+
+    def publish(*inputs, **kwargs):
+        events.append("publication")
+        return dict(status="publication_complete", published=1, remaining=0, results=[])
+
+    monkeypatch.setattr(market, "capture_catalog", source)
+    monkeypatch.setattr(market.drafts, "run_locked", batch)
+    monkeypatch.setattr(market, "publish_verified_drafts", publish)
+    result = market.cycle(
+        **args,
+        apply_drafts=apply,
+        publish_online_store="gid://shopify/Publication/1" if apply else None,
+    )
+    assert result["status"] == ("draft_cycle_partial" if apply else "preview_cycle_partial")
+    assert result["sourceComplete"] is False and result["sourceDeferredExpansions"] == deferred
+    assert result["indexRefreshed"] is apply
+    assert events == ["source", "identity", "pause30", "identity", "batch"] + (
+        ["publication", "refresh"] if apply else []
+    )
+    assert not (args["state"] / "pending-market-run.json").exists()
+    market.cycle(**args, apply_drafts=apply)
+    assert events.count("source") == 2
+
+
 @pytest.mark.parametrize("failure", ["source", "identity", "interrupt", "refresh", "batch"])
 def test_uncertainty_retains_pending_and_prevents_next_execution(setup, failure):
     args, events, behavior = setup

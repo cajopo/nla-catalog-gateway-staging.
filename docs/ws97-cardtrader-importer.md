@@ -854,3 +854,24 @@ timer was restored and its17:00CEST service was independently live (PID258579).
 Pending market marker blocks another blind run: source recovery/inspection is
 still required once exports are available. Do not claim the next timer alone
 will clear it, or that the full new-release automation is now finally verified.
+
+### Explicit deferred exports — 2026-09-28
+
+Issue97 correction: only HTTP404 from a listed expansion's blueprint export is
+recorded as `deferredExpansions`, with no invented empty file. Other errors and
+the capture deadline remain fatal. Comparison verifies every available file,
+digest, row/count and anomaly, and reports `sourceComplete=false`. The coordinator
+can import/publish verified available candidates, refresh and close an explicitly
+partial cycle. The next scheduled cycle retries every expansion, including the
+deferred ones. Existing Shopify/PowerTools products and MAIN are untouched.
+
+Official source: https://www.cardtrader.com/it/docs/api/full/reference . The
+observed list/export mismatch does NOT establish a release date or prerelease
+status. Missing IDs remain explicit, never represented as full coverage.
+
+Verification:91 capture/coordinator tests and100 comparison/reference/importer/
+retention/CLI consumer tests passed locally; Ruff and diff checks passed. Legacy
+captures are covered. Independent `deferred_export_review` found no remaining
+findings after its deadline-boundary correction. No full suite or GitHub CI rerun.
+Deployment and inspected recovery are separate subsequent steps; the failed
+source receipt is not rewritten as a success.

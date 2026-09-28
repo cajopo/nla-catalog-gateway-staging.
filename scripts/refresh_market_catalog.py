@@ -146,6 +146,7 @@ def prune_completed_inputs(state, config_path):
             "draft_cycle_complete",
             "draft_cycle_partial",
             "preview_cycle_complete",
+            "preview_cycle_partial",
         ):
             raise ValueError("invalid_completed_market_run")
         runs.append(run)
@@ -307,6 +308,8 @@ def cycle(
         source = capture_catalog(cardtrader, run / "source")
         result["sourceExpansions"] = source["completedExpansions"]
         result["sourceBlueprints"] = source["blueprints"]
+        result["sourceDeferredExpansions"] = source.get("deferredExpansions", [])
+        result["sourceComplete"] = not result["sourceDeferredExpansions"]
         refresh.publish(
             run / "source-summary.json", {k: v for k, v in source.items() if k != "files"}
         )
@@ -434,6 +437,8 @@ def cycle(
             or result.get("publication", {}).get("remaining", 0) != 0
         ):
             result["status"] = "draft_cycle_partial"
+        if not result["sourceComplete"]:
+            result["status"] = "draft_cycle_partial" if apply_drafts else "preview_cycle_partial"
         result["finishedAt"] = refresh.timestamp()
         refresh.publish(run / "completed.json", result)
         refresh.publish(state / "last-market-success.json", result, replace=True)
