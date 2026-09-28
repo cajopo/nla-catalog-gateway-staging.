@@ -59,6 +59,23 @@ git diff --check
 Ruff and diff checks passed. These focused checks are not full native CI, deployed
 staging verification or a claim that the overall project is complete.
 
+## Native candidate — built, not activated
+
+Reviewed code `ed24a61f061c9ea226f3c37f145eb5deb37d4eb8` was archived and copied
+to the VPS without stopping services or timers. Archive SHA256
+`20fee824f9feb1414ae37aa7c459e4ba50ffa493d1dbb5eab5340cb7ebb932c0`.
+At `/opt/nla-staging/family-search-ed24a61`, all32 family tests passed on native
+Linux under UMask0077 in5.90s. The Docker build completed with image
+`sha256:8a23ad0809ed155665decdea9dff875dd198f1fefe2e5764e20798a31a22ece8`.
+Receipt: `native-candidate.json` in that private directory, explicitly
+`candidate_built_not_activated`. No serving container, timer or source data changed.
+Session50200 completed successfully; do not repeat the build or native test run.
+
+Remaining: actual current-generation compatibility/readiness and guarded code-only
+installation with coherent future refresh pins, followed by the theme candidate
+and real-browser family round-trip. Preserve the existing warm operator rather
+than accidentally replacing it with this branch's older deployment helpers.
+
 Broader search/runtime regression: **311 passed in 404.35 seconds**, including
 the existing synthetic 30,001-product pagination proofs. This run used the final
 production delta; the final focused 32-test run additionally covered the explicit
