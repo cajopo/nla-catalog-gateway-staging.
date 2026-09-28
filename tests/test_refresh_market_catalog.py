@@ -1,5 +1,6 @@
 import json
-from contextlib import nullcontext
+import sqlite3
+from contextlib import closing, nullcontext
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -146,6 +147,92 @@ def test_batch_failure_reason_reaches_cycle_receipt(setup, monkeypatch):
     marker = json.loads((args["state"] / "pending-market-run.json").read_bytes())
     receipt = json.loads((args["state"] / marker["run"] / "stopped.json").read_bytes())
     assert receipt["batchFailure"] == dict(reason="inconsistent_identity_page", cardmarketId=43)
+
+
+@pytest.mark.parametrize("verified", [0, 1])
+@pytest.mark.parametrize("failure", [None, "ledger", "publication", "refresh"])
+def test_readonly_deferral_finalizes_partial_only_with_a_verified_ledger(
+    setup, monkeypatch, verified, failure
+):
+    args, events, behavior = setup
+    args["shopify"] = SimpleNamespace(graphql=object())
+    with closing(sqlite3.connect(args["ledger"])) as db:
+        db.execute("CREATE TABLE draft_attempts(state TEXT NOT NULL)")
+        db.execute("INSERT INTO draft_attempts VALUES ('draft_verified')")
+        db.commit()
+    deferred = [dict(cardmarketId=43, blueprintId=10, reason="inconsistent_identity_page")]
+
+    def batch(*inputs, **kwargs):
+        events.append("batch")
+        assert kwargs == dict(apply=True, max_attempts=3)
+        with closing(sqlite3.connect(args["ledger"])) as db:
+            if failure == "ledger":
+                db.execute("UPDATE draft_attempts SET state='needs_reconciliation'")
+            elif verified:
+                db.execute("INSERT INTO draft_attempts VALUES ('draft_verified')")
+            db.commit()
+        return dict(
+            status="batch_deferred",
+            candidates=5,
+            skippedExisting=1,
+            selected=3,
+            exceptions=2,
+            attempts=[dict(status="draft_verified", cardmarketId=42)] * verified
+            + [dict(status="not_verified_missing", cardmarketId=43)],
+            deferred=deferred,
+        )
+
+    def publish(ledger, **kwargs):
+        events.append("publication")
+        assert ledger == args["ledger"] and kwargs["enabled"] is True
+        return dict(
+            status="publication_stopped_inspect"
+            if failure == "publication"
+            else "publication_complete",
+            published=1,
+            remaining=1 if failure == "publication" else 0,
+            results=[],
+        )
+
+    monkeypatch.setattr(market.drafts, "run_locked", batch)
+    monkeypatch.setattr(market, "publish_verified_drafts", publish)
+    if failure == "refresh":
+        behavior["fail"] = "refresh"
+    options = dict(
+        apply_drafts=True,
+        max_attempts=3,
+        max_batches=10,
+        publish_online_store="gid://shopify/Publication/12",
+    )
+    if failure is None:
+        result = market.cycle(**args, **options)
+        run = args["state"] / result["run"]
+        assert result["status"] == "draft_cycle_partial"
+        assert result["indexRefreshed"] is True and result["published"] is True
+        assert result["eligibleExhausted"] is False
+        assert events[-2:] == ["publication", "refresh"]
+        assert not (args["state"] / "pending-market-run.json").exists()
+        assert json.loads((run / "completed.json").read_bytes()) == result
+    else:
+        reason = {
+            "ledger": "previous_import_needs_reconciliation",
+            "publication": "publication_requires_inspection",
+            "refresh": "refresh failed",
+        }[failure]
+        with pytest.raises(ValueError, match=reason):
+            market.cycle(**args, **options)
+        marker = json.loads((args["state"] / "pending-market-run.json").read_bytes())
+        run = args["state"] / marker["run"]
+        result = json.loads((run / "stopped.json").read_bytes())
+        assert not (run / "completed.json").exists()
+        assert not (args["state"] / "last-market-success.json").exists()
+        assert ("publication" in events) is (failure != "ledger")
+        assert ("refresh" in events) is (failure == "refresh")
+    assert events.count("source") == events.count("batch") == 1
+    assert result["remaining"] == 4 - verified
+    assert result["deferred"] == deferred
+    assert result["completionReason"] == "precreate_identity_deferred"
+    assert len(result["batches"]) == 1 and result["exceptions"] == 2
 
 
 @pytest.mark.parametrize("invalid", ["space", "budget", "batch_budget", "ledger", "sha"])

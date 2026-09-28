@@ -738,3 +738,38 @@ This cycle's3400 creations still await terminal publication/index receipts; do n
 restart or reacquire the source. Five former name-difference cases (CM818500–4)
 are now ledger-verified creations, not merely prepared candidates. No MAIN or
 PowerTools changes, and no assertion of final search visibility yet.
+
+### Defer an inconsistent pre-create read without hiding uncertain writes — 2026-09-28
+
+The same real run stopped at06:13:02UTC in batch0037, after36 complete batches
+and66 more verified creations. CM910695 failed the existing three bounded identity
+reads with inconsistent_identity_page. Readonly ledger inspection confirmed3972
+draft_verified total, zero other creation states, no row forCM910695 and306 prior
+publications. Thus3666 new verified creations awaited publication; the historical
+stop receipt and pending marker remain intact. A later bounded diagnostic of the
+same query returned2 pages/73 rows without duplicate IDs or timestamp regression.
+This establishes no uncertain creation, not permission to bypass identity checks.
+
+Official products documentation and schema were consulted before diagnosis:
+https://shopify.dev/docs/api/admin-graphql/2026-07/queries/products
+Existing NlaRecentProductIdentities query validated against Shopify schema, requiring
+read_products. The first validator invocation lost quotes in PowerShell argument
+passing; the unchanged query passed after transport quoting was corrected.
+
+Only this exact ValueError inside the pre-create identity callback is now deferred:
+the callback returns False, so create_draft_once neither reserves nor writes that
+candidate. The durable batch receipt identifies CM, blueprint and reason, then stops
+further candidates. cycle retains conservative backlog, rechecks that the entire
+ledger has no unverified attempts and runs the existing publisher/final refresh.
+It reports draft_cycle_partial, never complete. Deferred identities are not excluded
+from future cycles. Other errors, altered/stale inputs, wrong shop, changed identity
+definitions and uncertain writes retain their previous stop behavior. Query, retry
+count, freshness thresholds and publication-readiness checks are unchanged.
+
+Independent root review of delivery_validation's four-file implementation: no
+findings.58 focused importer/coordinator tests PASS35.52s; after a purely nominal
+lambda parameter shortening, the two affected deferral tests PASS22.06s. Ruff,
+format and diff checks PASS. Full latest-head Linux/CI verification still pending;
+no repeat full Windows suite, coverage waiver, push or MAIN/PowerTools modification.
+Operational recovery is separate, limited to the existing source/run and fresh
+Shopify identity data; no new CardTrader capture is needed or authorized by this fix.

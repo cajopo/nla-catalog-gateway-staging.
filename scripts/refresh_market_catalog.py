@@ -9,11 +9,13 @@ import json
 import os
 import re
 import shutil
+import sqlite3
 import stat
 import subprocess
 import sys
 import time
 import uuid
+from contextlib import closing
 from pathlib import Path
 
 from nla_catalog_gateway.cardtrader_capture import capture_catalog
@@ -294,6 +296,7 @@ def cycle(
         indexRefreshed=False,
         batches=[],
         attempts=[],
+        deferred=[],
         selected=0,
         maxBatches=max_batches,
         remaining=None,
@@ -340,10 +343,14 @@ def cycle(
             result["candidates"] = batch["candidates"]
             result["selected"] += batch["selected"]
             result["exceptions"] = batch["exceptions"]
-            if batch["status"] not in ("preview", "batch_complete"):
+            if batch["status"] not in ("preview", "batch_complete", "batch_deferred") or (
+                batch["status"] == "batch_deferred"
+                and (not apply_drafts or not batch.get("deferred"))
+            ):
                 if "failure" in batch:
                     result["batchFailure"] = batch["failure"]
                 raise ValueError("draft_batch_requires_inspection")
+            result["deferred"].extend(batch.get("deferred", []))
             verified = sum(
                 a["status"] == "draft_verified"
                 or (a["status"] == "already_reserved" and a.get("state") == "draft_verified")
@@ -362,6 +369,10 @@ def cycle(
                     remaining=result["remaining"],
                 )
             )
+            if batch["status"] == "batch_deferred":
+                result["eligibleExhausted"] = False
+                result["completionReason"] = "precreate_identity_deferred"
+                break
             if apply_drafts:
                 prune_batch_identities(run, number)
             if not apply_drafts:
@@ -378,6 +389,17 @@ def cycle(
         # Refresh even an empty apply cycle: PowerTools stock/price changes remain
         # authoritative and must reach the index independently of new printings.
         if apply_drafts:
+            if result["deferred"]:
+                # A read-only deferral may not hide any earlier uncertain write.
+                _, config = drafts.config_values(refresh_config)
+                with (
+                    refresh.pipeline_lock(config["run_root"]),
+                    closing(sqlite3.connect(ledger.as_uri() + "?mode=ro", uri=True)) as db,
+                ):
+                    if db.execute(
+                        "SELECT 1 FROM draft_attempts WHERE state != 'draft_verified' LIMIT 1"
+                    ).fetchone():
+                        raise ValueError("previous_import_needs_reconciliation")
             if publish_online_store is not None:
                 _, config = drafts.config_values(refresh_config)
                 with refresh.pipeline_lock(config["run_root"]):
