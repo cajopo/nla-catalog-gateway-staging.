@@ -74,5 +74,27 @@ Official documentation consulted before implementation:
 - https://caddyserver.com/docs/command-line#caddy-reload
 - https://docs.docker.com/engine/containers/run/
 
-Native isolated proxy evidence and actual rollout status are recorded separately;
-the local code/test result alone does not establish deployment.
+## Native rollout — 2026-09-28 18:35 UTC
+
+Code `61be1734e19da1305b57737deb857e1da7c25a36` is installed at
+`/opt/nla-staging/refresh-61be173`. The same 208 tests passed on native Linux under
+the service's UMask0077. The guarded installer waited for the existing recovery
+to finish successfully, then applied the reviewed edge-first deployment under
+both pipeline locks. It verified the pinned mounted Caddyfile, startup command
+and HTTPS readiness before changing future refresh invocations. Backups and the
+terminal receipt are in `/opt/nla-staging/warm-rollout-61be173/`.
+
+Post-deployment: HTTPS `/readyz`200, no pending refresh/importer markers, only the
+expected runtime and edge containers running. The serving runtime was not restarted
+or replaced by this rollout. Importer code remains `d7e6fc9`; only its refresh-package
+argument changed. No new capture, Shopify write, MAIN theme or PowerTools change.
+Both timers restored: market02/14UTC, ordinary03/15UTC, Persistent=false; next starts
+2026-09-29 02UTC and03UTC respectively. No timer cadence was changed.
+
+The pre-existing recovery completed with zero selected products/attempts/publications.
+Its source result remains explicitly partial: exports4887/4888/4890 returned404.
+They are deferred, not invented or treated as complete. Its index refresh completed
+at18:35:34UTC. That run used the old operator: the first scheduled real two-runtime
+warm replacement has not yet been observed. Current evidence is the native proxy
+exercise, offline fault tests and verified edge/operator deployment, not a claim
+that the already-completed run used the new procedure.
