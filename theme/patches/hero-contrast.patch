@@ -1,0 +1,11 @@
+diff --git a/sections/nla-home.liquid b/sections/nla-home.liquid
+--- a/sections/nla-home.liquid
++++ b/sections/nla-home.liquid
+@@ -243,6 +243,7 @@
+   .nla-hero h1 {
+     max-width: 75rem;
+     margin: 0;
++    color: var(--nla-white, #ffffff);
+     font-size: clamp(5rem, 6.8vw, 9.2rem);
+     font-style: italic;
+     font-weight: 950;
