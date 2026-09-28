@@ -89,3 +89,32 @@ At desktop 1280px: filters visible, product image loaded, document width1265px,
 no horizontal overflow. Temporary viewport override reset to the original size.
 Private screenshot `live-filter-qa.png` records the combined filters and SOLD OUT.
 No source/deployment changes were needed for these checks.
+
+## Final focused browser checks — 18:49 UTC
+
+Same deployed clone, no source reacquisition or theme mutation:
+
+- Reload preserved Magic / Lightning Bolt / M11 / Common and the single M11-149
+  result. Clearing rarity, then browser Back and Forward, restored the exact
+  respective URLs, selected filters and result. Loading states were awaited.
+- Header `light`: ArrowDown selected the first of ten distinct names with
+  `aria-selected=true` and a matching `aria-activedescendant`; Enter opened
+  `Light 'Em Up`, two results, without leaking the previous page's filters.
+- Pokemon / Charizard / stock-only: three available products with positive prices.
+  Actual result-link Enter opened Dark Charizard TR-21. Its default Good/Normal
+  variant was EUR129.99; Poor/Normal was unavailable; Poor/1st-Edition was EUR42.90,
+  matching the catalog's minimum price. Existing product options/data were not edited.
+- Starting from an empty session cart, the product's own Add to cart control added
+  exactly one Italian / Poor / 1st-Edition, variant54812348973324, total EUR42.90.
+  The cart's own Remove control removed that exact line. Final visible state:
+  `Il tuo carrello e vuoto` (accented in the UI). No checkout/payment/order submitted.
+- Private screenshots `cart-variant-qa.png` and `cart-restored-empty.png` in the
+  same artifact directory prove addition and cleanup. Pointer tooling remains
+  unreliable; successful paths here are keyboard-based, not mouse certification.
+
+Independent `deferred_export_review` found no new functional blocker in existing
+objective evidence. Minimum remaining operational acceptance: the next unattended
+market cycle after d7e6fc9/404 fixes and the first real warm activation on61be173.
+Observe existing timers/receipts; do not trigger another full acquisition. GitHub
+quota/CI reconciliation and owner cutover remain separate release gates. This
+does not claim a Firefox/WebKit matrix or complete issue15/16 release certification.
