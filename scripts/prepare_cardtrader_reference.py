@@ -134,11 +134,10 @@ def prepare(capture, projection, projection_sha, parent, parent_sha, output, gen
                 if record.source_id in ambiguous_ids:
                     raise ValueError("ambiguous_canonical_identity")
                 previous = existing_ids.get(record.source_id)
-                if previous is not None and (
-                    previous.game != game
-                    or previous.canonical_card_name != record.canonical_card_name
-                ):
+                if previous is not None and previous.game != game:
                     raise ValueError("canonical_identity_conflict")
+                # The verified, unique source ID identifies the printing, not
+                # cross-provider spelling. Preserve the entire existing record.
                 chosen = previous or record
                 metadata = chosen.card_metadata
                 title = chosen.canonical_card_name
@@ -156,6 +155,8 @@ def prepare(capture, projection, projection_sha, parent, parent_sha, output, gen
                         "title": title,
                         "imageUrl": row["image_url"],
                         "canonicalMappingPreserved": previous is not None,
+                        "sourceNameDiffers": chosen.canonical_card_name
+                        != record.canonical_card_name,
                         "creationApproved": False,
                     }
                 )

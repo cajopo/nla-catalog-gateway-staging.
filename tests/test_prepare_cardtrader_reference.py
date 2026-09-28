@@ -26,6 +26,7 @@ from nla_catalog_gateway.canonical_names import (
         "bad_image",
         "bad_metadata",
         "name_conflict",
+        "cross_game",
         "no_candidates",
         "ambiguous_parent",
         "malformed_expansion",
@@ -49,6 +50,8 @@ def test_capture_projection_to_reference_preparation(tmp_path, monkeypatch, case
     gids = (1, 4, 5, 15)
     cats = {1: 1, 4: 44, 5: 73, 15: 192}
     source_id = 1 if case in ("preserve", "name_conflict", "ambiguous_parent") else 100
+    if case == "cross_game":
+        source_id = 2  # A unique identity belonging to another baseline game.
 
     def collection(kind, **kwargs):
         if kind == "games":
@@ -109,20 +112,25 @@ def test_capture_projection_to_reference_preparation(tmp_path, monkeypatch, case
         1 if case in ("extend", "malformed_expansion") else 0
     )
     assert len(result["exceptions"]) == (
-        1 if case in ("bad_image", "bad_metadata", "name_conflict", "ambiguous_parent") else 0
+        1 if case in ("bad_image", "bad_metadata", "cross_game", "ambiguous_parent") else 0
     )
     assert len(result["candidates"]) == (
-        1 if case in ("extend", "preserve", "malformed_expansion") else 0
+        1 if case in ("extend", "preserve", "name_conflict", "malformed_expansion") else 0
     )
     if result["candidates"]:
         item = result["candidates"][0]
         assert item["creationApproved"] is False and item["canonicalMappingPreserved"] == (
-            case == "preserve"
+            case in ("preserve", "name_conflict")
         )
         assert item["sourceRowIndex"] == 0 and item["sourceFile"] == "blueprints-1.json"
         assert item["title"] == (
-            "Original - Old Set [007]" if case == "preserve" else "New Card - New Set [012]"
+            "Original - Old Set [007]"
+            if case in ("preserve", "name_conflict")
+            else "New Card - New Set [012]"
         )
+        assert item["sourceNameDiffers"] is (case == "name_conflict")
+        if case in ("preserve", "name_conflict"):
+            assert result["reference"] == str(parent)
         assert not {"price", "quantity", "language", "condition", "finish"} & set(item)
     with pytest.raises(FileExistsError):
         prepare.prepare(

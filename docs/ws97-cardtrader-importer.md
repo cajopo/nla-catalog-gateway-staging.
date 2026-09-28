@@ -674,3 +674,20 @@ is still unproven. The existing first-cycle heartbeat remains; no duplicate moni
 Rollback unit retained as `/opt/nla-staging/nla-market-catalog.before-bd693e6.service`:
 restoring it removes future automatic publication, not already-published products.
 No MAIN, PowerTools, commercial-data, pre-existing-product or GitHub changes.
+
+### Preserve verified identities across provider naming differences — 2026-09-28
+
+Read-only inspection of the existing Sep27 capture and checksum-pinned canonical
+reference identified all five preparation exceptions: CardTrader names the five
+sticker sheets identically, while the reference distinguishes Sheet1–5 (CM818500–4,
+blueprints326966–70). IDs are one-to-one and game agrees; exact name equality was
+an extra, incorrect identity gate. It is removed, not replaced by title matching.
+The complete existing canonical record stays authoritative and unchanged;
+`sourceNameDiffers` exposes the discrepancy in each candidate's existing provenance.
+Cross-game, duplicate/shared/multiple IDs, invalid metadata/image and fresh Shopify
+absence checks remain. No product is created merely by passing preparation.
+Official blueprint ID contract rechecked:
+https://www.cardtrader.com/it/docs/api/full/reference#blueprints
+106 focused preparation/candidate/capture/reference/runner tests PASS48.82s;
+Ruff PASS, independent product_presentation_review APPROVE. No new acquisition
+or product mutation for this fix; next scheduled cycle will reevaluate current data.
