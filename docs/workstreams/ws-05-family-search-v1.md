@@ -3,6 +3,15 @@
 Workstream: #9 / approved taxonomy #19; architecture #17 and master #3.
 Branch: `agent/family-search-v1`, based on runtime `9b56fdd`.
 
+## Regression alignment — 2026-09-29
+
+The legacy pagination test still required ALL-family search rejection. It now
+asserts one matching result and zero nonmatching results, retaining both forged
+request guards. No production search change. Independent review approved.
+Integrated preview c2a323ba:280 local/281 native focused tests PASS, zero skipped;
+Ruff PASS. Full exact-head suite/coverage and GitHub CI remain release gates.
+No deployment, push, theme change or production data mutation.
+
 ## Scope and behavior
 
 The runtime now accepts a nonempty query for `all`, `sealed` and `accessory`,
