@@ -178,3 +178,32 @@ separation when the real branch integration is authorized. Private export:
 No native rollout claimed for this fix. Installed operator remains `881b9ca`;
 its scheduled refresh path does not call this manual code-only replacement helper.
 GitHub push/merge/CI hold and pending scheduled operational acceptance remain.
+
+## Release-preview coverage cases — 2026-09-29
+
+Test-only follow-up for #13. Add unknown-candidate rollback, actual non-200 edge
+response and uninterrupted settle-window cases. Cover image replacement input/
+receipt/identity guards, interruptions after both renames, verified restoration,
+pending-state preservation and value-free CLI failures. Production code unchanged.
+The replacement delta was independently approved by deferred_export_review;
+the activation delta was authored by that reviewer and reviewed by the parent.
+
+The integrated preview full suite passed all4040 tests, zero failures/errors/skips,
+but its command exited1 at99.75210477081384% coverage. These added operator cases
+then passed265 native tests in8.570s; aggregate full-suite plus targeted coverage
+is100% (15820 statements/5560 branches). All209 non-test-delta source files were
+byte-identical; all52 reported coverage files retain their statement/branch totals.
+This is combined execution evidence, not a second green full-suite/exact-head CI.
+Preview tree2d66cbd609db158450824d2d71347d7e8bda9ddd; native terminal unit
+nla-release-coverage-2d66cbd6, invocation326b67cf794e40a8adf52d66571ede8f, exit0.
+
+Ported only the reviewed test delta to this branch, preserving its distinct
+integration baseline. Here the two modules pass254 tests in4.65s with
+`python -B -m pytest tests/test_activate_staging_refresh.py tests/test_replace_staging_image.py --no-cov -o addopts= -p no:cacheprovider -q`.
+Ruff check PASS; formatter normalized mixed line endings, then format check PASS.
+No push, CI start, deployment, timer change or new source acquisition.
+
+Operational update: the first ordinary29September market cycle and warm refresh
+are now proven successful; the completed monitor was removed, not the VPS timers.
+Installed operator remains881b9ca. Full operational pins and release gates are
+recorded in the root delivery readiness checkpoint; MAIN/PowerTools untouched.

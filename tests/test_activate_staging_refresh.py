@@ -383,6 +383,27 @@ class StagingActivationOfflineTests(unittest.TestCase):
         self.assertEqual(self.containers[self.plan.current]["Id"], "unexpected-runtime")
         self.assertEqual(self.resulting_env(), self.env)
 
+    def test_unknown_candidate_stops_rollback_without_touching_either_runtime(self):
+        def ready(*args):
+            self.containers[self.plan.candidate]["Id"] = "unexpected-candidate"
+            raise RuntimeError("candidate replaced externally")
+
+        with patch.object(self.module, "ready", ready):
+            with self.assertRaisesRegex(self.module.InspectBeforeRetry, "unexpected_candidate"):
+                self.module.apply(self.plan, self.checked)
+        self.assertEqual([s[0] for s in self.selections], ["promote"])
+        self.assertEqual(self.current_pin, self.promoted_pin)
+        self.assertEqual(self.resulting_env(), self.env)
+        self.assertEqual(self.containers[self.plan.current]["Id"], self.plan.expected_id)
+        self.assertEqual(self.containers[self.plan.candidate]["Id"], "unexpected-candidate")
+        self.assertTrue(self.containers[self.plan.current]["State"]["Running"])
+        self.assertTrue(self.containers[self.plan.candidate]["State"]["Running"])
+        self.assertEqual(
+            self.operations,
+            [("start", self.plan.candidate), ("ps", "-a", "--format", "{{.Names}}")],
+        )
+        self.assertEqual(len(self.created), 1)
+
     def test_unknown_rollback_pin_does_not_start_restored_runtime(self):
         def select(plan, action, expected, target=None):
             self.select(plan, action, expected, target)
@@ -1157,7 +1178,7 @@ def test_survivor_must_be_the_expected_ready_private_runtime(monkeypatch, failur
     )
 
 
-@pytest.mark.parametrize("failure", [None, "identity", "still-running", "edge-down"])
+@pytest.mark.parametrize("failure", [None, "identity", "still-running", "edge-down", "edge-status"])
 def test_retirement_checks_actual_stop_and_edge_before_completion(monkeypatch, failure):
     plan = operator.load_plan(plan_values())
     state = {
@@ -1175,19 +1196,21 @@ def test_retirement_checks_actual_stop_and_edge_before_completion(monkeypatch, f
     monkeypatch.setattr(operator, "docker", docker)
     observations = iter([0, 1, 20])
     monkeypatch.setattr(operator.time, "monotonic", lambda: next(observations))
-    monkeypatch.setattr(operator.time, "sleep", lambda _: None)
+    sleeps = []
+    monkeypatch.setattr(operator.time, "sleep", sleeps.append)
 
     def open_url(url, timeout):
         assert not state["State"]["Running"]
         assert url == operator.EDGE_READY_URL and timeout == 3
         if failure == "edge-down":
             raise OSError("not ready")
-        return nullcontext(SimpleNamespace(status=200))
+        return nullcontext(SimpleNamespace(status=204 if failure == "edge-status" else 200))
 
     monkeypatch.setattr(
         operator.urllib.request, "build_opener", lambda _: SimpleNamespace(open=open_url)
     )
-    expected = operator.InspectBeforeRetry if failure == "edge-down" else AssertionError
+    edge_failure = failure in {"edge-down", "edge-status"}
+    expected = operator.InspectBeforeRetry if edge_failure else AssertionError
     with pytest.raises(expected) if failure else nullcontext():
         operator.retire(plan)
     assert commands == (
@@ -1195,6 +1218,7 @@ def test_retirement_checks_actual_stop_and_edge_before_completion(monkeypatch, f
         if failure == "identity"
         else [("update", "--restart", "no", plan.backup), ("stop", "-t", "30", plan.backup)]
     )
+    assert sleeps == ([1] if edge_failure else [])
 
 
 def test_readiness_requires_uninterrupted_healthy_settle_window(monkeypatch):
@@ -1206,11 +1230,13 @@ def test_readiness_requires_uninterrupted_healthy_settle_window(monkeypatch):
     }
     monkeypatch.setattr(operator, "inspect", lambda _: state)
     monkeypatch.setattr(operator, "pointer", lambda _: ({}, "pin"))
-    # 200 at1; unhealthy at5 resets; then 200 at8 and15 are required.
-    observations = iter([0, 1, 1, 5, 8, 8, 15, 15])
-    statuses = iter([200, 503, 200, 200])
+    # Healthy at 0/5 is too brief; unhealthy at 10 resets the window. The later
+    # healthy 15/20 probes are still too brief, so readiness requires the 25 probe.
+    observations = iter([0, 0, 0, 5, 5, 10, 15, 15, 20, 20, 25, 25])
+    statuses = iter([200, 200, 503, 200, 200, 200])
     monkeypatch.setattr(operator.time, "monotonic", lambda: next(observations))
-    monkeypatch.setattr(operator.time, "sleep", lambda _: None)
+    sleeps = []
+    monkeypatch.setattr(operator.time, "sleep", sleeps.append)
     monkeypatch.setattr(
         operator.urllib.request,
         "build_opener",
@@ -1220,6 +1246,7 @@ def test_readiness_requires_uninterrupted_healthy_settle_window(monkeypatch):
     )
     operator.ready(plan, plan.candidate, "new", "pin", 10001)
     assert list(statuses) == []
+    assert sleeps == [5] * 5
 
 
 def test_static_edge_config_preserves_policy_and_enables_both_private_upstreams():

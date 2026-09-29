@@ -3,6 +3,8 @@
 import copy
 import hashlib
 import json
+import runpy
+import sys
 from contextlib import contextmanager
 from datetime import UTC, datetime
 from types import SimpleNamespace
@@ -362,3 +364,186 @@ def test_candidate_creation_failure_never_stops_previous_runtime(case, monkeypat
     assert case.containers["current"]["State"]["Running"]
     assert not any(event[0] == "stop" for event in case.events)
     assert (case.config["run_root"] / "pending-run.json").exists()
+
+
+@pytest.mark.parametrize("value", [None, [], {}, {"unexpected": "field"}])
+def test_plan_requires_exact_object_fields(value):
+    with pytest.raises(ValueError, match="invalid image replacement fields"):
+        m.load_plan(value)
+
+
+@pytest.mark.parametrize(
+    "failure,reason",
+    [
+        ("config_image", "configuration image differs"),
+        ("installed_image", "image is not installed"),
+        ("last_success", "last success changed"),
+        ("run", "invalid previous run"),
+        ("completion", "missing immutable completion"),
+        ("status", "last success runtime differs"),
+        ("runtime", "last success runtime differs"),
+        ("provenance", "dataset provenance differs"),
+        ("named_resource", "named_resources_exist"),
+    ],
+)
+def test_preflight_rejects_unbound_images_receipts_and_resources(
+    case, monkeypatch, failure, reason
+):
+    c = case
+    root = c.config["run_root"]
+    completed = root / c.previous["run"] / "completed.json"
+    if failure == "config_image":
+        c.config["image"] = c.plan.old_image
+    elif failure == "installed_image":
+        native = m.a.docker
+
+        def docker(*args):
+            return json.dumps([{"Id": c.plan.old_image}]) if args[0] == "image" else native(*args)
+
+        monkeypatch.setattr(m.a, "docker", docker)
+    elif failure == "last_success":
+        (root / "last-success.json").write_bytes(c.before + b" ")
+    elif failure == "completion":
+        completed.write_text("{}")
+    elif failure == "named_resource":
+        c.containers["nla-image-" + c.plan.run_id + "-before"] = copy.deepcopy(
+            c.containers["current"]
+        )
+    else:
+        if failure == "run":
+            c.previous["run"] = "invalid"
+        elif failure == "status":
+            c.previous["status"] = "failed"
+        elif failure == "runtime":
+            c.previous["resources"]["runtime"] = "9" * 64
+        else:
+            c.previous["previousManifestSha256"] = "9" * 64
+        raw = json.dumps(c.previous).encode()
+        (root / "last-success.json").write_bytes(raw)
+        completed.write_bytes(raw)
+        c.plan.last_success_sha256 = hashlib.sha256(raw).hexdigest()
+    with pytest.raises((ValueError, m.a.InspectBeforeRetry), match=reason):
+        m.preflight(c.plan, c.config)
+    assert not any(
+        event[0] in {"create", "start", "stop", "rename", "update"} for event in c.events
+    )
+
+
+@pytest.mark.parametrize("rename", ["old", "candidate"])
+def test_failure_after_each_rename_restores_verified_old_runtime(case, monkeypatch, rename):
+    c = case
+    runtime = m.preflight(c.plan, c.config)[-1]
+    target = (
+        ("rename", runtime.current, runtime.backup)
+        if rename == "old"
+        else ("rename", runtime.candidate, runtime.current)
+    )
+    native = m.a.docker
+    injected = []
+
+    def docker(*args):
+        result = native(*args)
+        if args == target and not injected:
+            injected.append(True)
+            raise RuntimeError("handoff interrupted after rename")
+        return result
+
+    monkeypatch.setattr(m.a, "docker", docker)
+    with pytest.raises(m.a.InspectBeforeRetry, match="old_runtime_restored"):
+        apply(c)
+    assert injected
+    assert c.containers["current"]["Id"] == c.plan.expected_id
+    assert c.containers["current"]["State"]["Running"]
+    assert not c.containers[runtime.failed]["State"]["Running"]
+    assert c.containers[runtime.failed]["HostConfig"]["RestartPolicy"]["Name"] == "no"
+    assert (c.config["run_root"] / "last-success.json").read_bytes() == c.before
+    assert (
+        m.r.document(c.config["run_root"] / c.plan.run_id / "rollback.json")["status"] == "restored"
+    )
+
+
+@pytest.mark.parametrize(
+    "failure,reason",
+    [
+        ("backup", "unexpected_backup_no_rollback"),
+        ("candidate", "unexpected_candidate_no_rollback"),
+        ("current", "unexpected_runtime_no_rollback"),
+        ("backup_after_health", "unexpected_backup_no_rollback"),
+        ("restored", "unexpected_restored_runtime"),
+    ],
+)
+def test_rollback_refuses_unverified_resource_identity(case, monkeypatch, failure, reason):
+    c = case
+    runtime = m.preflight(c.plan, c.config)[-1]
+    c.containers[runtime.backup] = c.containers.pop(runtime.current)
+    if failure == "backup":
+        c.containers[runtime.backup]["Image"] = c.plan.new_image
+    elif failure == "candidate":
+        c.containers[runtime.candidate] = copy.deepcopy(c.containers[runtime.backup])
+        c.containers[runtime.candidate]["Id"] = "9" * 64
+    elif failure == "current":
+        c.containers[runtime.current] = copy.deepcopy(c.containers[runtime.backup])
+        c.containers[runtime.current]["Id"] = "9" * 64
+    elif failure == "backup_after_health":
+        native_serving = m.a.serving
+
+        def serving(*args):
+            native_serving(*args)
+            c.containers[runtime.backup]["Image"] = c.plan.new_image
+
+        monkeypatch.setattr(m.a, "serving", serving)
+    else:
+        native_docker = m.a.docker
+
+        def docker(*args):
+            result = native_docker(*args)
+            if args == ("rename", runtime.backup, runtime.current):
+                c.containers[runtime.current]["Image"] = c.plan.new_image
+            return result
+
+        monkeypatch.setattr(m.a, "docker", docker)
+    with pytest.raises(m.a.InspectBeforeRetry, match=reason):
+        m.rollback(c.plan, c.config, c.raw, runtime, "2" * 64)
+    assert not any(event[0] in {"stop", "start", "update"} for event in c.events)
+    assert (c.config["run_root"] / "last-success.json").read_bytes() == c.before
+
+
+def test_runtime_change_after_preflight_keeps_pending_for_inspection(case):
+    c = case
+    checked = m.preflight(c.plan, c.config)
+    c.containers["current"]["Id"] = "9" * 64
+    with pytest.raises(m.a.InspectBeforeRetry, match="unexpected_backup_no_rollback"):
+        m.apply(c.plan, c.config, checked)
+    assert (c.config["run_root"] / "pending-run.json").exists()
+    assert not any(event[0] == "stop" for event in c.events)
+    assert (c.config["run_root"] / "last-success.json").read_bytes() == c.before
+
+
+def test_cli_apply_retains_installation_gate(case, monkeypatch, capsys):
+    path = case.config["run_root"] / "plan.json"
+    path.write_text(json.dumps(vars(case.plan)))
+    monkeypatch.setattr(m.r, "configuration", lambda _: case.config)
+    assert m.main(["--plan", str(path), "--apply"]) == 0
+    assert (
+        capsys.readouterr().out == "IMAGE_READY_INSTALLATION_PENDING_TIMERS_MUST_REMAIN_STOPPED\n"
+    )
+    assert not case.locked
+    assert (case.config["run_root"] / "pending-run.json").exists()
+
+
+def test_cli_failure_is_value_free(case, monkeypatch, capsys):
+    def fail(_):
+        raise ValueError("private fixture-only failure detail")
+
+    monkeypatch.setattr(m.r, "document", fail)
+    assert m.main(["--plan", "/unused.json"]) == 1
+    assert capsys.readouterr().out == "STOPPED_INSPECT_RETAINED_EVIDENCE_NO_AUTOMATIC_RETRY\n"
+    assert not case.events
+
+
+def test_module_entrypoint_fails_closed_without_plan(monkeypatch, capsys):
+    monkeypatch.setattr(sys, "argv", [m.__file__])
+    with pytest.raises(SystemExit) as result:
+        runpy.run_path(m.__file__, run_name="__main__")
+    assert result.value.code == 1
+    assert capsys.readouterr().out == "STOPPED_INSPECT_RETAINED_EVIDENCE_NO_AUTOMATIC_RETRY\n"
