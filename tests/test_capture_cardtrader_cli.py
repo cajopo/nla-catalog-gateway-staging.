@@ -7,7 +7,7 @@ from scripts import capture_cardtrader_catalog as cli
 
 @pytest.mark.parametrize("case", ["success", "invalid_json", "invalid_token", "capture_error"])
 def test_cli_uses_private_file_and_never_prints_token(tmp_path, monkeypatch, capsys, case):
-    secret = "private-token-do-not-log"  # noqa: S105 -- synthetic log-redaction sentinel
+    secret = "test-only-secret"  # noqa: S105 -- synthetic log-redaction sentinel
     credential = tmp_path / "credential.json"
     credential.write_text(
         json.dumps({"api_token": secret if case != "invalid_token" else ""})
