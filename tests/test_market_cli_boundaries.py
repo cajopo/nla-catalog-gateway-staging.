@@ -219,6 +219,13 @@ def test_operator_main_binds_arguments_and_redacts_failures(
     assert "private-error-must-not-be-printed" not in output and "test-only-secret" not in output
     if case == "success":
         assert json.loads(output)["status"] == expected
+        if module is identity_cli:
+            assert events == [
+                ("client",),
+                ("lock", tmp_path / "run-root"),
+                ("execute",),
+                ("unlock", tmp_path / "run-root"),
+            ]
     if case in ("non_linux", "non_root"):
         assert events == []
     else:

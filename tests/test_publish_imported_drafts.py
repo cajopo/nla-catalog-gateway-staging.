@@ -1,5 +1,7 @@
 import json
+import os
 from contextlib import contextmanager
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -18,6 +20,17 @@ def test_lock_order_pending_guard_and_durable_receipt(tmp_path, monkeypatch, pen
     refresh_state.mkdir()
     ledger = state / "ledger.sqlite3"
     ledger.touch(mode=0o600)
+    native_lstat = Path.lstat
+
+    def root_ledger_facts(path, *args, **kwargs):
+        facts = native_lstat(path, *args, **kwargs)
+        if path == ledger:
+            fields = list(facts)
+            fields[4] = 0  # Simulate the deployment owner only for this ledger.
+            return os.stat_result(fields)
+        return facts
+
+    monkeypatch.setattr(Path, "lstat", root_ledger_facts)
     config = dict(run_root=refresh_state, config=tmp_path / "config", shop="test.myshopify.com")
     monkeypatch.setattr(cli.drafts, "config_values", lambda _: ({}, config))
     events = []
