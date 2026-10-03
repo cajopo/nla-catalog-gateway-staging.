@@ -1,127 +1,66 @@
-# NLA catalog gateway — execution roadmap
+# Roadmap della manutenzione NLA
 
-## Current next step — 2026-09-18 (#89)
+Aggiornata il 3 ottobre 2026, sotto la roadmap #3 e il workstream PM #34.
+La fase di bootstrap è chiusa operativamente. Questa roadmap ordina manutenzione,
+consolidamento e possibili sviluppi. L'obiettivo di manutenzione autorizza
+verifiche e preparazione reversibile; MAIN/password, GitHub e decisioni riservate
+mantengono i vincoli registrati in [DECISIONS](DECISIONS.md).
 
-After merged native Linux reconciliation #88 (`9fe7358`), deliver one minimal Bulk
-acquisition command producing a verified candidate with the existing core. No
-new scheduler/service or automatic publication. Read
-`workstreams/ws-07-vps-bulk-acquisition.md`. Real Shopify installation/auth, current
-canonical inputs, incremental/scheduled sync, persistent activation/restart and
-actual proxy/theme E2E remain outstanding; the full goal is unchanged.
+## Risultato acquisito
 
-## Current goal overlay — 2026-09-15
+Il catalogo, la ricerca per gioco e famiglia, i suggerimenti delle singole,
+i filtri presenti e gli aggiornamenti automatici sono operativi secondo le prove
+del 28 e 29 settembre. Il passaggio al tema principale è stato autorizzato ed
+eseguito il 29 settembre alle 19:20 Europe/Rome. Password attiva e PowerTools invariato.
 
-Current action: #67 / `agent/staging-single-build` on #66 (`fbe3cfc`). Package the exact
-core-verified projection with one build, preserving every gate. This is a bounded
-audit simplification, not a rewrite. See `ws-09c-single-build-package.md`.
+La [fotografia](evidence/STATE-2026-09-30.md) definisce il punto di partenza.
+Non occorre ripetere bootstrap, acquisizioni, cicli terminali o audit già accettati.
 
-Previous action: #65 / `agent/source-card-codes` on #64. Recovered source CSVs remove
-the source-location blocker. Carry collector metadata through the existing verified
-join and SQL/API path; see `ws-01h-card-metadata.md`. Full goal stays unchanged.
+## Ordine di lavoro proposto
 
-Previous slice is #14 / draft PR #64 (`agent/theme-clone-integration`) on green runtime #63: connect the
-customer-facing path with a reusable game-scoped search/page component. Local UI/browser
-fixtures are not a clone installation or real E2E. Read `ws-10-theme-clone.md` before any
-upload; locale fragments must be merged, never replace the existing translations wholesale.
-The audit's simplification findings are recorded as direction, not a new rewrite workstream.
-Real data codes/images, package acceptance, durable sync, staging and E2E stay on the path.
+| Priorità | Attività | Responsabile della fase | Criterio di accettazione | Vincolo |
+| --- | --- | --- | --- | --- |
+| P1 | Consolidare la documentazione e registrare i limiti delle prove | PM Codex | Stato, roadmap, decisioni e fonti coerenti; cronologia preservata; controlli documentali ripetibili | Questo intervento; #34 resta aperta fino alla consegna prevista |
+| P1 | Completare le garanzie operative e chi interviene in caso di errore | PM con operatore da assegnare | Inventario svolto il 30 settembre; email scelta, restano recapito, destinatario/referente e backup automatico; [runbook](OPERATIONS-RUNBOOK.md) pronto | Nessun monitor email configurato o messaggio a terzi; controllo spazio Codex attivo, decisioni sul recapito pendenti |
+| P1 | Mantenere lo spazio VPS | PM per verifica; retention ordinaria sulla VPS | Pulizia legacy 3,65 GB verificata; retention refresh 3 ottobre completata, corrente/precedente e reference protetti; controllo Codex ogni 48 ore attivo | Riserva 6 GiB solo pre-cattura; nessuna garanzia sul picco. [Prove](evidence/RETENTION-2026-09-30.md), [incidente](evidence/INCIDENT-2026-10-03.md) |
+| P1 | Consolidare sorgenti, release e issue GitHub | Autori dei workstream e reviewer indipendente da assegnare | PR separate, integrazione riproducibile, CI/CodeQL verdi sul commit finale, versioni di immagine/dataset/tema e review | Jacopo ha revocato il rinvio il 3 ottobre; consegna ancora in corso |
+| P2 | Completare la certificazione QA della release | QA indipendente da assegnare | Fixture Chrome/Firefox/WebKit 21/21 per motore; axe qualificato; errore HTTP del cursore provato e 40 richieste di carico passate sulla copia restaurata; restano Shopify E2E/mobile/a11y/guasto-freschezza/carico produzione | [Prova e limiti](evidence/RECOVERY-LINUX-2026-09-30.md); riutilizzare prove valide, sessione negozio da sbloccare |
+| P1 | Completare recupero fuori VPS | PM, operatore continuativo da assegnare | Copia PC, identità immagine e seed dati verificati; configurazione e 336.752 identità reference accettate offline; completare runtime solo dopo preflight memoria conforme e decisione pendente | Runtime PC non creato/avviato; volume e seed preservati. Restano runtime/ciclo refresh-importer, host nuovo, credenziali e destinazione durevole; nessun RTO completo certificato. [Checkpoint](evidence/RECOVERY-PC-2026-10-01.md), [reference](evidence/REFERENCE-RECOVERY-2026-10-01.md) |
+| P2 | Valutare il lancio pubblico | Jacopo decide; PM prepara il pacchetto | Decisione su rimozione password, rischi residui e gestione operativa | Nessuna autorizzazione attuale alla rimozione password |
+| P3 | Migliorare filtri e ordinamenti | Workstream #10, da pianificare | Contratto dati/UX approvato e prove su campioni verificati | Lingua, condizione, finish e altri sort non sono dichiarati disponibili |
+| P3 | Progettare “Altre stampe di questa carta” | PM per fattibilità; autore da assegnare | Identità canonica affidabile, gruppo completo, link Shopify, preview tastiera/mobile | È autorizzata solo la documentazione |
+| P3 | Migliorare copertura e gestione eccezioni importer/non singole | Workstream #97 e dati | Misurare mapping mancanti/ambigui, copertura per gioco/famiglia e report di quarantena | Mai identità per titolo o prezzi inventati |
 
-Completed local runtime slice #62 removed unconditional output denials while retaining
-authentication and verified-generation checks. #60 supplies literal name/SKU/barcode SQL
-search and opt-in suggestions; printed-code semantics remain outstanding.
-Dependency PRs through #57 remain unmerged; live remains Jacopo's #18 gate. STATUS-CURRENT
-and the #60 workstream distinguish executable evidence from pending work.
+P1 indica priorità di manutenzione, non un incidente aperto. Non sono inventate
+scadenze o assegnazioni ad altre persone. Il successivo intervento operativo
+è completare le lacune nell'[evidenza del 30 settembre](evidence/MAINTENANCE-2026-09-30.md),
+entro il perimetro concordato. L'obiettivo rimane aperto fino alle prove obbligatorie.
 
-The roadmap below is historical.
+## Consegna GitHub ripresa il 3 ottobre
 
-Last reconciled (historical): 2026-09-01T02:59:58+02:00
+1. Congelare gli attuali sorgenti dei workstream e le ricevute del servizio;
+   distinguere codice installato, rami locali e anteprima integrata.
+2. Riprodurre l'integrazione già verificata senza perdere warm activation,
+   separazione dei pin, test e modifiche del tema.
+3. Consegnare una issue, un ramo `agent/*` e una PR per workstream.
+4. Eseguire i controlli necessari sul commit finale e ottenere review indipendente.
+   Test locali e copertura aggregata non sostituiscono CI/CodeQL sul commit finale.
+5. Riconciliare le issue: chiusura operativa, consegna del codice e copertura QA
+   hanno significati diversi. Non chiudere in blocco le issue solo perché il sito funziona.
 
-## Dependency order
+Il dettaglio aggiornato delle PR e delle dipendenze è nella
+[ripresa GitHub del 3 ottobre](evidence/GITHUB-RESUME-2026-10-03.md). La ripresa non
+autorizza merge con controlli rossi né acquisto di minuti.
+Lo stato aggiornato del refresh e la consegna documentale preparata sono
+registrati nell'[incidente](evidence/INCIDENT-2026-10-03.md) e nel [passaggio PM](PM-HANDOFF.md).
 
-Platform is the current merge gate. Taxonomy, Data/Bulk, and the runtime contract may be
-designed in parallel after that gate, but their pull requests must use the merged Platform
-foundation. Pagination, search, filters, sync, and security depend on the canonical data and
-taxonomy contracts. Runtime/staging depends on those cores; theme clone and QA follow a
-verified staging service. Live cutover remains a separate owner decision.
+## Limiti validi per tutta la fase
 
-## Workstream status
+Gateway e refresh restano in sola lettura; Shopify è autorevole e PowerTools
+non viene riconfigurato. L'importer ha solo le eccezioni registrate nelle decisioni.
+Il consenso al passaggio del 29 settembre non autorizza ulteriori modifiche al MAIN.
+Le nuove modifiche al tema devono partire da una copia non pubblicata, da identificare
+prima di lavorare: il vecchio clone 175195881740 è ormai il tema principale.
 
-| WS | Issue | Current state | Verified source | Next executable action |
-|---|---:|---|---|---|
-| Platform/CI | #6 | REVIEW | Draft PR #20 carries remote candidate `73f3f78`; exact CI and CodeQL are green | Docs-inclusive gates and reviewer v4 |
-| Sharding spike | #8 | BACKLOG | PR #21 closed/unmerged | Reproduce later only if limited fallback has value |
-| Taxonomy | #19 | BACKLOG | PR #22 closed/unmerged | Reimplement contract after Platform |
-| Data/Bulk | #5 | BLOCKED | PR #23–#25 closed/unmerged; real data root missing | Freeze code contract after Platform; real-baseline proof remains blocked |
-| Pagination | #7 | BACKLOG | No accepted PR | Start after data schema/generation contract |
-| Search | #9 | BACKLOG | No accepted PR | Build independent oracle before SQL |
-| Filters | #10 | BACKLOG | No accepted PR | Freeze canonical parser/algebra before SQL |
-| Sync | #11 | BACKLOG | No accepted PR | Define immutable inbox and reconciliation after data |
-| Security | #12 | BACKLOG | No accepted PR | Implement App Proxy verifier with separate red team |
-| Runtime/API | #3 | BACKLOG | Foundation only | Freeze shared response/error/dataset contract |
-| Deploy | #13 | BACKLOG | Render is only a candidate | Prepare blueprint/cost/rollback before owner decision |
-| Theme clone | #14 | BACKLOG | No accepted PR | Work only against unpublished clone after staging |
-| QA | #15 | BACKLOG | No accepted PR | E2E on exact staging release SHA |
-| Principal review | #16 | BACKLOG | No final release review | Review exact candidate SHAs independently |
-| Cutover | #18 | BACKLOG | Explicit owner gate | No action before go/no-go decision |
-
-## Wave gates
-
-### Wave 0 — Platform
-
-Documentation-inclusive SHAs `f211b26` and `00f0703` received `CHANGES REQUIRED` in successive
-independent reviews despite green CI and CodeQL. Documentation head `82ec0e4` then received a
-third `CHANGES REQUIRED`: one High remained because shell and PowerShell `$()` subexpressions
-could conceal forbidden dispatch.
-
-Remote code candidate `73f3f78` and local equivalent `db86bd3` share exact tree `a72a1c6`.
-Local Ruff, format, build, audit, Docker build/smoke, static replay, 564 tests at 100%
-line/branch, preflight
-over 25 indexed files, and a static red team with zero High pass. Exact remote CI
-`33456765768` and CodeQL `33456765740` also pass; CI covers both supported interpreters,
-isolated builds, audit, and container smoke, while CodeQL reports zero security findings.
-
-The bounded static gate retains the D-007 capability controls and adds conservative whole-class
-bans for `$()`, `<()`, `>()`, and `@()`. Container smoke replaces command substitution with a
-directly auditable `docker run | python` pipeline. Workflow permissions stay read-only,
-workflow secrets are forbidden, and checkout credentials must not persist.
-Python, Docker, and arbitrary transitively invoked scripts remain outside semantic analysis;
-this is not absolute proof over indirect execution. Exit still requires completed green gates
-and reviewer v4 on the same final documentation-inclusive SHA, with no unresolved
-Blocker/Critical/High finding.
-
-### Wave 1 — Canonical data contracts
-
-Deliver separate reviewable pull requests for Taxonomy, Data/Bulk, and Runtime contract.
-Every included record must be accounted for exactly once. Unknown or unsupported fields stay
-nullable, provisional, or unsupported until measured on a verified baseline.
-
-### Wave 2 — Catalog core
-
-Implement signed context-bound keyset cursors, exact-first family search, canonical filter
-state and facet algebra, immutable event inbox/reconciliation, and App Proxy verification.
-Synthetic tests must cross 30,000 records before real-baseline traversal is claimed.
-
-### Wave 3 — Runtime and staging
-
-Add API, health/readiness, cache/version semantics, Docker runtime, observability,
-backup/restore, and a validated Render candidate. A paid plan or recurring cost requires an
-owner decision only after the technical package and current official pricing are ready.
-
-### Wave 4 — Unpublished theme and QA
-
-Integrate only with the Shopify clone. Verify URL state, scoped search/facets, accessibility,
-mobile layouts, PDP/cart/checkout handoff, gateway failure modes, and browser coverage.
-
-### Wave 5 — Live
-
-Freeze code SHA, dataset checksum, and theme checksum; back up, dry-run, and present a
-go/no-go package. Only Jacopo may authorize publication or other live cutover actions.
-
-## Rules applied to every wave
-
-- One issue, one `agent/*` branch, one reviewable pull request.
-- No author self-approval and no review carried over from an older SHA.
-- No skipped test is counted as PASS.
-- No large data, generated index, credential, or signed download URL enters Git.
-- Shopify remains the commercial authority and this project stays read-only.
-- A written plan is not progress; status advances only with executable evidence.
+La [roadmap storica](ROADMAP-HISTORY-20260929.md) è conservata integralmente.
+Il suo precedente percorso di attese non è la roadmap attiva.
