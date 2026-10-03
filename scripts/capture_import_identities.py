@@ -149,7 +149,7 @@ def missing_guard(work, shop, graphql):
             raise ValueError("identity_export_stale")
 
     def verify(cardmarket_id):
-        for attempt in range(3):
+        for attempt in range(3):  # pragma: no branch -- always returns or raises by attempt 3
             check()
             try:
                 result = _live_missing(receipt, known, shop, cardmarket_id, graphql)
