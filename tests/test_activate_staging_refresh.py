@@ -603,8 +603,12 @@ def test_docker_transport_uses_fixed_executable_and_no_shell(monkeypatch):
 
 @pytest.mark.parametrize("action", ["promote", "rollback"])
 @pytest.mark.parametrize("status", ["accepted", "error", "unexpected-output"])
-def test_selection_preserves_existing_pointer_cli_contract(monkeypatch, action, status):
-    plan = operator.load_plan(plan_values())
+@pytest.mark.parametrize("upgrade", [False, True])
+def test_selection_preserves_existing_pointer_cli_contract(monkeypatch, action, status, upgrade):
+    values = plan_values()
+    if upgrade:
+        values["old_image"] = "sha256:" + "a" * 64
+    plan = operator.load_plan(values)
     calls = []
 
     def run(args, **kwargs):
