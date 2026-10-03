@@ -3,6 +3,7 @@ import hashlib
 import json
 import sqlite3
 from contextlib import closing
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -29,6 +30,16 @@ from nla_catalog_gateway.canonical_names import (
         "no_candidates",
         "ambiguous_parent",
         "malformed_expansion",
+        "progress",
+        "symlink",
+        "source_hash",
+        "row_index",
+        "identity",
+        "properties",
+        "long_title",
+        "empty_metadata",
+        "progress_race",
+        "existing_decision",
     ],
 )
 def test_capture_projection_to_reference_preparation(tmp_path, monkeypatch, case):
@@ -99,12 +110,107 @@ def test_capture_projection_to_reference_preparation(tmp_path, monkeypatch, case
         db.commit()
     pin = hashlib.sha256(projection.read_bytes()).hexdigest()
     output = tmp_path / "prepared"
+    # Recover the source-boundary cases from 0356d3a without its later importer fixture.
+    boundary_cases = {
+        "progress",
+        "symlink",
+        "source_hash",
+        "row_index",
+        "identity",
+        "properties",
+        "long_title",
+        "empty_metadata",
+        "progress_race",
+        "existing_decision",
+    }
+    if case in boundary_cases:
+        report = prepare.compare_projection(capture, projection, pin)
+        monkeypatch.setattr(prepare, "compare_projection", lambda *_: report)
+        progress_path = capture / "progress.json"
+        progress = json.loads(progress_path.read_bytes())
+        source_path = capture / "blueprints-1.json"
+        if case == "progress":
+            progress_path.write_bytes(progress_path.read_bytes() + b" ")
+        elif case == "symlink":
+            original = Path.is_symlink
+            monkeypatch.setattr(
+                Path,
+                "is_symlink",
+                lambda path: path == capture / "expansions.json" or original(path),
+            )
+        elif case == "source_hash":
+            source_path.write_bytes(source_path.read_bytes() + b" ")
+        elif case == "row_index":
+            report["details"][0]["sourceRowIndex"] = 999
+        elif case == "identity":
+            report["details"][0]["blueprintId"] = 999
+        elif case in ("properties", "long_title", "empty_metadata"):
+            rows = json.loads(source_path.read_bytes())
+            if case == "properties":
+                rows[0]["fixed_properties"] = []
+            elif case == "long_title":
+                rows[0]["name"] = "N" * 249
+            else:
+                rows[0]["fixed_properties"] = {"collector_number": "", "mtg_rarity": ""}
+                expansions_path = capture / "expansions.json"
+                expansions = json.loads(expansions_path.read_bytes())
+                for row in expansions:
+                    row["name"] = ""
+                expansions_path.write_text(json.dumps(expansions))
+                raw = expansions_path.read_bytes()
+                progress["files"][expansions_path.name].update(
+                    bytes=len(raw), sha256=hashlib.sha256(raw).hexdigest()
+                )
+            source_path.write_text(json.dumps(rows))
+            raw = source_path.read_bytes()
+            progress["files"][source_path.name].update(
+                bytes=len(raw), sha256=hashlib.sha256(raw).hexdigest()
+            )
+            progress_path.write_text(json.dumps(progress))
+            report["captureSha256"] = hashlib.sha256(progress_path.read_bytes()).hexdigest()
+        elif case == "progress_race":
+            original = Path.read_bytes
+            reads = []
+
+            def changed(path):
+                data = original(path)
+                if path == progress_path:
+                    reads.append(1)
+                    if len(reads) > 1:
+                        return data + b" "
+                return data
+
+            monkeypatch.setattr(Path, "read_bytes", changed)
+        else:
+            report["details"].append(dict(decision="existing_identity_match"))
+        errors = {
+            "progress": "capture_changed",
+            "symlink": "source_symlink",
+            "source_hash": "source_changed",
+            "progress_race": "capture_changed",
+            "empty_metadata": "canonical_extension_roundtrip_changed_records",
+        }
+        if case in errors:
+            with pytest.raises(ValueError, match=errors[case]):
+                prepare.prepare(
+                    capture, projection, pin, parent, manifest.manifest_sha256, output, "b" * 40
+                )
+            assert (parent / SIDECAR_FILENAME).read_bytes() == before
+            return
     result = prepare.prepare(
         capture, projection, pin, parent, manifest.manifest_sha256, output, "b" * 40
     )
     assert (parent / SIDECAR_FILENAME).read_bytes() == before
     assert result["creationApproved"] is False and result["shopifyChanged"] is False
     assert result["referenceEvidence"]["activated"] is False
+    if case in boundary_cases:
+        rejected = case != "existing_decision"
+        assert len(result["exceptions"]) == int(rejected)
+        assert len(result["candidates"]) == int(not rejected)
+        assert result["referenceEvidence"]["addedRecords"] == int(not rejected)
+        if rejected:
+            assert result["exceptions"][0]["reason"] == "source_or_canonical_details_require_review"
+        return
     assert result["referenceEvidence"]["addedRecords"] == (
         1 if case in ("extend", "malformed_expansion") else 0
     )
