@@ -1,7 +1,9 @@
 import hashlib
 import json
+import os
 import sqlite3
 from contextlib import closing
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -116,6 +118,18 @@ def setup(tmp_path, monkeypatch):
         verify_missing=lambda: False,
         enabled=True,
     )
+    ledger.chmod(0o600)
+    native_lstat = Path.lstat
+
+    def root_ledger_facts(path, *args, **kwargs):
+        facts = native_lstat(path, *args, **kwargs)
+        if path == ledger:
+            fields = list(facts)
+            fields[4] = 0  # Simulate the deployment owner only for this ledger.
+            return os.stat_result(fields)
+        return facts
+
+    monkeypatch.setattr(Path, "lstat", root_ledger_facts)
     api.calls.clear()
     events = []
 
@@ -324,3 +338,34 @@ def test_failed_prerequisites_never_change_reference_or_create(setup, monkeypatc
         runner.run_locked(**args, apply=True)
     assert json.loads(args["config_path"].read_bytes()) == original
     assert not api.calls
+
+
+def test_fixture_simulates_only_ledger_owner_preserving_native_metadata(setup):
+    args, _, _, _ = setup
+    ledger = args["ledger"]
+    simulated, native = ledger.lstat(), ledger.stat()
+    assert simulated.st_uid == 0
+    assert (simulated.st_mode, simulated.st_nlink, simulated.st_ino) == (
+        native.st_mode,
+        native.st_nlink,
+        native.st_ino,
+    )
+    other = args["config_path"]
+    assert other.lstat().st_uid == other.stat().st_uid
+
+
+@pytest.mark.parametrize("case", ["permissions", "hardlink"])
+def test_root_ledger_fixture_preserves_real_permission_and_link_refusals(setup, monkeypatch, case):
+    args, original, api, _ = setup
+    if case == "permissions":
+        args["ledger"].chmod(0o644)
+        monkeypatch.setattr(runner, "os", SimpleNamespace(name="posix"))
+        reason = "private_existing_ledger_required"
+    else:
+        os.link(args["ledger"], args["ledger"].with_name("other-owner.sqlite3"))
+        reason = "existing_regular_ledger_required"
+    with pytest.raises(ValueError, match=reason):
+        runner.run_locked(**args, apply=True)
+    assert not api.calls
+    assert json.loads(args["config_path"].read_bytes()) == original
+    assert not args["run"].exists()

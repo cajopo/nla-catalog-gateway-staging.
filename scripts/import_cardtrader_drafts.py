@@ -270,10 +270,10 @@ def main():
         with refresh.pipeline_lock(config["run_root"]):
             credentials = refresh.document(config["config"] / "shopify-app-credentials.json")
             client = ShopifyCaptureHttp(
-                shop_domain=config["shop"],
-                api_version="2026-07",
-                client_id=credentials["client_id"],
-                client_secret=credentials["client_secret"],
+                config["shop"],
+                "2026-07",
+                credentials["client_id"],
+                credentials["client_secret"],
             )
             result = run_locked(
                 args.refresh_config,
