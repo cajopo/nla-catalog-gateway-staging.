@@ -4,14 +4,15 @@ import hashlib
 import json
 import os
 import runpy
+import shutil
 import stat
 import sys
 import tempfile
 import unittest
-from contextlib import nullcontext
+from contextlib import contextmanager, nullcontext
 from copy import deepcopy
 from dataclasses import replace
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -1267,3 +1268,558 @@ def test_static_edge_config_preserves_policy_and_enables_both_private_upstreams(
         "strict_sni_host on",
     ):
         assert directive in config
+
+
+@pytest.fixture
+def interrupted_refresh(preflight_case, monkeypatch):
+    """Kill the original apply() after its selector changes the pointer."""
+    from scripts import recover_staging_refresh as recovery
+
+    case = preflight_case
+    root = case.plan.work.parent / "recover-runs"
+    run_id = "20261001t025743z-4de3cc26"
+    run = root / run_id
+    run.mkdir(parents=True)
+    old_capture = case.plan.capture
+    capture = run / "capture"
+    shutil.copytree(old_capture, capture)
+    for path, facts in list(case.metadata.items()):
+        if path.is_relative_to(old_capture):
+            case.metadata[capture / path.relative_to(old_capture)] = facts
+    plan = replace(case.plan, capture=capture, work=run / "activation", run_id=run_id)
+    previous = "a" * 64
+    previous_previous = "b" * 64
+    before = {
+        "schemaVersion": 1,
+        "currentManifestSha256": previous,
+        "previousManifestSha256": previous_previous,
+    }
+    pointer_path = plan.store / "activation.v1.json"
+    pointer_path.write_text(json.dumps(before, sort_keys=True, separators=(",", ":")))
+    plan = replace(plan, old_pin=operator.digest(pointer_path))
+    case.metadata[pointer_path] = (stat.S_IFREG | 0o600, 10001, 1)
+    case.plan = plan
+    case.values["NLA_ACTIVATION_SHA256"] = plan.old_pin
+    old_bytes = operator.env_bytes(case.values)
+    (plan.config / "accepted-runtime.env").write_bytes(old_bytes)
+    old = case.containers.pop(preflight_case.plan.current)
+    old["Config"] = {
+        **dict.fromkeys(("User", "Entrypoint", "Cmd", "WorkingDir", "ExposedPorts"), "same"),
+        "Env": old_bytes.decode().splitlines(),
+    }
+    old["HostConfig"] = {
+        **dict.fromkeys(
+            (
+                "ReadonlyRootfs",
+                "CapDrop",
+                "CapAdd",
+                "SecurityOpt",
+                "Memory",
+                "NanoCpus",
+                "PidsLimit",
+                "Tmpfs",
+                "Mounts",
+                "LogConfig",
+                "NetworkMode",
+                "RestartPolicy",
+            ),
+            "same",
+        ),
+        "PortBindings": port_bindings(10000),
+    }
+    old["Mounts"] = [
+        {"Source": str(plan.store), "Destination": "/var/lib/nla-catalog", "RW": False}
+    ]
+    old["State"] = {"Status": "running", "Running": True, "OOMKilled": False}
+    case.containers[plan.current] = old
+    original_verifier = case.containers.pop(
+        preflight_case.plan.verifier,
+        {"Image": plan.image, "State": {"Status": "exited", "ExitCode": 0, "OOMKilled": False}},
+    )
+    verifier = {**original_verifier, "Id": "8" * 64, "Config": {}, "HostConfig": {}, "Mounts": []}
+    verifier["State"]["Running"] = False
+    case.containers[plan.verifier] = verifier
+    for path in (root, run, capture):
+        case.metadata[path] = (stat.S_IFDIR | 0o700, 0, 1)
+    checkpoint = case.documents["capture-checkpoint.v1.json"]
+    checkpoint["identity"].update(
+        {
+            "shopDomain": plan.shop,
+            "onlineStorePublicationGid": "gid://shopify/Publication/1",
+            "canonicalNameManifestSha256": "c" * 64,
+            "canonicalNameSidecarSha256": "d" * 64,
+        }
+    )
+    (capture / "capture-checkpoint.v1.json").write_text(json.dumps(checkpoint))
+    source = capture / "candidate"
+    destination = plan.store / "generations" / plan.manifest
+    mutations = []
+
+    def install(src, dst):
+        assert src == source and dst == destination
+        dst.mkdir()
+        case.metadata[dst] = (stat.S_IFDIR | 0o555, 10001, 1)
+        for name in operator.FILES:
+            (dst / name).write_bytes((src / name).read_bytes())
+            case.metadata[dst / name] = (stat.S_IFREG | 0o444, 10001, 1)
+        mutations.append("install")
+
+    def create(plan, name, env, reference, values, port):
+        new = deepcopy(reference)
+        new["Id"] = "9" * 64
+        new["State"] = {
+            "Status": "created",
+            "Running": False,
+            "ExitCode": 0,
+            "OOMKilled": False,
+            "StartedAt": "0001-01-01T00:00:00Z",
+        }
+        new["HostConfig"]["PortBindings"] = port_bindings(port)
+        new["Config"]["Env"] = operator.env_bytes(values).decode().splitlines()
+        case.containers[name] = new
+        mutations.append("create")
+        return new["Id"]
+
+    def select(plan, action, expected, manifest):
+        assert action == "promote" and expected == plan.old_pin
+        pointer_path.write_text(
+            json.dumps(
+                {
+                    "schemaVersion": 1,
+                    "currentManifestSha256": manifest,
+                    "previousManifestSha256": previous,
+                },
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+        )
+        case.containers[plan.prefix + "-promote"] = {
+            "Id": "e" * 64,
+            "Image": plan.image,
+            "Config": {
+                "Env": operator.env_bytes(
+                    {
+                        "NLA_STAGING_STORE_ROOT": "/var/lib/nla-catalog",
+                        "NLA_STAGING_ACTIVATION_ACTION": "promote",
+                        "NLA_STAGING_ACTIVATION_SHA256": expected,
+                        "NLA_STAGING_CANDIDATE_MANIFEST_SHA256": manifest,
+                    }
+                )
+                .decode()
+                .splitlines()
+            },
+            "HostConfig": {},
+            "Mounts": [],
+            "State": {"Status": "exited", "Running": False, "ExitCode": 0, "OOMKilled": False},
+        }
+        mutations.append("promote")
+        raise KeyboardInterrupt("parent killed while selector exits")
+
+    checked = (old, old_bytes, case.values, before, plan.manifest, source, destination)
+    monkeypatch.setattr(operator, "install", install)
+    monkeypatch.setattr(operator, "create_runtime", create)
+    monkeypatch.setattr(operator, "select", select)
+    monkeypatch.setattr(operator, "sync_directory", lambda _: None)
+    with pytest.raises(KeyboardInterrupt):
+        operator.apply(plan, checked)
+    assert mutations == ["install", "create", "promote"]
+    for path in [plan.work, *plan.work.iterdir()]:
+        case.metadata[path] = (
+            (stat.S_IFDIR | 0o700) if path.is_dir() else (stat.S_IFREG | 0o600),
+            0,
+            1,
+        )
+    archive = plan.config / "original-source.tar"
+    archive.write_bytes(b"original pinned archive")
+    config_path = plan.config / "refresh.json"
+    config = {
+        "run_root": str(root),
+        "config": str(plan.config),
+        "store": str(plan.store),
+        "current": plan.current,
+        "image": plan.image,
+        "shop": plan.shop,
+        "code_sha": plan.new_code,
+        "archive": str(archive),
+        "archive_sha256": operator.digest(archive),
+        "publication": "gid://shopify/Publication/1",
+        "reference_manifest_sha256": "c" * 64,
+        "reference_data_sha256": "d" * 64,
+    }
+    config_path.write_text(json.dumps(config))
+    pending = root / "pending-run.json"
+    pending.write_text(json.dumps({"run": plan.run_id, "startedAt": plan.started}))
+    lock = root / ".pipeline.lock"
+    lock.write_bytes(b"")
+    for path in (config_path, pending, lock):
+        case.metadata[path] = (stat.S_IFREG | 0o600, 0, 1)
+    expected = {
+        "activation": None,
+        "refreshConfig": str(config_path),
+        "previousManifestSha256": previous,
+        "previousPreviousManifestSha256": previous_previous,
+        "promotedActivationSha256": operator.pointer_pin(plan.manifest, previous),
+        "containers": {
+            role: {
+                "id": case.containers[name]["Id"],
+                "contractSha256": recovery.container_contract(case.containers[name]),
+            }
+            for role, name in {
+                "old": plan.current,
+                "candidate": plan.candidate,
+                "verifier": plan.verifier,
+                "promote": plan.prefix + "-promote",
+            }.items()
+        },
+        "artifacts": {
+            **{
+                key: operator.digest(run / relative) for key, relative in recovery.ARTIFACTS.items()
+            },
+            "refreshConfig": operator.digest(config_path),
+            "pending": operator.digest(pending),
+        },
+        "operators": {key: operator.digest(path) for key, path in recovery.OPERATORS.items()},
+    }
+    mutations.clear()
+    observations = {"locked": False, "logs": "VALUE_FREE_RESULT: ACCEPTED"}
+
+    def docker(*args):
+        assert observations["locked"]
+        if args[0] == "inspect":
+            return json.dumps([case.containers[args[1]]])
+        if args[0] == "ps":
+            return "\n".join(case.containers)
+        if args[0] == "logs":
+            return observations["logs"]
+        mutations.append(args)
+        if args[0] == "start":
+            state = case.containers[args[1]]["State"]
+            state.update({"Status": "running", "Running": True})
+        elif args[0] == "rename":
+            case.containers[args[2]] = case.containers.pop(args[1])
+        elif args[0] == "update":
+            case.containers[args[-1]]["HostConfig"]["RestartPolicy"] = {"Name": "no"}
+        elif args[0] == "stop":
+            case.containers[args[-1]]["State"].update({"Status": "exited", "Running": False})
+        else:
+            pytest.fail("recovery must never capture/install/create/promote/delete")
+        return ""
+
+    @contextmanager
+    def locked(directory):
+        assert directory == root
+        observations["locked"] = True
+        try:
+            yield
+        finally:
+            observations["locked"] = False
+
+    monkeypatch.setattr(operator, "docker", docker)
+    monkeypatch.setattr(operator, "install", lambda *_: pytest.fail("no reinstall"))
+    monkeypatch.setattr(operator, "create_runtime", lambda *_: pytest.fail("no create"))
+    monkeypatch.setattr(operator, "select", lambda *_: pytest.fail("no select"))
+    monkeypatch.setattr(recovery.refresh, "pipeline_lock", locked)
+    monkeypatch.setattr(recovery.sys, "platform", "linux")
+    monkeypatch.setattr(operator, "ready", lambda *args: None)
+    monkeypatch.setattr(operator, "serving", lambda *args: None)
+    monkeypatch.setattr(
+        operator.urllib.request,
+        "build_opener",
+        lambda *_: SimpleNamespace(
+            open=lambda *args, **kwargs: nullcontext(SimpleNamespace(status=200))
+        ),
+    )
+    monkeypatch.setattr(
+        recovery.refresh,
+        "publish",
+        lambda path, value, **kwargs: path.write_text(json.dumps(value)),
+    )
+    return SimpleNamespace(
+        case=case,
+        plan=plan,
+        config=config_path,
+        expected=expected,
+        mutations=mutations,
+        observations=observations,
+        root=root,
+        run=run,
+        recovery=recovery,
+    )
+
+
+def test_interrupted_selector_recovery_reuses_exact_candidate_and_preserves_source_age(
+    interrupted_refresh,
+):
+    state = interrupted_refresh
+    state.recovery.recover(state.plan, state.config, state.expected)
+    assert state.mutations == [] and (state.root / "pending-run.json").exists()
+    state.recovery.recover(state.plan, state.config, state.expected, apply=True)
+    assert state.mutations == [
+        ("start", state.plan.candidate),
+        ("rename", state.plan.current, state.plan.backup),
+        ("rename", state.plan.candidate, state.plan.current),
+        ("update", "--restart", "no", state.plan.backup),
+        ("stop", "-t", "30", state.plan.backup),
+    ]
+    completed = json.loads((state.run / "completed.json").read_bytes())
+    assert completed == json.loads((state.root / "last-success.json").read_bytes())
+    assert completed["sourceStartedAt"] == state.plan.started
+    assert completed["retentionDeferred"] is True
+    assert not (state.root / "pending-run.json").exists()
+    assert (
+        dict(
+            line.split("=", 1)
+            for line in (state.plan.config / "accepted-runtime.env").read_text().splitlines()
+        )["NLA_EVIDENCE_CODE_SHA"]
+        == state.plan.new_code
+    )
+    with pytest.raises(AssertionError):
+        state.recovery.recover(state.plan, state.config, state.expected, apply=True)
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        "pointer",
+        "pointer-owner",
+        "pointer-mode",
+        "source-owner",
+        "source-file-owner",
+        "candidate-id",
+        "old-id",
+        "started",
+        "never-started",
+        "selector-exit",
+        "selector-oom",
+        "selector-log",
+        "contract",
+        "artifact",
+        "artifact-mode",
+        "generation",
+        "generation-owner",
+        "accepted-env",
+        "pending",
+        "extra-stage",
+        "backup",
+        "completed",
+        "operator",
+        "archive",
+        "original-code",
+        "old-pin",
+        "selector-env",
+        "port",
+    ],
+)
+def test_recovery_refuses_ambiguous_or_changed_state_before_any_mutation(
+    interrupted_refresh, failure
+):
+    state = interrupted_refresh
+    plan, case = state.plan, state.case
+    candidate = case.containers[plan.candidate]
+    selector = case.containers[plan.prefix + "-promote"]
+    if failure == "pointer":
+        (plan.store / "activation.v1.json").write_text("{}")
+    elif failure == "pointer-owner":
+        case.metadata[plan.store / "activation.v1.json"] = (stat.S_IFREG | 0o600, 0, 1)
+    elif failure == "pointer-mode":
+        case.metadata[plan.store / "activation.v1.json"] = (stat.S_IFREG | 0o644, 10001, 1)
+    elif failure == "source-owner":
+        case.metadata[plan.capture / "candidate"] = (stat.S_IFDIR | 0o555, 10001, 1)
+    elif failure == "source-file-owner":
+        case.metadata[plan.capture / "candidate" / "catalog-core-evidence.v1.json"] = (
+            stat.S_IFREG | 0o444,
+            10001,
+            1,
+        )
+    elif failure == "candidate-id":
+        candidate["Id"] = "0" * 64
+    elif failure == "old-id":
+        case.containers[plan.current]["Id"] = "0" * 64
+    elif failure == "started":
+        candidate["State"]["Status"] = "running"
+    elif failure == "never-started":
+        candidate["State"]["StartedAt"] = "2026-10-01T03:00:00Z"
+    elif failure == "selector-exit":
+        selector["State"]["ExitCode"] = 1
+    elif failure == "selector-oom":
+        selector["State"]["OOMKilled"] = True
+    elif failure == "selector-log":
+        state.observations["logs"] = "VALUE_FREE_RESULT: ACCEPTED\nunsafe extra"
+    elif failure == "contract":
+        candidate["HostConfig"]["ReadonlyRootfs"] = False
+    elif failure == "artifact":
+        (plan.capture / "operator-receipt.json").write_bytes(b"changed")
+    elif failure == "artifact-mode":
+        case.metadata[plan.capture / "operator-receipt.json"] = (stat.S_IFREG | 0o644, 0, 1)
+    elif failure == "generation":
+        (plan.store / "generations" / plan.manifest / "catalog-projection.v1.sqlite3").write_bytes(
+            b"changed"
+        )
+    elif failure == "generation-owner":
+        case.metadata[plan.store / "generations" / plan.manifest] = (stat.S_IFDIR | 0o555, 0, 1)
+    elif failure == "accepted-env":
+        (plan.config / "accepted-runtime.env").write_bytes(b"changed")
+    elif failure == "pending":
+        (state.root / "pending-run.json").write_text("{}")
+    elif failure == "extra-stage":
+        (plan.work / "DATASET_POINTER_PROMOTED.json").write_text("{}")
+    elif failure == "backup":
+        case.containers[plan.backup] = deepcopy(case.containers[plan.current])
+    elif failure == "completed":
+        (state.run / "completed.json").write_text("{}")
+    elif failure == "operator":
+        state.expected["operators"]["activation"] = "0" * 64
+    elif failure == "archive":
+        (plan.config / "original-source.tar").write_bytes(b"changed")
+    elif failure == "original-code":
+        state.plan = replace(plan, new_code="0" * 40)
+    elif failure == "old-pin":
+        state.plan = replace(plan, old_pin="0" * 64)
+    elif failure == "selector-env":
+        selector["Config"]["Env"] = []
+    else:
+        candidate["HostConfig"]["PortBindings"] = port_bindings(10000)
+    with pytest.raises((AssertionError, KeyError)):
+        state.recovery.recover(state.plan, state.config, state.expected, apply=True)
+    assert state.mutations == []
+    assert (state.root / "pending-run.json").exists()
+
+
+@pytest.mark.parametrize("failure", ["complete", "last-success", "pending-changed"])
+def test_recovery_retains_pending_until_both_terminal_receipts_are_durable(
+    interrupted_refresh, monkeypatch, failure
+):
+    state = interrupted_refresh
+    published = []
+
+    def publish(path, value, **kwargs):
+        if (failure == "complete" and path.name == "completed.json") or (
+            failure == "last-success" and path.name == "last-success.json"
+        ):
+            raise OSError("receipt fsync failed")
+        path.write_text(json.dumps(value))
+        published.append(path.name)
+        if failure == "pending-changed" and path.name == "last-success.json":
+            (state.root / "pending-run.json").write_text("changed")
+
+    monkeypatch.setattr(state.recovery.refresh, "publish", publish)
+    with pytest.raises((OSError, AssertionError)):
+        state.recovery.recover(state.plan, state.config, state.expected, apply=True)
+    assert (state.root / "pending-run.json").exists()
+    assert published == (
+        []
+        if failure == "complete"
+        else ["completed.json"]
+        if failure == "last-success"
+        else ["completed.json", "last-success.json"]
+    )
+
+
+@pytest.mark.parametrize("previous_previous", [None, "b" * 64])
+def test_recovery_plan_binds_all_external_ids_pins_and_operator_hashes(
+    monkeypatch, previous_previous
+):
+    from scripts import recover_staging_refresh as recovery
+
+    values = {
+        "activation": {**plan_values(), "run_id": "20261001t025743z-4de3cc26"},
+        "refreshConfig": "/private/refresh.json",
+        "previousManifestSha256": "a" * 64,
+        "previousPreviousManifestSha256": previous_previous,
+        "promotedActivationSha256": "b" * 64,
+        "containers": {
+            role: {"id": str(index) * 64, "contractSha256": "c" * 64}
+            for index, role in enumerate(("old", "candidate", "verifier", "promote"), 1)
+        },
+        "artifacts": dict.fromkeys(
+            set(recovery.ARTIFACTS) | {"pending", "refreshConfig"}, "d" * 64
+        ),
+        "operators": dict.fromkeys(recovery.OPERATORS, "e" * 64),
+    }
+
+    class CanonicalPosixPath(PurePosixPath):
+        def resolve(self):
+            return self
+
+    monkeypatch.setattr(recovery, "Path", CanonicalPosixPath)
+    loaded, config, expected = recovery.load_plan(values)
+    assert loaded.new_code == plan_values()["new_code"]
+    assert str(config).replace("\\", "/").endswith("/private/refresh.json")
+    assert expected == values
+    for change in (
+        {**values, "extra": True},
+        {**values, "previousManifestSha256": "bad"},
+        {**values, "containers": {}},
+        {**values, "operators": {}},
+        {**values, "artifacts": {}},
+        {**values, "refreshConfig": "relative"},
+        {**values, "activation": {**values["activation"], "run_id": "wrong"}},
+    ):
+        with pytest.raises(AssertionError):
+            recovery.load_plan(change)
+    bad = deepcopy(values)
+    bad["containers"]["candidate"]["id"] = bad["containers"]["old"]["id"]
+    with pytest.raises(AssertionError):
+        recovery.load_plan(bad)
+
+
+@pytest.mark.parametrize("apply", [False, True])
+def test_recovery_cli_defaults_to_guarded_read_only(monkeypatch, apply):
+    from scripts import recover_staging_refresh as recovery
+
+    calls = []
+    expected = object()
+    monkeypatch.setattr(operator, "private_read", lambda _: b"{}")
+    monkeypatch.setattr(recovery, "load_plan", lambda _: ("plan", "config", expected))
+    monkeypatch.setattr(recovery, "recover", lambda *args: calls.append(args))
+    assert recovery.main(["--plan", "/private/plan"] + (["--apply"] if apply else [])) == 0
+    assert calls == [("plan", "config", expected, apply)]
+
+
+@pytest.mark.parametrize("error", [OSError("PRIVATE"), KeyboardInterrupt()])
+def test_recovery_cli_failure_never_echoes_private_data(monkeypatch, capsys, error):
+    from scripts import recover_staging_refresh as recovery
+
+    def fail(_):
+        raise error
+
+    monkeypatch.setattr(operator, "private_read", fail)
+    assert recovery.main(["--plan", "/private/PRIVATE", "--apply"]) == 1
+    output = capsys.readouterr()
+    assert "PRIVATE" not in output.out and not output.err
+
+
+def test_recovery_entrypoint_requires_plan(monkeypatch):
+    from scripts import recover_staging_refresh as recovery
+
+    monkeypatch.setattr(sys, "argv", ["recover_staging_refresh.py"])
+    with pytest.raises(SystemExit, match="1"):
+        runpy.run_path(recovery.__file__, run_name="__main__")
+
+
+@pytest.mark.parametrize("platform", ["win32", "linux"])
+def test_recovery_requires_root_linux_assertions(monkeypatch, platform):
+    from scripts import recover_staging_refresh as recovery
+
+    monkeypatch.setattr(recovery.sys, "platform", platform)
+    monkeypatch.setattr(operator.os, "geteuid", lambda: 1000, raising=False)
+    with pytest.raises(operator.InspectBeforeRetry, match="root_linux"):
+        recovery.preflight(None, None, None)
+
+
+def test_recovery_handoff_failure_keeps_pending_and_never_creates_or_selects(
+    interrupted_refresh, monkeypatch
+):
+    state = interrupted_refresh
+
+    def fail(*args):
+        raise OSError("candidate readiness unavailable")
+
+    monkeypatch.setattr(operator, "ready", fail)
+    with pytest.raises(operator.InspectBeforeRetry, match="recovery_handoff"):
+        state.recovery.recover(state.plan, state.config, state.expected, apply=True)
+    assert state.mutations == [("start", state.plan.candidate)]
+    assert state.case.containers[state.plan.current]["Id"] == state.plan.expected_id
+    assert state.case.containers[state.plan.current]["State"]["Running"]
+    assert (state.root / "pending-run.json").exists()
+    assert not (state.run / "completed.json").exists()
