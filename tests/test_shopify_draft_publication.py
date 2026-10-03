@@ -91,11 +91,22 @@ class FakePublication:
 
 
 @pytest.fixture
-def setup(tmp_path):
+def setup(tmp_path, monkeypatch):
     api = FakeShopify()
     assert create_verified_draft(tmp_path, api)["status"] == "draft_verified"
     ledger = tmp_path / "ledger.sqlite"
     ledger.chmod(0o600)
+    native_lstat = Path.lstat
+
+    def root_ledger_facts(path, *args, **kwargs):
+        facts = native_lstat(path, *args, **kwargs)
+        if path == ledger:
+            fields = list(facts)
+            fields[4] = 0  # Simulate the deployment owner only for this ledger.
+            return os.stat_result(fields)
+        return facts
+
+    monkeypatch.setattr(Path, "lstat", root_ledger_facts)
     return ledger, FakePublication(api.product)
 
 
@@ -662,3 +673,17 @@ def test_shopify_user_errors_stop_and_do_not_leak_provider_text(setup, mutation)
     assert result["published"] == 0 and publication_rows(ledger)[0][3] == "pending"
     if mutation == publication.ACTIVATE:
         assert publication.PUBLISH not in [q for q, _ in api.calls]
+
+
+def test_fixture_preserves_real_ledger_metadata_and_other_path_ownership(setup):
+    ledger, _ = setup
+    simulated, native = ledger.lstat(), ledger.stat()
+    assert simulated.st_uid == 0
+    assert (simulated.st_mode, simulated.st_nlink, simulated.st_ino) == (
+        native.st_mode,
+        native.st_nlink,
+        native.st_ino,
+    )
+    other = ledger.with_name("unrelated.txt")
+    other.write_text("fixture")
+    assert other.lstat().st_uid == other.stat().st_uid
