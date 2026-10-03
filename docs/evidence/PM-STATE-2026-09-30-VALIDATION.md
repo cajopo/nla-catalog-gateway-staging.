@@ -64,14 +64,23 @@ from pathlib import Path
 import hashlib
 import re
 
-active = [Path("README.md")] + [Path("docs") / name for name in (
-    "STATUS-CURRENT.md", "ROADMAP-EXECUTION.md", "PM-HANDOFF.md", "DECISIONS.md",
-    "evidence/STATE-2026-09-30.md", "evidence/PM-STATE-2026-09-30-VALIDATION.md",
-    "workstreams/ws-05-family-search-v1.md", "workstreams/ws-10-family-selector.md",
-    "workstreams/ws-09f-warm-activation.md", "workstreams/ws-10-home-browser-20260928.md",
-    "workstreams/ws-12-release-readiness-20260929.md",
-    "workstreams/other-printings-product-page.md",
-)]
+active = [Path("README.md")] + [
+    Path("docs") / name
+    for name in (
+        "STATUS-CURRENT.md",
+        "ROADMAP-EXECUTION.md",
+        "PM-HANDOFF.md",
+        "DECISIONS.md",
+        "evidence/STATE-2026-09-30.md",
+        "evidence/PM-STATE-2026-09-30-VALIDATION.md",
+        "workstreams/ws-05-family-search-v1.md",
+        "workstreams/ws-10-family-selector.md",
+        "workstreams/ws-09f-warm-activation.md",
+        "workstreams/ws-10-home-browser-20260928.md",
+        "workstreams/ws-12-release-readiness-20260929.md",
+        "workstreams/other-printings-product-page.md",
+    )
+]
 links = 0
 for file in active:
     body = file.read_text(encoding="utf-8-sig")
