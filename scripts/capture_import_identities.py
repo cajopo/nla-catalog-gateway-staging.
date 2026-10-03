@@ -256,10 +256,10 @@ def main():
         os.umask(0o077)
         credentials = json.loads(activation.private_read(args.credential_file))
         client = ShopifyCaptureHttp(
-            shop_domain=args.shop,
-            api_version="2026-07",
-            client_id=credentials["client_id"],
-            client_secret=credentials["client_secret"],
+            args.shop,
+            "2026-07",
+            credentials["client_id"],
+            credentials["client_secret"],
         )
         with refresh.pipeline_lock(args.run_root):
             if (args.run_root / "pending-run.json").exists():
