@@ -3,6 +3,7 @@
 Aggiornato il 3 ottobre 2026. Stato e prove:
 [manutenzione del 30 settembre](evidence/MAINTENANCE-2026-09-30.md) e
 [recupero PC](evidence/RECOVERY-PC-2026-10-01.md),
+[checkpoint PC del 3 ottobre](evidence/BACKUP-PC-2026-10-03.md),
 [incidente refresh del 3 ottobre](evidence/INCIDENT-2026-10-03.md) e
 [ripresa GitHub](evidence/GITHUB-RESUME-2026-10-03.md).
 PM della fase: Codex. Operatore continuativo e destinatari degli alert da
@@ -187,6 +188,18 @@ limiti o cancellare dati senza decisione e review. È pendente la scelta asincro
 di Jacopo fra preparare un riavvio concordato con 4 GB per Docker Desktop o
 rinviare; nessuna impostazione è stata modificata.
 
+Nuova prova PC del 3 ottobre: checkpoint copiato alle 10:11:07 UTC
+(222.535.954 byte, SHA-256
+`93a7d1c6601f0c62f2d94098f94e539babb16241adfc85c915312038c9026713`) e restore
+offline PASS in 49,826 s: 12 file, tre database `quick_check`, 295.975 prodotti
+e 298.046 varianti per ciascuna delle generazioni corrente e precedente;
+ledger con 4.180 draft attempts e 4.180 draft publications. Checkpoint/seed del
+30 settembre invariati. Questa acquisizione non è atomica tra catalogo e ledger,
+non è backup automatico/durevole e non certifica RTO completo. Preflight memoria
+alle 09:58:17: 2.378.674.176 byte disponibili, sotto il minimo 2.415.919.104;
+limiti invariati, seed fermo, nessun nuovo container avviato. Decisioni del
+proprietario ancora pendenti. Vedi [evidenza](evidence/BACKUP-PC-2026-10-03.md).
+
 Il precedente [drill sulla VPS](evidence/RECOVERY-LINUX-2026-09-30.md) ha superato restore
 dati, ammissione del gateway e prove HTTP/carico limitato sulla stessa VPS,
 con job inattivi e risorse verificate. Il primo avvio con 1 GiB è terminato OOM;
@@ -225,7 +238,7 @@ percorsi, verificare i pin e ottenere review prima di eseguire gli helper.
 | Backup automatico e retention | Non configurati | Copia dopo ciclo riuscito, verifica hash/restore, retention da approvare; misurare quanto rimane recuperabile se un ciclo fallisce |
 | Credenziali e reference | Reference completa e configurazione restaurata accettate offline; credenziali/certificati esclusi | Collaudare il ciclo refresh/importer con accessi recuperati; definire conservazione cifrata e recupero degli accessi, senza segreti in Git/documenti |
 | RPO | Nessun RPO garantito dal backup manuale | Proposta iniziale: massimo 24 ore per copie fuori host, coerente con tolleranza del catalogo; richiede scheduler e prova dei fallimenti |
-| RTO | 69 s restore offline PC, 13,35 s restore dati Linux; il seed PC ha richiesto 148,264 s ma il runtime non è stato creato. Seconda istanza pronta osservata dopo 20 min 19 s a 0,5 CPU, preceduta da OOM a 1 GiB | Budget proposto: 2 ore su host Linux già pronto, escluso provisioning/DNS; serve prova completa con immagine/credenziali, oggi non garantito |
+| RTO | Restore dati PC 3 ottobre: 49,826 s; restore reference storico: 23,164 s. Non è stato avviato runtime PC, quindi nessun RTO completo certificato. Restano distinti gli esiti del drill Linux VPS | Budget proposto: 2 ore su host Linux già pronto, escluso provisioning/DNS; serve prova completa con immagine/credenziali, oggi non garantito. [Nuova prova PC](evidence/BACKUP-PC-2026-10-03.md) |
 | Alert e reperibilità | Email scelta; indirizzo, recapito e referente ancora da confermare | PM verifica servizio/costi e prepara configurazione; prova identificabile al destinatario dopo autorizzazione |
 | Recupero trigger persi | `Persistent=no` osservato | Valutare `Persistent=yes` e prova isolata dopo verifica dei vincoli di locking/overlap; nessun timer cambiato ora |
 

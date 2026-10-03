@@ -7,8 +7,13 @@ Questo risultato non equivale al consolidamento globale: restano da integrare
 workstream dipendenti e richiedere review indipendenti. PR #100 ha ora CI/CodeQL
 verdi; l'integrazione globale e la consegna degli altri workstream non sono finite.
 Non sono autorizzati acquisti di quota o merge di controlli rossi.
+Il checkpoint PC indipendente del 3 ottobre e i relativi limiti sono in
+[BACKUP-PC-2026-10-03](BACKUP-PC-2026-10-03.md).
 
 ## Stato delle PR interessate
+
+Le verifiche di questa sezione fotografano gli head osservati alle 09:54 UTC.
+Gli aggiornamenti documentali successivi conservano i propri controlli nella PR.
 
 - **#94 filtri:** CI e CodeQL verdi. PR ancora aperta; il branch `agent/set-rarity-filters`
   è una base dipendente per il lavoro successivo sulla ricerca per famiglia.
@@ -32,7 +37,7 @@ Non sono autorizzati acquisti di quota o merge di controlli rossi.
 | Ricerca per famiglia #9 | `agent/family-search-v1` — `8d24b38124eb2c95f4f4e6481426d0b349dd3aba` | Branch/PR dedicata assente; #53 e #61 sono PR distinte di ricerca, #94 è la dipendenza filtri | La base #94 a `8634ff1` è antenata, ma il tip aggiunge 13 commit e il diff risultante è 34 file, +3.065/−83, con modifiche estranee a #9. La feature `ed24a61` da sola modifica 6 file (+415/−13); isolare feature, test e documentazione su una base di dipendenze accettata. |
 | Operatore refresh/deploy #13 | `agent/staging-warm-activation` — `83b14e45ba20180805b2414f0c7b838041cd8ad7` | Branch remoto presente; PR dedicata per questo tip non individuata. #100 dipende da questo ramo. | La commit terminale modifica 3 file (+249/−8). La base #56 a `65af889` è antenata, ma la differenza integrata verso di essa è 133 file (+26.342/−642): non presentare il tip come mega-PR. Decomporre i workstream intermedi prima della review della base necessaria a #100. |
 | Tema #14 | `agent/theme-family-selector` — `09821ca37bbffbcc3beef02651f59f7f106084ec` | Branch assente; #64 e #91 sono entrambe aperte | L’head #91 `c5a5dff` è antenato: il delta locale aggiunge 10 commit, 17 file (+1.172/−28). Verificare le sovrapposizioni con #64 prima di estendere o consolidare una delle PR; il branch completo contro `main` è 97 file (+23.542/−259). |
-| PM #34 | `agent/pm-state-20260930` — `9f4e3906f639ef52ce60b4372f0fb1069ec34f56` | Consegna documentale separata | Branch `agent/pm-incident-state-20261003` nel checkout pulito `C:\Users\umbri\.codex\worktrees\nla-pm-incident-docs\nla-catalog-gateway-staging`, base `7ab94d3` (PR #100); 23 file solo docs, incluso `docs/workstreams/ws-09g-refresh-interruption-recovery.md`; preflight 210 file e Markdown link check passati. Conservare il root `9f4e390` come fonte PM storica. |
+| PM #34 | `agent/pm-state-20260930` — `9f4e3906f639ef52ce60b4372f0fb1069ec34f56` | PR #101 ready for review | Branch `agent/pm-incident-state-20261003` nel checkout pulito `C:\Users\umbri\.codex\worktrees\nla-pm-incident-docs\nla-catalog-gateway-staging`, base PR #100 head `7ab94d3`; head `6913748dc1513b29c084db522865386067db241a`; 23 file solo docs, incluso `docs/workstreams/ws-09g-refresh-interruption-recovery.md`. CI 37113804901 e CodeQL 37113804893 passati (3.885 test, coverage 100% in Python 3.12/3.13); preflight 210 file e Markdown link check passati. Ogni nuovo commit docs richiede i propri controlli finali. Conservare root `9f4e390` come fonte PM storica. |
 
 ## Sequenza di consegna
 

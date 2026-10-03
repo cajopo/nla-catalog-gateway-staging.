@@ -28,14 +28,26 @@ due generazioni preservate e ledger invariato. Le misure di spazio precedenti
 (5.446.959.104 byte alle 07:45 e 5,67 GB) restano alert storici, non valori da
 sommare; finale 11.782.266.880 byte. Dati completi in [incidente](evidence/INCIDENT-2026-10-03.md).
 
-La consegna documentale è preparata in un checkout pulito separato:
+La consegna documentale usa un checkout pulito separato:
 `C:\Users\umbri\.codex\worktrees\nla-pm-incident-docs\nla-catalog-gateway-staging`,
-branch `agent/pm-incident-state-20261003`, base `7ab94d3` (PR #100). Contiene 23
-file solo documentali, incluso `docs/workstreams/ws-09g-refresh-interruption-recovery.md`;
-preflight su 210 file e Markdown link check passati. Il checkout root
+branch `agent/pm-incident-state-20261003`, PR #101 ready for review. Alle 09:54
+UTC era verificato il head `6913748dc1513b29c084db522865386067db241a`, basato sul head PR #100
+`7ab94d3`. CI #37113804901 e CodeQL #37113804893
+passati; 3.885 test e coverage 100% con Python 3.12 e 3.13. Contiene 23 file solo
+documentali, incluso `docs/workstreams/ws-09g-refresh-interruption-recovery.md`;
+preflight su 210 file e Markdown link check passati. I controlli sono sul head
+osservato; ogni commit documentale successivo richiede i propri controlli finali.
+Il checkout root
 `agent/pm-state-20260930` a `9f4e390` resta la fonte PM storica, non il branch pulito di consegna. Otto
 ricevute recovery, 3.009 byte, sono sul PC in
 `refresh-recovery-20261003/recovered-receipts`.
+
+Il checkpoint PC privato del 3 ottobre è stato copiato alle 10:11:07 UTC e
+restaurato offline con esito PASS; dettagli e limiti in
+[BACKUP-PC-2026-10-03](evidence/BACKUP-PC-2026-10-03.md). Il preflight memoria
+delle 09:58:17 ha misurato 2.378.674.176 byte disponibili, sotto la soglia
+2.415.919.104; impostazioni invariate e seed fermo. Nessun nuovo container
+avviato; le decisioni del proprietario restano pendenti.
 
 ## Regole per il prossimo intervento
 

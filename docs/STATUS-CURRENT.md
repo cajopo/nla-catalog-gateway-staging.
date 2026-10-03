@@ -41,7 +41,7 @@ installati, offline sul PC. Il ciclo Shopify effettivo resta da collaudare.
 | Aggiornamenti | Timer attivi; refresh delle 15 UTC completato alle 16:40 UTC del 30 settembre; otto nuove carte nel ciclo mattutino, zero in quello pomeridiano | Ricevuta terminale e pointer concordanti; nessun job riavviato |
 | Refresh e market, 3 ottobre | Run `20261003t073240z-3f7384f8` exit 0; servizio terminato 09:12:19 UTC, monitorato 09:14:01. Attivazione 09:12:13; freshness PASS 09:15:01, source age 6.124 secondi (1 h 42 min 4 s), ricevuta/last-success/pointer coerenti, HTTPS 200; smoke 10/10 alle 09:14:42. Dataset SHA-256 `5152b3c3…`; runtime `af366c05…` senza OOM. Resolver/ack market hanno ripulito solo stato storico senza avviare job o chiamare Shopify. Timer prossimi: market 14 UTC, refresh 15 UTC | [Incidente](evidence/INCIDENT-2026-10-03.md); refresh Shopify read-only |
 | Retention e spazio VPS | Retention finale 09:15:41: piano completato, sei container e quattro directory obsolete rimosse, due generazioni soltanto; corrente/precedente e ledger protetti/verificati. Spazio 11.782.266.880 byte. Letture precedenti: 5.446.959.104 byte alle 07:45 e 5,67 GB; non sommarle per dedurre il recupero del piano | [Retention](evidence/RETENTION-2026-09-30.md); [stato incidente](evidence/INCIDENT-2026-10-03.md). Riserva 6 GiB solo pre-cattura, senza garanzia sul picco |
-| Backup e recupero | Copia privata fuori VPS verificata; dati e seed Linux passati; configurazione e reference completa accettate offline sul PC; runtime applicativo PC ancora fermato dal preflight memoria | [Prova PC](evidence/RECOVERY-PC-2026-10-01.md): 12 file e 3 database integri. [Reference](evidence/REFERENCE-RECOVERY-2026-10-01.md): 336.752 identità in 23,164 s. [Prova Linux](evidence/RECOVERY-LINUX-2026-09-30.md) sulla VPS; nessun RTO completo certificato |
+| Backup e recupero | Nuovo checkpoint privato PC acquisito e restaurato offline con esito PASS; seed precedente preservato e fermo, runtime PC mai avviato, nessun RTO completo né backup automatico/durevole | [Checkpoint e restore PC 3 ottobre](evidence/BACKUP-PC-2026-10-03.md); prove storiche: [PC](evidence/RECOVERY-PC-2026-10-01.md), [reference](evidence/REFERENCE-RECOVERY-2026-10-01.md), [Linux](evidence/RECOVERY-LINUX-2026-09-30.md) |
 | QA componente | Matrice 21/21 in Chrome, Firefox e WebKit; smoke touch 390×844 e retry dopo 503 simulato sulla fixture; axe zero violazioni, un incomplete di contrasto valutato manualmente nello stato coperto | Solo fixture congelata; non certifica Shopify/mobile reale, Safari/iOS, screen reader, outage gateway o freschezza. Dettagli: [QA](evidence/MAINTENANCE-2026-09-30.md#qa-sul-sorgente-congelato); ricevuta privata in `../output/nla-recovery/20260930/evidence/qa-touch-down-final/index.json` |
 | Sicurezza | Confine Shopify App Proxy autenticato; gateway e refresh in sola lettura | Architettura #17 e prove del servizio |
 | Tema | 175195881740 principale; 175194898700 conservato per ripristino; password attiva | [Ricevute del passaggio](workstreams/ws-12-release-readiness-20260929.md) |
@@ -54,9 +54,11 @@ installati, offline sul PC. Il ciclo Shopify effettivo resta da collaudare.
 - Certificazione completa della release: matrice browser/accessibilità/carico
   e prove di recupero legate alla stessa versione.
 - Completare backup automatico/destinazione durevole e recupero del servizio:
-  il seed dei dati e l'identità immagine sono verificati sul PC, ma il runtime non
-  è stato creato o avviato perché la memoria disponibile è sotto la soglia di
-  preparazione. Configurazione e reference sono accettate offline; restano il
+  checkpoint PC e restore offline sono verificati, ma non sono una copia atomica
+  catalogo+ledger né un backup automatico/durevole. Il preflight memoria PC del
+  3 ottobre ha misurato 2.378.674.176 byte disponibili, sotto il minimo richiesto
+  di 2.415.919.104; impostazioni invariate, seed fermo, nessun runtime avviato.
+  Restano decisione del proprietario sulle risorse per la prova isolata,
   ciclo reale runtime/refresh/importer, destinazione durevole, credenziali e
   certificati, che richiedono procedure dedicate.
 - Alert effettivamente recapitati, referente operativo e obiettivi di recupero.
