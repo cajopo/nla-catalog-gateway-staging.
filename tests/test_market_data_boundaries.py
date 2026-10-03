@@ -165,7 +165,7 @@ def test_capture_refuses_invalid_paths_or_operation_evidence(identity_case, monk
     elif case == "file":
         work.touch()
     elif case == "not_empty":
-        work.mkdir()
+        work.mkdir(mode=0o700)
         (work / "unaccounted.json").write_text("{}")
     elif case == "private":
         work.mkdir()
