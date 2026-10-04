@@ -594,6 +594,22 @@ def test_cli_receipt_and_environment_credentials(tmp_path, monkeypatch, capsys, 
     assert captured.err == "" and SENSITIVE not in captured.out
 
 
+def test_cli_wait_options_resume_and_only_print_final_receipt(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("SHOPIFY_CLIENT_ID", "synthetic-id")
+    monkeypatch.setenv("SHOPIFY_CLIENT_SECRET", SENSITIVE)
+    monkeypatch.setattr(cli, "ShopifyCaptureHttp", lambda *_: None)
+    monkeypatch.setattr(cli.time, "monotonic", lambda: 0)
+    sleeps = []
+    monkeypatch.setattr(cli.time, "sleep", sleeps.append)
+    receipts = iter([{"status": "pending"}, {"status": "candidate-ready"}])
+    monkeypatch.setattr(cli, "run_capture", lambda **_: next(receipts))
+    assert cli.main([*_arguments(tmp_path), "--wait-seconds", "120", "--poll-seconds", "5"]) == 0
+    assert sleeps == [5]
+    captured = capsys.readouterr()
+    assert json.loads(captured.out) == {"status": "candidate-ready"}
+    assert captured.err == ""
+
+
 @pytest.mark.parametrize("failure", [RuntimeError(SENSITIVE), KeyboardInterrupt(SENSITIVE)])
 def test_cli_redacts_unexpected_errors_and_interrupts(tmp_path, monkeypatch, capsys, failure):
     monkeypatch.setenv("SHOPIFY_CLIENT_ID", "synthetic-id")

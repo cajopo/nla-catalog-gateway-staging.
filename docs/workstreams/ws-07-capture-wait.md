@@ -1,0 +1,190 @@
+# WS-07 / issue #11: bounded capture polling
+
+The existing `scripts.capture_shopify_bulk` command now accepts optional
+`--wait-seconds 7200 --poll-seconds 60`. Without those options its existing
+single-step behavior is preserved.
+
+This replaces ad-hoc polling wrappers, not the reconciler or package validator.
+All steps retain the same capture directory, client, pinned reference and source
+configuration. Only a successful `pending` result is retried. Errors, uncertain
+export launches and invalid reference coverage stop immediately. Recovery IDs are
+used only on the first step; subsequent steps use the durable checkpoint.
+
+Exit codes remain 0 for a verified candidate, 3 for pending (including an expired
+polling budget), and 1 for failure. Resuming a pending run requires the same private
+capture directory. Never respond to exit 1 by blindly creating another directory.
+The polling budget does not interrupt a running download/reconciliation/package;
+an external service must impose the overall timeout and memory limit.
+
+This is NOT an installed periodic refresh or automatic publication. An actual
+scheduled workflow still needs activation/rollback integration, bounded disk
+retention and freshness reporting. A 24-hour interval alone would not satisfy a
+24-hour visibility limit because export, validation and activation take time.
+New source IDs still require verified canonical-name reference coverage; no title
+guessing or silent omission is introduced. No Shopify product, PowerTools or theme
+writes are added, and no active dataset changes are performed by this command.
+
+## Reusable runtime compatibility check
+
+`scripts/verify_staging_runtime.py` replaces the dated, embedded verification
+snippet used during supervised refreshes. It is included in the runtime image so
+the check uses the same installed reader and runtime backend as deployment:
+
+```text
+python /app/scripts/verify_staging_runtime.py \
+  --candidate-directory /candidate \
+  --manifest-sha256 <accepted-capture-manifest-sha256> \
+  --summary-sha256 <capture-checkpoint-summary-sha256> \
+  --code-sha <capture-producer-code-sha> \
+  --record-count <independently-reconciled-product-count>
+```
+
+Run it in the pinned deployment image, network disabled, candidate mounted read
+only, non-root, with the existing memory/CPU and supervisor time limits. The
+caller supplies pins and count from the accepted capture checkpoint/receipt;
+reading expected values out of the candidate itself would not establish this
+capture-to-candidate binding. The caller must still verify capture completion.
+
+Exit0 emits one JSON receipt only after the package reader and runtime backend
+both accept the artifact. Exit1 emits a fixed error without paths, arguments or
+exception contents. Counts and per-game totals come from verified records, with
+unclassified records counted explicitly; no date, store or catalog size is baked
+into the command. It does not re-run the full catalog proof, activate anything,
+validate App Proxy credentials, or certify HTTP readiness/freshness. Interrupted
+container checks require inspection before retry. The deployed image is unchanged
+until a separately tested deployment; this change alone installs no scheduler.
+
+Focused verification: `pytest tests/test_verify_staging_runtime.py
+--cov=scripts.verify_staging_runtime --cov-report=term-missing` covers a real
+package/runtime binding, read-only file hashes, wrong pins/counts, CLI errors and
+interruption without a success receipt.
+
+## Parameterized staging replacement
+
+`scripts/activate_staging_refresh.py` is the host-side version of the supervised
+replacement already exercised on staging. It reuses the existing activation CLI
+and pinned runtime image; it does not add an HTTP activation API or hot reload.
+
+```text
+python scripts/activate_staging_refresh.py --plan /private/activation-plan.json
+python scripts/activate_staging_refresh.py --plan /private/activation-plan.json --apply
+```
+
+The default is read-only preflight. Run as root on the Linux staging host, without
+Python optimization, inside a bounded service and the coordinator's exclusive
+whole-pipeline lock. This component does not acquire that lock itself and must not
+be scheduled directly. A private root-owned mode-0600 plan supplies exactly:
+
+- `capture`, `store`, `config`, `work`: canonical absolute host directories; `work`
+  must not exist and its parent must be root-owned mode 0700.
+- `run_id`, `current`, `expected_id`, `image`: a unique run suffix, current runtime
+  name, exact container ID, and exact image SHA256 (not a mutable tag).
+- `old_pin`, `old_code`: accepted pointer-byte hash and current producer commit.
+- `manifest`, `summary`, `new_code`, `started`, `counts`: accepted capture evidence;
+  counts contain `products`, `published`, `singles`, `variants`, not a fixed total.
+- `shop`: the expected Shopify shop domain. Credentials remain in the existing
+  private accepted environment, never in the plan or repository.
+
+The coordinator must publish the capture receipt only after its capture child
+exits successfully, using exclusive atomic publication and fsync under the
+whole-pipeline lock. The receipt/checkpoint and the exited successful verifier
+container `nla-refresh-<run_id>-runtime-verify` must agree. A separate capture
+systemd unit and journal lookup are not required. Candidate artifact hashes, file
+permissions, current container, accepted environment and pointer are checked
+before any writes. Existing run resources or destination packages stop the run.
+
+Apply installs the immutable package, prepares a same-image runtime changing only
+the activation and producer pins, compare-and-swaps the pointer, replaces the
+stopped runtime, and waits up to 20 minutes for pinned-container HTTP readiness.
+Only then is `accepted-runtime.env` replaced. Package and prior container remain
+available for recovery; this script deletes nothing.
+
+Before environment commit, an ordinary failure with a known pointer/runtime can
+roll back through the existing CAS command. Recovery creates a fresh runtime with
+the **actual rollback pointer hash**; restarting the old container with its stale
+pin is not valid. Ambiguous selection, an externally changed pointer/container,
+interruption, or failure after environment commit requires operator inspection,
+not a blind retry. Work receipts and named containers remain for that inspection.
+
+Focused offline tests exercise the real preflight against synthetic files and
+simulated POSIX ownership, command construction, install/sealing, readiness,
+rollback and ambiguous failures. They do not claim a new VPS deployment. This
+component alone provides neither a 24-hour refresh guarantee nor new market
+cards; the coordinator below supplies its surrounding lifecycle.
+
+## Single-run coordinator (not scheduled or deployed)
+
+`python -m scripts.refresh_staging_catalog --config /private/refresh.json`
+validates configuration and source/reference hashes without running a capture.
+Add `--apply` for one whole pipeline. Run from the pinned source checkout with
+its `src` on `PYTHONPATH`, using the existing host Python environment. The private
+configuration contains exactly these keys:
+
+- Paths: `run_root`, `config`, `store`, `reference`, `archive`. All must be
+  canonical absolute Linux paths. `run_root` and `config` are existing root-owned
+  mode-0700 directories; `config` contains the existing private accepted-runtime
+  environment and Shopify application credentials.
+- Pins: `code_sha`, `archive_sha256`, `reference_manifest_sha256`,
+  `reference_data_sha256`, `image`. `archive` is a Git tar archive of `code_sha`;
+  its global PAX commit and all installed application/scripts/query files must
+  agree. No mutable image tag or unverified source tree is accepted.
+- Store identity: `shop`, `publication` (Online Store publication GID), `current`
+  (the already running staging container's name).
+
+A nonblocking filesystem lock spans capture, verification, activation and final
+receipts. A durable `pending-run.json` is written before any export; any existing
+pending marker stops the next run. The capture child receives no credential in
+its command line or environment. Its internal `--capture-run` mode additionally
+requires the private run directory and matching pending intent; it is not a retry
+interface. Child exit0, candidate-ready result and matching checkpoint identity
+are required before exclusive atomic publication of the terminal capture receipt.
+
+The verifier runs in the current pinned image with no network, read-only mounts
+and a20-minute timeout; the source-pinned checker script is mounted read-only,
+so the existing runtime image need not be upgraded. The capture child is bounded
+to3hours. One outer systemd oneshot must bound the whole operation and its process
+group; no per-run service/journal gate is needed. Timeouts or uncertainty leave
+the pending marker and named resources for inspection. No automatic retry
+occurs. Successful runs use the bounded retention described below.
+
+Success writes an exclusive run `completed.json` and replaces private
+`last-success.json`, preserving both capture-start and activation timestamps.
+Retention must also succeed before pending intent is cleared. Thus activation
+time cannot masquerade as source freshness. Low disk reserve (less than6GiB)
+blocks before a new capture.
+
+Native Linux archive/path/lock tests must pass in CI; a Windows test run does not
+certify those cases. This coordinator is not installed on staging and does not
+yet include an installed timer or notification destination. Those remain required
+before unattended use. It only refreshes Shopify's existing catalog;
+market-new source discovery and verified canonical-reference updates are separate.
+
+## Bounded retention and operator freshness
+
+The coordinator records exact runtime, previous-runtime, verifier and promote
+container IDs plus the previous manifest in each successful run receipt. Under
+the same pipeline lock, retention keeps the active and previous catalog and the
+current run's four resources. Older recorded stopped/no-restart containers are
+removed by exact ID without force or volume deletion; duplicate IDs are handled
+once. This does not preserve an ever-growing chain of old backup containers.
+
+Only obsolete completed-run folders and their matching generation directories
+are eligible. Incomplete/unrecognized runs and unrecorded generations are never
+deleted. Unknown containers mounting a managed root (or an ancestor) stop cleanup.
+Generation manifest hashes must match their receipts. Every deletion tree must
+have the expected owner and exact parent, no links, special files, nested mounts
+or cross-filesystem entries. A private fsynced plan precedes deletion. Pointer,
+current runtime, remaining container references and mountpoints are rechecked
+during removal. Any failure retains pending intent for inspection; it does not
+start another capture. Existing legacy resources must be handled separately by
+a supervised deployment; they are not silently adopted or pruned.
+
+`--status` is read-only. It binds `last-success.json` to the actual current pointer
+and container, then reports source age from capture start, not activation time.
+Exit0 means younger than24hours and no pending run; exit2 means stale or incomplete.
+Missing/mismatched evidence and future timestamps fail closed with exit1. The
+report explicitly says `marketNewUpdates: false`: refreshing Shopify does not
+discover new market releases or renew the frozen canonical reference.
+
+Tests use synthetic directories and simulated Docker only, including post-plan
+container/mount changes. Native Linux CI remains mandatory before deployment.
