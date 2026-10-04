@@ -141,3 +141,77 @@ CI for preceding commit `ab0c26e` is fully green: run `35004492258` (Python 3.12
 container, dependency audit) and CodeQL `35004492225`. Python 3.12 log: 2,249 tests passed,
 11,863 statements and 3,968 branches at 100%, zero skipped. This does not certify the
 newer suggestion delta, which needs its own exact-head CI.
+
+## Distinct-name correction (2026-09-21, issue #9 follow-up)
+
+Real clone QA found that One Piece `Ma` showed ten suggestion labels but only three
+base names: Machvise, Mad Treasure and Magellan. A read-only query on restored real
+manifest `3edfbc59f731613b4684305efc676e9ff8739076024928ff3f9b21e432dd8864`
+confirmed later matching names (Magura, Maha, Mahoroba, Makino, and others). The source
+name field includes print suffixes; limiting raw source-name groups hid those names.
+Pokemon `p` exposed the same problem with Pachirisu numeric-level suffixes.
+
+The correction changes suggestions only. It groups scoped raw-name SQL totals into
+base-name suggestions before applying the existing ten-result limit. Known suffixes:
+
+- trailing ` (V.n)` or ` (V.n - description)` source print versions;
+- only for One Piece, trailing `(OPnn-nnn)`, `(STnn-nnn)`, `(EBnn-nnn)`,
+  `(PRBnn-nnn)` or `(P-nnn)`, after version removal;
+- only for Pokemon, trailing ` Lv.n` (case insensitive), after version removal.
+
+Other parenthesized text, token characteristics, `Lv.X`, `ex`, `VMAX`, unknown code
+formats and numeric levels in other games are retained. This is not general removal
+of parentheses, product identity inference, a new canonical-source rewrite, or a claim
+that all future source annotation formats are recognized. Empty labels are forbidden.
+Original canonical names, Shopify GIDs, source IDs, search columns, product results and
+cursor semantics are unchanged. Selecting the suggested base name searches its prints;
+counts still cover only the current matching game/query/stock scope. No product is
+dropped, deduplicated out of search results or written to Shopify.
+
+The aggregation checks the existing operation checkpoint during the Python merge and
+after final ranking. The independent core verifier uses separate string parsing of
+the declared suffix rules, while its product-search oracle still uses original names.
+This was required by review: the old raw-name suggestion oracle would otherwise reject
+the corrected generation. No schema migration, new index, service or cache is needed.
+
+The first candidate-wheel diagnostic on the restored read-only database completed
+eight representative four-game queries in 0.021–0.504 seconds. One Piece `Ma` produced
+Machvise, Mad Treasure, Magellan, Magura, Maha, Mahoroba, Makino, Mamaragan, Mamboshi and
+Mansherry, with counts6/2/15/3/3/3/23/4/3/8. That diagnostic preceded the Pokemon-level
+and raw-name grouping refinements; final validation is recorded separately. These are
+suggestion-component timings, not complete HTTP or concurrent-load acceptance.
+
+Not deployed. Exact-head native CI and staging/clone checks remain required; GitHub
+Actions currently has an unresolved pre-step failure on the preceding PR94 run. Do
+not rerun failed infrastructure jobs blindly or relax coverage to ship this correction.
+New-market ingestion is still NOT ACTIVE and awaits CardTrader access.
+
+Final component run after both refinements: eight queries, 0.020–0.510 seconds,
+all assertions PASS; Pokemon `p` now yields ten names (Pachirisu, Paint Roller,
+Pal Pad, Palace Belt, Palace Book, Palafin, Palafin ex, Paldean Clodsire,
+Paldean Clodsire ex, Paldean Student). Pachirisu aggregates60 matching products.
+Database size/mtime unchanged, SQLite opened read-only. Wheel and probe reside only
+in `/tmp/nla-distinct-suggestions-aByRe0`; no install, activation or serving change.
+The later independent-oracle Unicode-offset correction does not change the benchmarked
+search implementation. Reviewer confirmed the core-verification blocker resolved,
+ran39 focused tests, and approved that final oracle correction without rerunning tests.
+
+Focused search tests initially54 PASS (including two 30,001-product traversal cases).
+Expanded search/core/HTTP-suggestion run170 PASS, with those two slow cases deselected
+rather than rerun. Final additional negative-suffix/Unicode coverage run:
+
+```powershell
+python -m pytest tests/test_distinct_card_suggestions.py tests/test_core_evidence.py tests/test_search_sql.py -k 'not literal_search_traverses_30001' --basetemp <new-isolated-temp>/cases -o cache_dir=<new-isolated-temp>/cache --cov=nla_catalog_gateway.search_sql --cov=nla_catalog_gateway.core_evidence --cov-report=term-missing -q -x
+```
+
+134 passed,2 deselected in28.90seconds. The partial-file coverage gate exits1 at96.95%:
+uncovered lines are existing collector-code facts in search_sql.py59–61 and existing
+core-evidence command/report paths634–637/655/685, not the new grouping/oracle code.
+No coverage threshold was reduced; this targeted run is NOT a full repository gate.
+An earlier attempt had73 fixture setup errors because Windows denied access to the
+shared pytest temporary directory; a new isolated basetemp/cache resolved that issue.
+These results do not replace exact-head native CI or real storefront activation.
+Final Ruff check/format PASS; staged preflight PASS147files/zero findings and diff
+check PASS. Unicode confusables in negative fixtures use explicit escapes (same runtime
+strings); targeted recheck34 PASS. Independent approval covers all three production
+files, including the Unicode-safe independent oracle. No full-suite pass is claimed.

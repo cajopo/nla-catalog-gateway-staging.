@@ -9,13 +9,14 @@ import hashlib
 import json
 import os
 import re
+import secrets
 import stat
 import sys
 import tempfile
-from collections.abc import Sequence
-from contextlib import ExitStack
+from collections.abc import Iterable, Iterator, Sequence
+from contextlib import ExitStack, contextmanager
 from ctypes import wintypes
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, BinaryIO, NoReturn, cast
 
@@ -29,6 +30,7 @@ from nla_catalog_gateway.canonical_names import (
     load_canonical_names,
     load_canonical_names_manifest,
 )
+from nla_catalog_gateway.generation_bundle import _linux_descriptor, _linux_state
 from nla_catalog_gateway.reconciliation import (
     BulkOperationTerminalEvidenceV1,
     CanonicalNamesInputV1,
@@ -50,6 +52,7 @@ REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 _CONCRETE_PATH_TYPE = type(Path())
 _REPARSE_POINT_ATTRIBUTE = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
 _WINDOWS_HANDLE_API_AVAILABLE = sys.platform == "win32"
+_LINUX_HANDLE_API_AVAILABLE = sys.platform == "linux"
 _GENERIC_READ = 0x80000000
 _GENERIC_WRITE = 0x40000000
 _DELETE_ACCESS = 0x00010000
@@ -148,6 +151,7 @@ class _InputFileState:
     identity: _FileIdentity
     byte_count: int
     modified_ns: int
+    linux_state: tuple[int, ...] | None = field(default=None, repr=False)
 
 
 @dataclass(frozen=True, slots=True)
@@ -164,6 +168,7 @@ class _PinnedInputFile:
     context: str
     frozen_bytes: bytes | None = field(default=None, repr=False, compare=False)
     canonical_path: _CanonicalHandlePath | None = field(default=None, repr=False)
+    external: bool = False
 
 
 @dataclass(slots=True)
@@ -174,6 +179,7 @@ class _CreatedArtifact:
     expected_sha256: str | None = None
     expected_byte_count: int | None = None
     delete_capable: bool = False
+    linux_state: tuple[int, ...] | None = field(default=None, repr=False)
 
 
 @dataclass(slots=True)
@@ -879,6 +885,8 @@ def _regular_file(
     *,
     external: bool,
 ) -> tuple[Path, _InputFileState]:
+    if _LINUX_HANDLE_API_AVAILABLE and not _WINDOWS_HANDLE_API_AVAILABLE:
+        return _linux_regular_file(value, context, external=external)
     if type(value) is not _CONCRETE_PATH_TYPE:
         raise ReconciliationCliError(f"{context} must be a concrete filesystem path")
     path = value
@@ -940,6 +948,9 @@ def _handle_input_state(handle: BinaryIO, context: str) -> _InputFileState:
 
 
 def _verify_pinned_input(pinned: _PinnedInputFile) -> None:
+    if _LINUX_HANDLE_API_AVAILABLE and not _WINDOWS_HANDLE_API_AVAILABLE:
+        _linux_verify_pinned_input(pinned)
+        return
     current = _handle_input_state(pinned.handle, pinned.context)
     if current != pinned.state:
         raise ReconciliationCliError(f"{pinned.context} identity changed")
@@ -961,6 +972,10 @@ def _pin_regular_file(
     freeze_maximum: int | None = None,
     external: bool = False,
 ) -> _PinnedInputFile:
+    if _LINUX_HANDLE_API_AVAILABLE and not _WINDOWS_HANDLE_API_AVAILABLE:
+        return _linux_pin_regular_file(
+            path, state, context, stack, freeze_maximum=freeze_maximum, external=external
+        )
     try:
         handle = stack.enter_context(
             _native_binary_file(
@@ -1590,6 +1605,365 @@ def _publish_staging_directory(
         raise ReconciliationCliError("published output identity cannot be verified") from exc
 
 
+def _linux_path(value: object, *, external: bool) -> Path:
+    if (
+        not _LINUX_HANDLE_API_AVAILABLE
+        or type(value) is not _CONCRETE_PATH_TYPE
+        or value.anchor != "/"
+        or _contains_parent_reference(value)
+        or "\x00" in os.fspath(value)
+        or (external and (value == REPOSITORY_ROOT or value.is_relative_to(REPOSITORY_ROOT)))
+    ):
+        raise ReconciliationCliError("Linux filesystem path is invalid")
+    return value
+
+
+@contextmanager
+def _linux_directory(path: Path, *, external: bool) -> Iterator[int]:
+    directory = _linux_path(path, external=external)
+    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
+    with ExitStack() as stack:
+        descriptor = stack.enter_context(_linux_descriptor("/", flags))
+        for component in directory.parts[1:]:
+            descriptor = stack.enter_context(_linux_descriptor(component, flags, descriptor))
+        yield descriptor
+
+
+def _linux_input_state(facts: os.stat_result) -> _InputFileState:
+    if not stat.S_ISREG(facts.st_mode) or facts.st_nlink != 1:
+        raise ReconciliationCliError("Linux input must be one regular unaliased file")
+    return _InputFileState(
+        _FileIdentity(facts.st_dev, facts.st_ino),
+        facts.st_size,
+        facts.st_mtime_ns,
+        _linux_state(facts),
+    )
+
+
+def _linux_regular_file(
+    value: object, context: str, *, external: bool
+) -> tuple[Path, _InputFileState]:
+    try:
+        path = _linux_path(value, external=external)
+        with _linux_directory(path.parent, external=external) as parent:
+            facts = os.stat(path.name, dir_fd=parent, follow_symlinks=False)
+            return path, _linux_input_state(facts)
+    except (OSError, ValueError) as exc:
+        raise ReconciliationCliError(f"{context} cannot be verified safely") from exc
+
+
+def _linux_verify_pinned_input(pinned: _PinnedInputFile) -> None:
+    try:
+        if pinned.state.linux_state is None:
+            raise ReconciliationCliError("Linux input attestation is absent")
+        with _linux_directory(pinned.path.parent, external=pinned.external) as parent:
+            current = os.stat(pinned.path.name, dir_fd=parent, follow_symlinks=False)
+            if (
+                _linux_input_state(current) != pinned.state
+                or _linux_input_state(os.fstat(pinned.handle.fileno())) != pinned.state
+            ):
+                raise ReconciliationCliError("Linux input changed during verification")
+    except (OSError, ValueError) as exc:
+        raise ReconciliationCliError(f"{pinned.context} identity cannot be verified") from exc
+
+
+def _linux_pin_regular_file(
+    path: Path,
+    state: _InputFileState,
+    context: str,
+    stack: ExitStack,
+    *,
+    freeze_maximum: int | None,
+    external: bool,
+) -> _PinnedInputFile:
+    try:
+        path = _linux_path(path, external=external)
+        parent = stack.enter_context(_linux_directory(path.parent, external=external))
+        raw = stack.enter_context(
+            _linux_descriptor(
+                path.name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC, parent
+            )
+        )
+        handle = stack.enter_context(os.fdopen(raw, "rb", closefd=False))
+        pinned = _PinnedInputFile(path, state, handle, context, external=external)
+        _linux_verify_pinned_input(pinned)
+        if freeze_maximum is not None:
+            if freeze_maximum < 1 or state.byte_count > freeze_maximum:
+                raise ReconciliationCliError("Linux immutable byte bound is invalid")
+            raw_bytes = handle.read(freeze_maximum + 1)
+            if len(raw_bytes) != state.byte_count:
+                raise ReconciliationCliError("Linux immutable byte snapshot is incomplete")
+            _linux_verify_pinned_input(pinned)
+            pinned = replace(pinned, frozen_bytes=raw_bytes)
+        return pinned
+    except (OSError, ValueError) as exc:
+        raise ReconciliationCliError(f"{context} cannot be pinned safely") from exc
+
+
+def _generation_summary(
+    artifacts: list[_ArtifactEvidence],
+    generation: ReconciledCatalogGenerationV1,
+    terminal_query_audits: tuple[_TerminalQueryAuditEvidence, _TerminalQueryAuditEvidence],
+) -> dict[str, object]:
+    return {
+        "artifacts": [item.as_dict() for item in sorted(artifacts, key=lambda item: item.filename)],
+        "capabilityPromotion": "not-performed",
+        "canonicalNameAudit": (
+            None
+            if generation.canonical_name_audit is None
+            else generation.canonical_name_audit.as_dict()
+        ),
+        "catalogRecordCount": len(generation.records),
+        "classifiedProductCount": generation.taxonomy_report.classified,
+        "datasetActivation": "not-performed",
+        "datasetGeneration": generation.dataset_manifest.dataset_generation,
+        "schemaVersion": SUMMARY_SCHEMA_VERSION,
+        "snapshotSetId": generation.source_manifest.snapshot_set_id,
+        "sourceGeneration": generation.source_manifest.source_generation,
+        "status": "reconciled-provisional",
+        "taxonomyRuleVersion": generation.taxonomy_report.rule_version,
+        "terminalQueryAudits": [item.as_dict() for item in terminal_query_audits],
+        "unclassifiedProductCount": generation.taxonomy_report.unclassified,
+        "variantCount": generation.source_manifest.variant_count,
+    }
+
+
+def _linux_rename_noreplace(parent: int, source: str, target: str) -> None:
+    try:
+        rename = ctypes.CDLL(None, use_errno=True).renameat2
+        rename.argtypes = [
+            ctypes.c_int,
+            ctypes.c_char_p,
+            ctypes.c_int,
+            ctypes.c_char_p,
+            ctypes.c_uint,
+        ]
+        rename.restype = ctypes.c_int
+        if rename(parent, os.fsencode(source), parent, os.fsencode(target), 1) != 0:
+            raise OSError(ctypes.get_errno(), "atomic publication failed")
+    except (AttributeError, OSError) as exc:
+        raise ReconciliationCliError("output directory cannot be published atomically") from exc
+
+
+def _linux_write_artifact(
+    directory: int,
+    path: Path,
+    chunks: Iterable[bytes],
+    created: list[_CreatedArtifact],
+) -> _ArtifactEvidence:
+    descriptor: int | None = None
+    try:
+        descriptor = os.open(
+            path.name,
+            os.O_RDWR | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC,
+            0o600,
+            dir_fd=directory,
+        )
+        facts = os.fstat(descriptor)
+        artifact = _CreatedArtifact(path, _FileIdentity(facts.st_dev, facts.st_ino))
+        created.append(artifact)
+        digest = hashlib.sha256()
+        byte_count = 0
+        record_count = 0
+        with os.fdopen(descriptor, "w+b", closefd=False) as handle:
+            for raw in chunks:
+                if (
+                    path.name == "catalog-records.v1.jsonl"
+                    and len(raw) > runtime_contract.MAX_CONTRACT_BYTES + 1
+                ):
+                    raise ReconciliationCliError("catalog record exceeds the runtime byte limit")
+                if handle.write(raw) != len(raw):
+                    raise ReconciliationCliError("output artifact write was incomplete")
+                digest.update(raw)
+                byte_count += len(raw)
+                record_count += 1
+            handle.flush()
+            os.fchmod(descriptor, 0o444)
+            os.fsync(descriptor)
+        artifact.expected_sha256 = digest.hexdigest()
+        artifact.expected_byte_count = byte_count
+        artifact.linux_state = _linux_state(os.fstat(descriptor))
+        return _ArtifactEvidence(path.name, digest.hexdigest(), byte_count, record_count)
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
+
+
+def _linux_verify_output(directory: int, created: list[_CreatedArtifact]) -> None:
+    # A fresh open description avoids inheriting a consumed directory offset.
+    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
+    with _linux_descriptor(".", flags, directory) as scan, os.scandir(scan) as entries:
+        names = set()
+        for entry in entries:
+            names.add(entry.name)
+            if len(names) > len(_OUTPUT_FILENAMES):
+                raise ReconciliationCliError("output directory shape is invalid")
+    if names != _OUTPUT_FILENAMES or {item.path.name for item in created} != _OUTPUT_FILENAMES:
+        raise ReconciliationCliError("output directory shape is invalid")
+    for artifact in created:
+        before = os.stat(artifact.path.name, dir_fd=directory, follow_symlinks=False)
+        if (
+            not stat.S_ISREG(before.st_mode)
+            or before.st_nlink != 1
+            or before.st_mode & 0o222
+            or _linux_state(before) != artifact.linux_state
+        ):
+            raise ReconciliationCliError("output artifact identity changed")
+        with _linux_descriptor(
+            artifact.path.name,
+            os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC,
+            directory,
+        ) as descriptor:
+            if _linux_state(os.fstat(descriptor)) != artifact.linux_state:
+                raise ReconciliationCliError("output artifact handle changed")
+            digest = hashlib.sha256()
+            count = 0
+            while raw := os.read(descriptor, _NATIVE_READ_BUFFER_BYTES):
+                digest.update(raw)
+                count += len(raw)
+            if (
+                digest.hexdigest() != artifact.expected_sha256
+                or count != artifact.expected_byte_count
+                or _linux_state(os.fstat(descriptor)) != artifact.linux_state
+                or _linux_state(
+                    os.stat(artifact.path.name, dir_fd=directory, follow_symlinks=False)
+                )
+                != artifact.linux_state
+            ):
+                raise ReconciliationCliError("output artifact contents changed")
+
+
+def _linux_cleanup_output(
+    parent: int,
+    directory: int,
+    identity: _FileIdentity,
+    staging_name: str,
+    target_name: str,
+    created: list[_CreatedArtifact],
+) -> None:
+    matched = []
+    for name in (staging_name, target_name):
+        try:
+            facts = os.stat(name, dir_fd=parent, follow_symlinks=False)
+        except FileNotFoundError:
+            continue
+        if stat.S_ISDIR(facts.st_mode) and _FileIdentity(facts.st_dev, facts.st_ino) == identity:
+            matched.append(name)
+    facts = os.fstat(directory)
+    if len(matched) != 1 or _FileIdentity(facts.st_dev, facts.st_ino) != identity:
+        raise ReconciliationCliError("incomplete output location changed")
+    os.fchmod(directory, 0o700)
+    for artifact in reversed(created):
+        facts = os.stat(artifact.path.name, dir_fd=directory, follow_symlinks=False)
+        if (
+            not stat.S_ISREG(facts.st_mode)
+            or facts.st_nlink != 1
+            or _FileIdentity(facts.st_dev, facts.st_ino) != artifact.identity
+        ):
+            raise ReconciliationCliError("incomplete output artifact changed")
+        os.unlink(artifact.path.name, dir_fd=directory)
+    facts = os.stat(matched[0], dir_fd=parent, follow_symlinks=False)
+    if _FileIdentity(facts.st_dev, facts.st_ino) != identity:
+        raise ReconciliationCliError("incomplete output location changed")
+    os.rmdir(matched[0], dir_fd=parent)
+    os.fsync(parent)
+
+
+def _linux_write_generation_output(
+    output_directory: Path,
+    static_artifacts: tuple[tuple[str, bytes], ...],
+    generation: ReconciledCatalogGenerationV1,
+    terminal_query_audits: tuple[_TerminalQueryAuditEvidence, _TerminalQueryAuditEvidence],
+) -> dict[str, object]:
+    target = _linux_path(output_directory, external=True)
+    # Generated bundle paths must remain compatible with the existing reader.
+    if target == target.parent or _has_unsafe_path_component(target):
+        raise ReconciliationCliError("output directory is invalid")
+    try:
+        with _linux_directory(target.parent, external=True) as parent:
+            parent_facts = os.fstat(parent)
+            if parent_facts.st_mode & 0o022 or parent_facts.st_uid != os.geteuid():
+                raise ReconciliationCliError("output parent must be private to its operator")
+            parent_identity = _FileIdentity(parent_facts.st_dev, parent_facts.st_ino)
+            # This probe avoids work on an existing destination; renameat2 enforces the race gate.
+            try:
+                os.stat(target.name, dir_fd=parent, follow_symlinks=False)
+            except FileNotFoundError:
+                pass
+            else:
+                raise ReconciliationCliError("output directory must not already exist")
+            staging_name = ".nla-reconcile-staging-" + secrets.token_hex(12)
+            os.mkdir(staging_name, mode=0o700, dir_fd=parent)
+            flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
+            with _linux_descriptor(staging_name, flags, parent) as directory:
+                facts = os.fstat(directory)
+                identity = _FileIdentity(facts.st_dev, facts.st_ino)
+                created: list[_CreatedArtifact] = []
+                try:
+                    staging_path = target.parent / staging_name
+                    artifacts = [
+                        _linux_write_artifact(directory, staging_path / name, (raw,), created)
+                        for name, raw in static_artifacts
+                    ]
+                    records = _linux_write_artifact(
+                        directory,
+                        staging_path / "catalog-records.v1.jsonl",
+                        (record.to_json_bytes() + b"\n" for record in generation.records),
+                        created,
+                    )
+                    if records.record_count != generation.dataset_manifest.included_product_count:
+                        raise ReconciliationCliError("catalog record output count is inconsistent")
+                    artifacts.append(records)
+                    summary = _generation_summary(artifacts, generation, terminal_query_audits)
+                    _linux_write_artifact(
+                        directory,
+                        staging_path / "reconciliation-summary.v2.json",
+                        (_canonical_json_bytes(summary),),
+                        created,
+                    )
+                    os.fchmod(directory, 0o555)
+                    os.fsync(directory)
+                    _linux_verify_output(directory, created)
+                    with _linux_directory(target.parent, external=True) as current_parent:
+                        facts = os.fstat(current_parent)
+                        if (
+                            _FileIdentity(facts.st_dev, facts.st_ino) != parent_identity
+                            or facts.st_mode & 0o022
+                            or facts.st_uid != os.geteuid()
+                        ):
+                            raise ReconciliationCliError("output parent identity changed")
+                    facts = os.stat(staging_name, dir_fd=parent, follow_symlinks=False)
+                    if (
+                        not stat.S_ISDIR(facts.st_mode)
+                        or _FileIdentity(facts.st_dev, facts.st_ino) != identity
+                        or facts.st_mode & 0o222
+                    ):
+                        raise ReconciliationCliError("output staging identity changed")
+                    _linux_rename_noreplace(parent, staging_name, target.name)
+                    os.fsync(parent)
+                    with _linux_directory(target, external=True) as published:
+                        facts = os.fstat(published)
+                        if (
+                            _FileIdentity(facts.st_dev, facts.st_ino) != identity
+                            or facts.st_mode & 0o222
+                        ):
+                            raise ReconciliationCliError("published output identity changed")
+                    _linux_verify_output(directory, created)
+                    return summary
+                except BaseException:
+                    try:
+                        _linux_cleanup_output(
+                            parent, directory, identity, staging_name, target.name, created
+                        )
+                    except (OSError, ReconciliationCliError) as cleanup_error:
+                        raise ReconciliationCliError(
+                            "incomplete output could not be cleaned safely"
+                        ) from cleanup_error
+                    raise
+    except (OSError, ValueError) as exc:
+        raise ReconciliationCliError("Linux output cannot be published safely") from exc
+
+
 def _write_generation_output(
     output_directory: Path,
     products_manifest: SnapshotPartManifestV1,
@@ -1610,6 +1984,10 @@ def _write_generation_output(
         ("taxonomy-report.v1.json", taxonomy_bytes),
         ("variants-part-manifest.v1.json", variants_manifest.to_json_bytes()),
     )
+    if _LINUX_HANDLE_API_AVAILABLE and not _WINDOWS_HANDLE_API_AVAILABLE:
+        return _linux_write_generation_output(
+            output_directory, static_artifacts, generation, terminal_query_audits
+        )
     target = _validated_output_directory(output_directory)
     lease, parent_identity = _create_staging_directory(target)
     directory = lease.path
@@ -1621,28 +1999,7 @@ def _write_generation_output(
             for filename, raw in static_artifacts
         ]
         artifacts.append(_write_records(directory, identity, generation, created))
-        artifacts.sort(key=lambda item: item.filename)
-        summary = {
-            "artifacts": [item.as_dict() for item in artifacts],
-            "capabilityPromotion": "not-performed",
-            "canonicalNameAudit": (
-                None
-                if generation.canonical_name_audit is None
-                else generation.canonical_name_audit.as_dict()
-            ),
-            "catalogRecordCount": len(generation.records),
-            "classifiedProductCount": generation.taxonomy_report.classified,
-            "datasetActivation": "not-performed",
-            "datasetGeneration": generation.dataset_manifest.dataset_generation,
-            "schemaVersion": SUMMARY_SCHEMA_VERSION,
-            "snapshotSetId": generation.source_manifest.snapshot_set_id,
-            "sourceGeneration": generation.source_manifest.source_generation,
-            "status": "reconciled-provisional",
-            "taxonomyRuleVersion": generation.taxonomy_report.rule_version,
-            "terminalQueryAudits": [item.as_dict() for item in terminal_query_audits],
-            "unclassifiedProductCount": generation.taxonomy_report.unclassified,
-            "variantCount": generation.source_manifest.variant_count,
-        }
+        summary = _generation_summary(artifacts, generation, terminal_query_audits)
         summary_bytes = _canonical_json_bytes(summary)
         _write_bytes(
             directory,

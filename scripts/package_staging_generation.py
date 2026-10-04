@@ -238,6 +238,9 @@ def run_packaging(
             ):
                 raise ValueError
             report_raw = _report_bytes(result)
+        # The bundle context has finished its checks; subsequent package opens
+        # reconstruct the full catalog, so release the earlier graph first.
+        del verified_generation
         _write_bytes(work / EVIDENCE_FILENAME, report_raw)
         manifest_raw = _manifest_bytes(work)
         manifest_sha256 = hashlib.sha256(manifest_raw).hexdigest()
@@ -247,6 +250,7 @@ def run_packaging(
         candidate = open_staging_generation(work, manifest_sha256)
         if not _same_evidence(candidate.evidence, result.evidence):
             raise ValueError
+        del candidate
         if os.path.lexists(destination):
             raise ValueError
         _require_directory_identity(work, work_identity)

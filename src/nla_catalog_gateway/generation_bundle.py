@@ -258,7 +258,8 @@ class _PinnedArtifact:
     path: Path
     handle: BinaryIO
     state: _FileState
-    canonical_path: _CanonicalHandlePath
+    canonical_path: _CanonicalHandlePath | Path
+    linux_state: tuple[int, ...] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -266,9 +267,10 @@ class _PinnedBundle:
     directory: Path
     directory_identity: _FileIdentity
     directory_handle: int
-    canonical_path: _CanonicalHandlePath
+    canonical_path: _CanonicalHandlePath | Path
     files: Mapping[str, _PinnedArtifact]
     directory_native_identity: _NativeFileIdentity | None = None
+    linux_state: tuple[int, ...] | None = None
 
 
 class _BundleFilesystemBackend(Protocol):
@@ -1832,10 +1834,152 @@ class _Win32FilesystemBackend:
             identities.add(artifact.state.identity)
 
 
+_LINUX_HANDLE_API_AVAILABLE = sys.platform == "linux"
+
+
+def _linux_state(facts: os.stat_result) -> tuple[int, ...]:
+    # Exclude access time: verification itself reads every artifact twice.
+    return (
+        facts.st_dev,
+        facts.st_ino,
+        facts.st_mode,
+        facts.st_nlink,
+        facts.st_uid,
+        facts.st_gid,
+        facts.st_size,
+        facts.st_mtime_ns,
+        facts.st_ctime_ns,
+    )
+
+
+@contextmanager
+def _linux_descriptor(name: str, flags: int, parent: int | None = None) -> Iterator[int]:
+    descriptor: int | None = None
+    try:
+        descriptor = os.open(name, flags, dir_fd=parent)
+        yield descriptor
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
+
+
+@contextmanager
+def _linux_directory(directory: Path) -> Iterator[int]:
+    """Walk from / using pinned descriptors; never follow an ancestor symlink."""
+    if (
+        not _LINUX_HANDLE_API_AVAILABLE
+        or directory.anchor != "/"
+        or ".." in directory.parts
+        or directory == REPOSITORY_ROOT
+        or directory.is_relative_to(REPOSITORY_ROOT)
+    ):
+        raise GenerationBundleError(_FILESYSTEM_ERROR)
+    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
+    with ExitStack() as stack:
+        descriptor = stack.enter_context(_linux_descriptor("/", flags))
+        for component in directory.parts[1:]:
+            descriptor = stack.enter_context(_linux_descriptor(component, flags, descriptor))
+        yield descriptor
+
+
+def _linux_names(descriptor: int) -> None:
+    names: list[str] = []
+    with os.scandir(descriptor) as entries:
+        for entry in entries:
+            names.append(entry.name)
+            if len(names) > len(_OUTPUT_FILENAMES):
+                raise GenerationBundleError(_SHAPE_ERROR)
+    if frozenset(names) != _OUTPUT_FILENAMES:
+        raise GenerationBundleError(_SHAPE_ERROR)
+
+
+class _LinuxFilesystemBackend:
+    """Read operator-sealed bundles using Linux descriptors and existing hashes.
+
+    Files and their directory must have no write bits. This is not a lock against
+    their owner or root: metadata (including ctime) and the external digest are
+    checked before returning detached records. No Windows attestation is faked.
+    """
+
+    @contextmanager
+    def open(self, directory: Path) -> Iterator[_PinnedBundle]:
+        with _linux_directory(directory) as descriptor, ExitStack() as stack:
+            facts = os.fstat(descriptor)
+            if facts.st_mode & 0o222:
+                raise GenerationBundleError(_FILESYSTEM_ERROR)
+            _linux_names(descriptor)
+            pinned: dict[str, _PinnedArtifact] = {}
+            identities: set[_FileIdentity] = set()
+            for filename in (_SUMMARY_FILENAME, *_ARTIFACT_FILENAMES):
+                before = os.stat(filename, dir_fd=descriptor, follow_symlinks=False)
+                if (
+                    not stat.S_ISREG(before.st_mode)
+                    or before.st_nlink != 1
+                    or before.st_mode & 0o222
+                ):
+                    raise GenerationBundleError(_FILESYSTEM_ERROR)
+                raw = stack.enter_context(
+                    _linux_descriptor(
+                        filename,
+                        os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC,
+                        descriptor,
+                    )
+                )
+                handle = stack.enter_context(os.fdopen(raw, "rb", closefd=False))
+                opened = os.fstat(raw)
+                state = _handle_state(handle)
+                if _linux_state(opened) != _linux_state(before) or state.identity in identities:
+                    raise GenerationBundleError(_CHANGED_ERROR)
+                identities.add(state.identity)
+                pinned[filename] = _PinnedArtifact(
+                    filename=filename,
+                    path=directory / filename,
+                    handle=handle,
+                    state=state,
+                    canonical_path=directory / filename,
+                    linux_state=_linux_state(opened),
+                )
+            bundle = _PinnedBundle(
+                directory=directory,
+                directory_identity=_FileIdentity(facts.st_dev, facts.st_ino),
+                directory_handle=descriptor,
+                canonical_path=directory,
+                files=MappingProxyType(pinned),
+                linux_state=_linux_state(facts),
+            )
+            self.verify(bundle)
+            yield bundle
+
+    def verify(self, bundle: _PinnedBundle) -> None:
+        with _linux_directory(bundle.directory) as current:
+            if (
+                bundle.linux_state is None
+                or _linux_state(os.fstat(current)) != bundle.linux_state
+                or _linux_state(os.fstat(bundle.directory_handle)) != bundle.linux_state
+            ):
+                raise GenerationBundleError(_CHANGED_ERROR)
+        _linux_names(bundle.directory_handle)
+        if frozenset(bundle.files) != _OUTPUT_FILENAMES:
+            raise GenerationBundleError(_SHAPE_ERROR)
+        for filename in (_SUMMARY_FILENAME, *_ARTIFACT_FILENAMES):
+            artifact = _artifact(bundle, filename)
+            facts = os.stat(filename, dir_fd=bundle.directory_handle, follow_symlinks=False)
+            if (
+                artifact.linux_state is None
+                or _linux_state(facts) != artifact.linux_state
+                or _linux_state(os.fstat(artifact.handle.fileno())) != artifact.linux_state
+            ):
+                raise GenerationBundleError(_CHANGED_ERROR)
+
+
 def _filesystem_backend() -> _BundleFilesystemBackend:
     """Return the production backend; tests may monkeypatch this private seam."""
 
-    return _Win32FilesystemBackend()
+    if _WINDOWS_HANDLE_API_AVAILABLE:
+        return _Win32FilesystemBackend()
+    if _LINUX_HANDLE_API_AVAILABLE:
+        return _LinuxFilesystemBackend()
+    raise GenerationBundleError(_FILESYSTEM_ERROR)
 
 
 def _public_error_message(value: GenerationBundleError, *, default: str) -> str:

@@ -9,6 +9,7 @@ import re
 import shutil
 import sqlite3
 import stat
+import sys
 import threading
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
@@ -39,7 +40,6 @@ from nla_catalog_gateway.pagination import (
     PaginationContractError,
     ProjectionBuildError,
     StaleGenerationError,
-    UnsupportedPaginationRequestError,
     build_catalog_projection,
 )
 from nla_catalog_gateway.runtime_contract import (
@@ -921,13 +921,13 @@ def test_sql_is_keyset_only_and_all_data_values_are_bound() -> None:
     assert all("?" in sql for sql in sql_values)
 
 
-def test_request_scope_rejects_non_single_search_and_forged_types(
+def test_request_scope_accepts_all_family_search_and_rejects_forged_types(
     tmp_path: Path,
 ) -> None:
     projection = _projection(tmp_path, (_record("1"),))
     paginator = _paginator(projection)
-    with pytest.raises(UnsupportedPaginationRequestError, match="search"):
-        paginator.fetch_page(_request(query="bolt"))
+    assert paginator.fetch_page(_request(query="Synthetic")).page.returned_product_count == 1
+    assert paginator.fetch_page(_request(query="bolt")).page.returned_product_count == 0
     assert paginator.fetch_page(_request(in_stock=True)).page.returned_product_count == 1
     with pytest.raises(PaginationContractError, match="CatalogRequestV1"):
         paginator.fetch_page(object())  # type: ignore[arg-type]
@@ -1384,6 +1384,43 @@ def test_cursor_rejects_invalid_signed_payloads_and_strict_bounds(
     monkeypatch.setattr(pagination, "MAX_CONTRACT_BYTES", len(raw) - 1)
     with pytest.raises(PaginationContractError, match="byte limit"):
         codec.encode(context)
+
+
+def test_projection_build_releases_build_copies_before_semantic_reopen(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    records = (_record("1"), _record("2"))
+    manifest = _manifest(records)
+    original_open = CatalogProjection.open
+    observations = []
+
+    def checked_open(cls, *args, **kwargs):
+        # Inspect only names, not values: retaining the caller's locals here
+        # would itself keep the catalog copies alive during the real reopen.
+        names = set(sys._getframe(1).f_locals)
+        assert not names.intersection(
+            {
+                "product_rows",
+                "variant_rows",
+                "canonical_records",
+                "product_order",
+                "seen_products",
+                "seen_handles",
+                "seen_variants",
+                "seen_inventory_items",
+                "record",
+                "raw_record",
+            }
+        )
+        observations.append(True)
+        return original_open(*args, **kwargs)
+
+    monkeypatch.setattr(CatalogProjection, "open", classmethod(checked_open))
+    projection = build_catalog_projection(
+        tmp_path / "released.sqlite3", manifest=manifest, records=records
+    )
+    assert projection.stats.product_count == len(records)
+    assert observations == [True]
 
 
 def test_projection_build_rejects_identity_and_resource_bound_violations(
