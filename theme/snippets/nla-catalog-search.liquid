@@ -24,8 +24,17 @@ Renders game-scoped gateway search without native predictive-search fallback.
           <option value="one-piece">{{ 'nla_catalog.one_piece' | t }}</option>
         </select>
       </label>
+      <label>
+        <span>{{ 'nla_catalog.family' | t }}</span>
+        <select name="family">
+          <option value="all">{{ 'nla_catalog.family_all' | t }}</option>
+          <option value="single" selected>{{ 'nla_catalog.family_single' | t }}</option>
+          <option value="sealed">{{ 'nla_catalog.family_sealed' | t }}</option>
+          <option value="accessory">{{ 'nla_catalog.family_accessory' | t }}</option>
+        </select>
+      </label>
       <label class="nla-catalog__query">
-        <span>{{ 'nla_catalog.search_label' | t }}</span>
+        <span data-query-label>{{ 'nla_catalog.search_label' | t }}</span>
         <input name="q" type="search" maxlength="256" autocomplete="off" spellcheck="false"
           role="combobox" aria-autocomplete="list" aria-expanded="false"
           aria-controls="NlaSuggestions-{{ instance_id | escape }}"
@@ -36,6 +45,15 @@ Renders game-scoped gateway search without native predictive-search fallback.
     <label class="nla-catalog__stock">
       <input name="stock" type="checkbox"> {{ 'nla_catalog.stock_only' | t }}
     </label>
+    <fieldset class="nla-catalog__filters" hidden disabled>
+      <legend>{{ 'nla_catalog.filters' | t }}</legend>
+      <label><span>{{ 'nla_catalog.expansion' | t }}</span>
+        <select name="expansionCode"><option value="">{{ 'nla_catalog.all_expansions' | t }}</option></select>
+      </label>
+      <label><span>{{ 'nla_catalog.rarity' | t }}</span>
+        <select name="rarity"><option value="">{{ 'nla_catalog.all_rarities' | t }}</option></select>
+      </label>
+    </fieldset>
     <ul id="NlaSuggestions-{{ instance_id | escape }}" class="nla-catalog__suggestions"
       role="listbox" aria-label="{{ 'nla_catalog.suggestions' | t | escape }}" hidden></ul>
   </form>
@@ -62,10 +80,17 @@ Renders game-scoped gateway search without native predictive-search fallback.
     <span data-message="unconfigured">{{ 'nla_catalog.unconfigured' | t }}</span>
     <span data-message="restart">{{ 'nla_catalog.changed' | t }}</span>
     <span data-message="invalid">{{ 'nla_catalog.invalid' | t }}</span>
-    <span data-message="sold_out">{{ 'nla_catalog.sold_out' | t }}</span>
+    <span data-message="sold_out">SOLD OUT</span>
     <span data-message="in_stock">{{ 'nla_catalog.in_stock' | t }}</span>
     <span data-message="unknown_price">{{ 'nla_catalog.unknown_price' | t }}</span>
     <span data-message="image_notice">{{ 'nla_catalog.image_notice' | t }}</span>
+    <span data-message="all_expansions">{{ 'nla_catalog.all_expansions' | t }}</span>
+    <span data-message="all_rarities">{{ 'nla_catalog.all_rarities' | t }}</span>
+    <span data-message="submit_search">{{ 'nla_catalog.submit_search' | t }}</span>
+    <span data-message="search_label">{{ 'nla_catalog.search_label' | t }}</span>
+    <span data-message="placeholder">{{ 'nla_catalog.placeholder' | t }}</span>
+    <span data-message="product_search_label">{{ 'nla_catalog.product_search_label' | t }}</span>
+    <span data-message="product_placeholder">{{ 'nla_catalog.product_placeholder' | t }}</span>
   </div>
   <noscript><p>{{ 'nla_catalog.javascript_required' | t }}</p></noscript>
 </nla-catalog-search>
@@ -75,9 +100,9 @@ Renders game-scoped gateway search without native predictive-search fallback.
   nla-catalog-search [hidden] { display: none !important; }
   nla-catalog-search * { box-sizing: border-box; }
   nla-catalog-search form { margin: 0; }
-  .nla-catalog__bar { display: flex; align-items: end; gap: 12px; }
+  .nla-catalog__bar { display: flex; flex-wrap: wrap; align-items: end; gap: 12px; }
   .nla-catalog__bar label { display: grid; gap: 6px; min-width: 0; font-size: 14px; }
-  .nla-catalog__query { flex: 1; }
+  .nla-catalog__query { flex: 1 1 220px; }
   nla-catalog-search input[type="search"], nla-catalog-search select, nla-catalog-search button {
     min-height: 44px; border: 1px solid #646a78; border-radius: 8px; padding: 10px 12px;
     background: #15171d; color: #f6f8fb; font: inherit; max-width: 100%;
@@ -87,6 +112,10 @@ Renders game-scoped gateway search without native predictive-search fallback.
   nla-catalog-search :focus-visible { outline: 3px solid #22c2f4; outline-offset: 3px; }
   .nla-catalog__stock { display: flex; align-items: center; gap: 8px; min-height: 44px; }
   .nla-catalog__stock input { width: 20px; height: 20px; }
+  .nla-catalog__filters { display: flex; flex-wrap: wrap; gap: 12px; min-width: 0; margin: 8px 0;
+    border: 1px solid #646a78; border-radius: 8px; padding: 12px; }
+  .nla-catalog__filters label { display: grid; gap: 6px; flex: 1 1 200px; min-width: 0; }
+  .nla-catalog__filters select { width: 100%; }
   .nla-catalog__suggestions { position: absolute; z-index: 80; left: 0; right: 0; margin: 0;
     padding: 6px; max-height: 45vh; overflow: auto; list-style: none; background: #15171d;
     border: 1px solid #22c2f4; border-radius: 8px; box-shadow: 0 12px 24px #0008; }
@@ -94,12 +123,16 @@ Renders game-scoped gateway search without native predictive-search fallback.
   .nla-catalog__suggestions [aria-selected="true"], .nla-catalog__suggestions li:hover { background: #303846; }
   .nla-catalog__status { min-height: 24px; margin: 8px 0; overflow-wrap: anywhere; }
   .nla-catalog__page { margin-top: 24px; }
+  .nla-catalog__heading { color: #f6f8fb; }
   .nla-catalog__results { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
     gap: 16px; list-style: none; margin: 20px 0; padding: 0; }
   .nla-catalog__results li { padding: 16px; border: 1px solid #535a68; border-radius: 12px;
     background: #15171d; overflow-wrap: anywhere; }
   .nla-catalog__results a { display: block; color: #8addfa; font-weight: 700; text-decoration: underline; }
   .nla-catalog__results p { margin: 12px 0 0; }
+  nla-catalog-search .nla-catalog__sold-out { color: #ff4545; background: #15171d; font-weight: 700; }
+  .nla-catalog__media { display: grid; place-items: center; aspect-ratio: 5 / 7; margin-bottom: 12px; }
+  .nla-catalog__media img { width: 100%; height: 100%; max-height: 360px; object-fit: contain; }
   .nla-catalog__page nav, .nla-catalog__recovery { display: flex; flex-wrap: wrap; gap: 12px; }
   @media (max-width: 600px) {
     .nla-catalog__bar { flex-wrap: wrap; }
@@ -116,10 +149,16 @@ Renders game-scoped gateway search without native predictive-search fallback.
         if (this.events) return;
         this.events = new AbortController();
         this.sequence = 0;
+        this.imageCache ||= new Map();
         this.form = this.querySelector('form');
         this.game = this.form.elements.game;
+        this.family = this.form.elements.family;
         this.input = this.form.elements.q;
         this.stock = this.form.elements.stock;
+        this.expansion = this.form.elements.expansionCode;
+        this.rarity = this.form.elements.rarity;
+        this.metadataFilters = this.querySelector('.nla-catalog__filters');
+        this.metadataFilters.hidden = this.dataset.mode === 'header';
         this.list = this.querySelector('[role="listbox"]');
         this.status = this.querySelector('[role="status"]');
         this.page = this.querySelector('.nla-catalog__page');
@@ -138,6 +177,7 @@ Renders game-scoped gateway search without native predictive-search fallback.
           this.cancel(); this.timer = setTimeout(() => this.load({ suggest: true }), 250);
         });
         on(this.game, 'change', () => {
+          this.resetMetadata();
           this.cancel(); this.page.hidden = true; this.hideSuggestions();
           if (this.dataset.mode === 'header') this.load({ suggest: true }); else this.submit();
         });
@@ -145,6 +185,12 @@ Renders game-scoped gateway search without native predictive-search fallback.
           this.cancel(); this.hideSuggestions();
           if (this.dataset.mode === 'header') this.load({ suggest: true }); else this.submit();
         });
+        on(this.family, 'change', () => {
+          this.resetMetadata();
+          this.cancel(); this.page.hidden = true; this.hideSuggestions();
+          if (this.dataset.mode === 'header') this.load({ suggest: true }); else this.submit();
+        });
+        for (const select of [this.expansion, this.rarity]) on(select, 'change', () => this.submit());
         on(this.input, 'keydown', event => this.keydown(event));
         on(this, 'focusout', event => {
           if (!this.contains(event.relatedTarget)) {
@@ -165,6 +211,9 @@ Renders game-scoped gateway search without native predictive-search fallback.
           if (action === 'retry' && this.lastLoad) this.load(this.lastLoad);
         });
         on(window, 'popstate', () => this.restore());
+        on(window, 'nla:catalog-navigate', () => {
+          if (this.dataset.mode === 'header') this.restore();
+        });
         this.restore();
       }
 
@@ -175,7 +224,14 @@ Renders game-scoped gateway search without native predictive-search fallback.
       message(key) { return this.querySelector(`[data-message="${key}"]`).textContent; }
 
       cancel() {
-        clearTimeout(this.timer); this.controller?.abort(); this.sequence += 1;
+        clearTimeout(this.timer); this.controller?.abort(); this.imageController?.abort(); this.sequence += 1;
+        if (this.metadataFilters) {
+          this.metadataFilters.hidden = this.dataset.mode === 'header' || this.family.value !== 'single';
+          this.metadataFilters.disabled = this.metadataFilters.hidden || !this.game.value;
+          const single = this.family.value === 'single';
+          this.querySelector('[data-query-label]').textContent = this.message(single ? 'search_label' : 'product_search_label');
+          this.input.setAttribute('placeholder', this.message(single ? 'placeholder' : 'product_placeholder'));
+        }
       }
 
       hideSuggestions() {
@@ -184,8 +240,33 @@ Renders game-scoped gateway search without native predictive-search fallback.
       }
 
       request() {
-        return { contractVersion: 1, game: this.game.value, productFamily: 'single', q: this.input.value.trim() || null,
-          filters: { inStock: this.stock.checked ? true : null, productSubtype: null }, pageSize: 24, sort: 'product_gid_asc' };
+        const filters = { inStock: this.stock.checked ? true : null, productSubtype: null };
+        if (this.dataset.mode !== 'header' && this.family.value === 'single') {
+          if (this.expansion.value) filters.expansionCode = this.expansion.value;
+          if (this.rarity.value) filters.rarity = this.rarity.value;
+        }
+        return { contractVersion: 1, game: this.game.value, productFamily: this.family.value, q: this.input.value.trim() || null,
+          filters, pageSize: 24, sort: 'product_gid_asc' };
+      }
+
+      metadataValue(value) {
+        return typeof value === 'string' && value.length > 0 && Array.from(value).length <= 1024
+          && !/[\u0000-\u0008\u000b\u000c\u000e-\u001f\ud800-\udfff]/u.test(value);
+      }
+
+      metadataOptions(select, message, values, selected = '') {
+        const all = document.createElement('option'); all.value = ''; all.textContent = this.message(message);
+        const options = values.map(item => {
+          const option = document.createElement('option'); option.value = item.value;
+          option.textContent = item.count === undefined ? item.value : `${item.value} (${item.count})`;
+          return option;
+        });
+        select.replaceChildren(all, ...options); select.value = selected;
+      }
+
+      resetMetadata(expansion = '', rarity = '') {
+        this.metadataOptions(this.expansion, 'all_expansions', expansion ? [{ value: expansion }] : [], expansion);
+        this.metadataOptions(this.rarity, 'all_rarities', rarity ? [{ value: rarity }] : [], rarity);
       }
 
       restore() {
@@ -194,16 +275,28 @@ Renders game-scoped gateway search without native predictive-search fallback.
         this.nextCursor = null; this.generation = null; this.pageRequest = null; this.status.textContent = '';
         const state = new URL(location.href).searchParams;
         this.game.value = state.get('game') || '';
+        this.family.value = state.has('family') ? state.get('family') : 'single';
         this.input.value = state.get('q') || '';
         this.stock.checked = state.get('stock') === '1';
-        if (this.dataset.mode !== 'header') this.load({ cursor: state.get('cursor'), generation: state.get('generation') });
+        const invalid = state.getAll('family').length > 1
+          || !['all', 'single', 'sealed', 'accessory'].includes(this.family.value)
+          || ['expansionCode', 'rarity'].some(key => state.getAll(key).length > 1
+            || (state.has(key) && (!this.metadataValue(state.get(key)) || this.family.value !== 'single')));
+        this.resetMetadata(...(!invalid && this.dataset.mode !== 'header'
+          ? [state.get('expansionCode') || '', state.get('rarity') || ''] : []));
+        this.cancel();
+        if (this.dataset.mode !== 'header') this.load({ cursor: state.get('cursor'), generation: state.get('generation'), invalid });
       }
 
       url(request, cursor = null, generation = null) {
         const url = new URL(this.dataset.searchUrl, location.origin);
         url.searchParams.set('view', 'nla-catalog'); url.searchParams.set('game', request.game);
+        url.searchParams.set('family', request.productFamily);
         if (request.q) url.searchParams.set('q', request.q);
         if (request.filters.inStock) url.searchParams.set('stock', '1');
+        for (const key of ['expansionCode', 'rarity']) {
+          if (request.filters[key]) url.searchParams.set(key, request.filters[key]);
+        }
         if (cursor) { url.searchParams.set('cursor', cursor); url.searchParams.set('generation', generation); }
         const preview = new URL(location.href).searchParams.get('preview_theme_id');
         if (preview) url.searchParams.set('preview_theme_id', preview);
@@ -242,22 +335,40 @@ Renders game-scoped gateway search without native predictive-search fallback.
         this.cancel();
         const sequence = this.sequence;
         const request = options.saved || this.request();
+        if (this.dataset.mode !== 'header' && !options.suggest) {
+          const game = Array.from(this.game.options).find(option => option.value === request.game);
+          document.title = this.message('results') + (game?.value
+            ? ` — ${game.textContent}${request.q ? ': ' + request.q : ''}` : '');
+        }
         if (!['magic', 'pokemon', 'yugioh', 'one-piece'].includes(request.game)) {
+          this.metadataFilters.disabled = true;
           this.status.textContent = this.game.options[0].textContent; return;
         }
         if (options.suggest && !request.q) return;
+        if (options.suggest && ['all', 'sealed', 'accessory'].includes(request.productFamily)) {
+          this.hideSuggestions(); this.status.textContent = this.message('submit_search'); return;
+        }
         this.lastLoad = options;
         this.recovery.hidden = true;
-        if (!options.suggest) { this.page.hidden = true; this.status.textContent = this.message('loading'); }
+        if (!options.suggest) {
+          this.metadataFilters.disabled = true;
+          this.page.hidden = true; this.status.textContent = this.message('loading');
+        }
         let timer;
         try {
           const endpoint = new URL(this.dataset.endpoint, location.origin);
           if (!this.dataset.endpoint || endpoint.origin !== location.origin || !endpoint.pathname.startsWith('/apps/') || endpoint.search || endpoint.hash) throw new Error('unconfigured');
           if ((request.q?.length || 0) > 256 || (options.cursor?.length || 0) > 16384 || Boolean(options.cursor) !== Boolean(options.generation)) throw new Error('invalid');
+          if (options.invalid || ['expansionCode', 'rarity'].some(key => request.filters[key] !== undefined
+            && (!this.metadataValue(request.filters[key]) || request.productFamily !== 'single'))
+            || !['all', 'single', 'sealed', 'accessory'].includes(request.productFamily)) throw new Error('invalid');
           const controller = new AbortController(); this.controller = controller;
           timer = setTimeout(() => controller.abort(), 8000);
           const body = { contractVersion: 1, cursor: options.cursor || null, request };
-          if (request.q && !body.cursor) body.includeSuggestions = true;
+          if (request.productFamily === 'single') {
+            if (request.q && !body.cursor) body.includeSuggestions = true;
+            if (this.dataset.mode !== 'header' && !options.suggest) body.includeFacets = true;
+          }
           const response = await fetch(endpoint, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
             body: JSON.stringify(body), credentials: 'same-origin', signal: controller.signal, redirect: 'error', cache: 'no-store' });
           const data = await response.json();
@@ -272,11 +383,18 @@ Renders game-scoped gateway search without native predictive-search fallback.
           }
           else {
             this.hideSuggestions();
+            if (body.includeFacets) {
+              this.metadataOptions(this.expansion, 'all_expansions', data.facets[0].values, request.filters.expansionCode || '');
+              this.metadataOptions(this.rarity, 'all_rarities', data.facets[1].values, request.filters.rarity || '');
+            }
             this.renderPage(data, request);
             this.pageRequest = request; this.generation = data.page.datasetGeneration; this.nextCursor = data.nextCursor;
             this.querySelector('[data-action="next"]').hidden = !data.nextCursor;
             this.querySelector('[data-action="first"]').hidden = !options.cursor;
-            if (options.navigate) history.pushState(null, '', this.url(request, options.cursor, this.generation));
+            if (options.navigate) {
+              history.pushState(null, '', this.url(request, options.cursor, this.generation));
+              window.dispatchEvent(new Event('nla:catalog-navigate'));
+            }
             this.page.hidden = false;
             if (options.navigate) this.heading.focus({ preventScroll: true });
           }
@@ -286,13 +404,17 @@ Renders game-scoped gateway search without native predictive-search fallback.
           this.hideSuggestions(); this.status.textContent = this.message(key); this.recovery.hidden = false;
           this.querySelector('[data-action="retry"]').hidden = key === 'restart';
           this.querySelector('[data-action="restart"]').hidden = key !== 'restart';
-        } finally { clearTimeout(timer); }
+        } finally {
+          clearTimeout(timer);
+          if (sequence === this.sequence) this.metadataFilters.disabled = this.metadataFilters.hidden || !this.game.value;
+        }
       }
 
       validate(data, body, generation) {
         const page = data.page;
-        const same = (actual, expected) => Object.keys(expected).every(key =>
-          typeof expected[key] === 'object' && expected[key] !== null ? same(actual?.[key] || {}, expected[key]) : actual?.[key] === expected[key]);
+        const same = (actual, expected) => actual && typeof actual === 'object'
+          && Object.keys(actual).length === Object.keys(expected).length && Object.keys(expected).every(key =>
+            typeof expected[key] === 'object' && expected[key] !== null ? same(actual[key], expected[key]) : actual[key] === expected[key]);
         if (data.contractVersion !== 1 || page?.contractVersion !== 1 || !same(page.request, body.request)
           || !/^sha256:[a-f0-9]{64}$/.test(page.datasetGeneration) || (generation && page.datasetGeneration !== generation)
           || !Array.isArray(page.items) || page.items.length > 24 || page.returnedProductCount !== page.items.length
@@ -301,15 +423,39 @@ Renders game-scoped gateway search without native predictive-search fallback.
         const ids = new Set();
         for (const item of page.items) {
           if (!/^gid:\/\/shopify\/Product\/[1-9][0-9]*$/.test(item.productGid) || ids.has(item.productGid)
-            || item.game !== body.request.game || item.productFamily !== 'single' || typeof item.handle !== 'string' || !item.handle
-            || typeof item.canonicalCardName !== 'string' || typeof item.commercialTitle !== 'string'
+            || item.game !== body.request.game || !['single', 'sealed', 'accessory'].includes(item.productFamily)
+            || (body.request.productFamily !== 'all' && item.productFamily !== body.request.productFamily)
+            || typeof item.handle !== 'string' || !item.handle
+            || (item.productFamily === 'single' ? typeof item.canonicalCardName !== 'string'
+              : item.canonicalCardName !== null && typeof item.canonicalCardName !== 'string')
+            || typeof item.commercialTitle !== 'string'
             || !Array.isArray(item.variants) || !item.variants.length) throw new Error('unavailable');
           ids.add(item.productGid);
+          for (const key of ['expansionCode', 'rarity']) {
+            if (body.request.filters[key] !== undefined && item.cardMetadata?.[key] !== body.request.filters[key]) throw new Error('unavailable');
+          }
           for (const variant of item.variants) {
             if (typeof variant.priceText !== 'string' || !/^(0|[1-9][0-9]*)(\.[0-9]+)?$/.test(variant.priceText)
               || !Number.isSafeInteger(variant.inventoryQuantity)) throw new Error('unavailable');
           }
         }
+        if (body.includeFacets) {
+          if (!Array.isArray(data.facets) || data.facets.length !== 2) throw new Error('unavailable');
+          ['expansionCode', 'rarity'].forEach((dimension, index) => {
+            const facet = data.facets[index];
+            if (!facet || facet.dimension !== dimension || !Array.isArray(facet.values)
+              || !Number.isSafeInteger(facet.missingValueCount) || facet.missingValueCount < 0) throw new Error('unavailable');
+            const values = new Set();
+            for (const item of facet.values) {
+              if (!item || !this.metadataValue(item.value) || values.has(item.value)
+                || !Number.isSafeInteger(item.count) || item.count < 0) throw new Error('unavailable');
+              values.add(item.value);
+            }
+            const selected = body.request.filters[dimension];
+            if (selected !== undefined && !values.has(selected)) throw new Error('unavailable');
+          });
+        } else if (data.facets !== undefined) throw new Error('unavailable');
+        if (data.suggestions !== undefined && body.request.productFamily !== 'single') throw new Error('unavailable');
         if (body.includeSuggestions && !Array.isArray(data.suggestions)) throw new Error('unavailable');
         if (data.suggestions !== undefined && (!Array.isArray(data.suggestions) || data.suggestions.length > 10
           || data.suggestions.some(item => typeof item.canonicalCardName !== 'string' || !item.canonicalCardName.trim()
@@ -322,7 +468,12 @@ Renders game-scoped gateway search without native predictive-search fallback.
         suggestions.forEach((item, index) => {
           const li = document.createElement('li'); li.id = `${this.list.id}-${index}`; li.dataset.index = index;
           li.setAttribute('role', 'option'); li.setAttribute('aria-selected', 'false');
-          li.textContent = `${item.canonicalCardName} (${item.matchingProductCount})${item.availableProductCount === 0 ? ' — ' + this.message('sold_out') : ''}`;
+          li.textContent = `${item.canonicalCardName} (${item.matchingProductCount})`;
+          if (item.availableProductCount === 0) {
+            li.append(document.createTextNode(' — '));
+            const status = document.createElement('span'); status.className = 'nla-catalog__sold-out';
+            status.textContent = this.message('sold_out'); li.append(status);
+          }
           this.list.append(li);
         });
         this.list.hidden = !suggestions.length; this.input.setAttribute('aria-expanded', String(Boolean(suggestions.length)));
@@ -335,19 +486,67 @@ Renders game-scoped gateway search without native predictive-search fallback.
           const link = document.createElement('a'); link.textContent = item.commercialTitle;
           const root = this.dataset.rootUrl.endsWith('/') ? this.dataset.rootUrl : this.dataset.rootUrl + '/';
           link.href = root + 'products/' + encodeURIComponent(item.handle); li.append(link);
-          const append = text => { const p = document.createElement('p'); p.textContent = text; li.append(p); };
-          append(this.message('image_notice'));
-          append(this.message(item.variants.some(variant => variant.inventoryQuantity > 0) ? 'in_stock' : 'sold_out'));
+          const append = text => { const p = document.createElement('p'); p.textContent = text; li.append(p); return p; };
+          const media = document.createElement('div'); media.className = 'nla-catalog__media';
+          media.textContent = this.message('image_notice'); li.prepend(media);
+          const available = item.variants.some(variant => variant.inventoryQuantity > 0);
+          const status = append(this.message(available ? 'in_stock' : 'sold_out'));
+          if (!available) status.className = 'nla-catalog__sold-out';
           const prices = item.variants.map(variant => variant.priceText);
           const scale = Math.max(...prices.map(price => (price.split('.')[1] || '').length));
           const value = price => { const [whole, decimal = ''] = price.split('.'); return BigInt(whole + decimal.padEnd(scale, '0')); };
           const price = prices.reduce((a, b) => value(a) <= value(b) ? a : b);
-          append(value(price) > 0n ? `${price} ${this.dataset.currency}` : this.message('unknown_price'));
+          if (value(price) > 0n) append(`${price} ${this.dataset.currency}`);
           return li;
         });
         this.results.replaceChildren(...nodes);
+        this.loadImages(data.page.items, nodes);
         this.heading.textContent = `${this.message('results')} — ${this.game.selectedOptions[0].textContent}${request.q ? ': ' + request.q : ''}`;
         this.status.textContent = nodes.length ? `${this.message('results')}: ${nodes.length}` : this.message('empty');
+      }
+
+      async loadImages(items, nodes) {
+        this.imageController?.abort();
+        const controller = new AbortController(); this.imageController = controller;
+        const current = () => !controller.signal.aborted && this.isConnected && this.imageController === controller;
+        let next = 0;
+        const worker = async () => {
+          while (current() && next < items.length) {
+            const index = next++; const item = items[index]; const media = nodes[index].querySelector('.nla-catalog__media');
+            const key = item.productGid + '|' + item.handle;
+            try {
+              let imageUrl = this.imageCache.get(key);
+              if (!imageUrl) {
+                const root = this.dataset.rootUrl.endsWith('/') ? this.dataset.rootUrl : this.dataset.rootUrl + '/';
+                const url = new URL(root + 'products/' + encodeURIComponent(item.handle) + '.js', location.origin);
+                if (url.origin !== location.origin) continue;
+                const response = await fetch(url, { headers: { 'Accept': 'application/json' }, credentials: 'same-origin',
+                  redirect: 'error', signal: AbortSignal.any([controller.signal, AbortSignal.timeout(5000)]) });
+                if (!response.ok) continue;
+                const product = await response.json();
+                if (!Number.isSafeInteger(product.id) || 'gid://shopify/Product/' + product.id !== item.productGid
+                  || product.handle !== item.handle || typeof product.featured_image !== 'string' || !product.featured_image) continue;
+                const image = new URL(product.featured_image, location.origin);
+                if (image.protocol !== 'https:' || image.username || image.password || image.port
+                  || (image.hostname !== 'cdn.shopify.com' && image.origin !== location.origin)) continue;
+                imageUrl = image.href;
+                if (!current()) return;
+                this.imageCache.set(key, imageUrl);
+                if (this.imageCache.size > 96) this.imageCache.delete(this.imageCache.keys().next().value);
+              }
+              if (!current() || !this.results.contains(nodes[index])) return;
+              const image = document.createElement('img'); image.alt = item.commercialTitle;
+              image.loading = 'lazy'; image.decoding = 'async'; image.width = 250; image.height = 350;
+              image.addEventListener('error', () => {
+                if (current() && this.results.contains(nodes[index])) media.textContent = this.message('image_notice');
+              }, { once: true });
+              image.src = imageUrl; media.replaceChildren(image);
+            } catch {
+              if (!current()) return;
+            }
+          }
+        };
+        await Promise.all(Array.from({ length: Math.min(4, items.length) }, worker));
       }
     });
   }
