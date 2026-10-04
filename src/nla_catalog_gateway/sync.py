@@ -631,6 +631,18 @@ def _new_generation(**values: Any) -> _SyncGeneration:
     return generation
 
 
+def _initial_event_lineage(base_dataset_generation: str) -> str:
+    return hashlib.sha256(
+        _canonical_json_bytes(
+            {
+                "baseDatasetGeneration": base_dataset_generation,
+                "domain": "nla-catalog-sync-event-lineage-v1",
+                "syncContractVersion": SYNC_CONTRACT_VERSION,
+            }
+        )
+    ).hexdigest()
+
+
 def _new_initial_generation(
     manifest: DatasetManifestV1,
     records: tuple[CatalogProductRecordV1, ...],
@@ -639,15 +651,6 @@ def _new_initial_generation(
     source_cut_at: str,
 ) -> _SyncGeneration:
     status_counts, family_counts, variants, identities, public = _record_counts(records)
-    seed = hashlib.sha256(
-        _canonical_json_bytes(
-            {
-                "baseDatasetGeneration": manifest.dataset_generation,
-                "domain": "nla-catalog-sync-event-lineage-v1",
-                "syncContractVersion": SYNC_CONTRACT_VERSION,
-            }
-        )
-    ).hexdigest()
     return _new_generation(
         base_manifest=manifest,
         records=records,
@@ -659,7 +662,7 @@ def _new_initial_generation(
         catalog_content_sha256=manifest.catalog_content_sha256,
         taxonomy_rule_version=manifest.taxonomy_rule_version,
         built_at=manifest.generated_at,
-        event_lineage_sha256=seed,
+        event_lineage_sha256=_initial_event_lineage(manifest.dataset_generation),
         last_event_identity_sha256=None,
         applied_event_count=0,
         product_status_counts=status_counts,
@@ -1537,6 +1540,32 @@ class SyncCore:
         with self._lock:
             slot = self._pair.previous
         return None if slot is None else _generation_view(slot.generation)
+
+    def publish_active_dataset(
+        self,
+        *,
+        expected_active_generation: str,
+        publisher: Callable[[GenerationView], None],
+    ) -> None:
+        """Keep one committed generation stable while a local backend publishes it."""
+
+        _text(expected_active_generation, _GENERATION_RE, "expected active generation")
+        if not callable(publisher):
+            raise _error("dataset publisher must be callable")
+        with self._process_lock:
+            with self._lock:
+                generation = self._pair.active.generation
+            if generation.dataset_generation != expected_active_generation:
+                raise SyncOperationError("The active generation changed before publication.")
+            view = _generation_view(generation)
+            try:
+                publisher(view)
+            except Exception:
+                rejected = True
+            else:
+                rejected = False
+            if rejected:
+                raise SyncOperationError("Dataset publication failed.")
 
     def pending_reconciliation(self) -> tuple[SyncEventReport, ...]:
         with self._lock:

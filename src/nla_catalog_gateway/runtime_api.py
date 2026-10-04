@@ -471,7 +471,14 @@ class _EvidenceBoundGeneration:
 class EvidenceBoundCatalogBackend:
     """Atomically select one complete, immutable evidence-bound generation."""
 
-    __slots__ = ("_active", "_clock", "_expected_code_sha", "_lock", "_token")
+    __slots__ = (
+        "_activation_token",
+        "_active",
+        "_clock",
+        "_expected_code_sha",
+        "_lock",
+        "_token",
+    )
 
     def __init__(
         self,
@@ -486,6 +493,7 @@ class EvidenceBoundCatalogBackend:
         runtime_clock = _validated_backend_clock(expected_code_sha, clock)
         self._lock = threading.Lock()
         self._token = object()
+        self._activation_token = object()
         self._expected_code_sha = expected_code_sha
         self._clock = runtime_clock
         self._active = _new_evidence_bound_generation(
@@ -520,6 +528,7 @@ class EvidenceBoundCatalogBackend:
         backend = object.__new__(cls)
         backend._lock = threading.Lock()
         backend._token = object()
+        backend._activation_token = object()
         backend._expected_code_sha = expected_code_sha
         backend._clock = runtime_clock
         backend._active = candidate
@@ -529,6 +538,12 @@ class EvidenceBoundCatalogBackend:
     def active_generation(self) -> str:
         with self._lock:
             return self._active.binding[2]
+
+    def capture_activation_token(self) -> object:
+        """Capture an opaque identity for conditional activation."""
+
+        with self._lock:
+            return self._activation_token
 
     def activate(
         self,
@@ -547,6 +562,34 @@ class EvidenceBoundCatalogBackend:
         )
         with self._lock:
             self._active = candidate
+            self._activation_token = object()
+
+    def activate_if_current(
+        self,
+        activation_token: object,
+        verified: VerifiedReconciledGenerationV1,
+        projection: CatalogProjection,
+        cursor_codec: CursorCodecV1,
+        evidence: VerifiedCatalogCoreEvidenceV1,
+    ) -> None:
+        """Activate only if no successful activation followed token capture."""
+
+        candidate = _new_evidence_bound_generation(
+            verified,
+            projection,
+            cursor_codec,
+            evidence,
+            expected_code_sha=self._expected_code_sha,
+            clock=self._clock,
+        )
+        with self._lock:
+            if (
+                activation_token is not self._activation_token
+                or candidate.binding[0] != self._active.binding[0]
+            ):
+                raise RuntimeApiContractError("catalog runtime binding is invalid")
+            self._active = candidate
+            self._activation_token = object()
 
     def activate_staging_generation(
         self,
@@ -563,6 +606,7 @@ class EvidenceBoundCatalogBackend:
         )
         with self._lock:
             self._active = candidate
+            self._activation_token = object()
 
     def acquire(self, *, control: RequestControl) -> EvidenceBoundCatalogLease:
         if type(control) is not RequestControl:
