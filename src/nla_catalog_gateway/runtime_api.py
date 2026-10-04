@@ -34,7 +34,12 @@ from nla_catalog_gateway.core_evidence import (
     CORE_VERIFICATION_VERSION,
     VerifiedCatalogCoreEvidenceV1,
 )
-from nla_catalog_gateway.facets import FacetContractError
+from nla_catalog_gateway.facets import (
+    ContextualFacet,
+    FacetContractError,
+    FacetDimension,
+    FacetValueCount,
+)
 from nla_catalog_gateway.generation_bundle import VerifiedReconciledGenerationV1
 from nla_catalog_gateway.pagination import (
     AtomicCatalogActivation,
@@ -54,6 +59,7 @@ from nla_catalog_gateway.runtime_contract import (
     MAX_CONTRACT_BYTES,
     CatalogErrorCode,
     CatalogErrorV1,
+    CatalogFiltersV1,
     CatalogItemV1,
     CatalogPageV1,
     CatalogProductRecordV1,
@@ -318,6 +324,7 @@ class CatalogLeaseResult:
     page: CatalogPageV1
     next_cursor: str | None
     suggestions: tuple[SingleCardSuggestion, ...] | None = None
+    facets: tuple[ContextualFacet, ...] | None = None
 
 
 class CatalogGenerationLease(Protocol):
@@ -336,6 +343,7 @@ class CatalogGenerationLease(Protocol):
         *,
         control: RequestControl,
         include_suggestions: bool = False,
+        include_facets: bool = False,
     ) -> CatalogLeaseResult: ...
 
     def close(self) -> None: ...
@@ -788,6 +796,7 @@ class EvidenceBoundCatalogLease:
         *,
         control: RequestControl,
         include_suggestions: bool = False,
+        include_facets: bool = False,
     ) -> CatalogLeaseResult:
         if type(control) is not RequestControl:
             raise CatalogBackendFailure(CatalogErrorCode.TEMPORARILY_UNAVAILABLE)
@@ -802,6 +811,7 @@ class EvidenceBoundCatalogLease:
                     cursor,
                     control=control,
                     include_suggestions=include_suggestions,
+                    include_facets=include_facets,
                 )
             except (CatalogBackendFailure, RequestDeadlineExceeded):
                 raise
@@ -873,6 +883,7 @@ class CatalogRequestEnvelopeV1:
     cursor: str | None
     contract_version: int = CONTRACT_VERSION
     include_suggestions: bool = False
+    include_facets: bool = False
 
     FIELDS = frozenset({"contractVersion", "cursor", "request"})
 
@@ -891,6 +902,10 @@ class CatalogRequestEnvelopeV1:
             or not normalize_search_text(self.request.query or "")
         ):
             raise IncompatibleCatalogRequestError("suggestions require a first-page single search")
+        if type(self.include_facets) is not bool:
+            raise RuntimeApiContractError("includeFacets must be a boolean")
+        if self.include_facets and self.request.product_family is not RequestFamily.SINGLE:
+            raise IncompatibleCatalogRequestError("facets require a single request")
 
     def as_dict(self) -> dict[str, Any]:
         result = {
@@ -900,6 +915,8 @@ class CatalogRequestEnvelopeV1:
         }
         if self.include_suggestions:
             result["includeSuggestions"] = True
+        if self.include_facets:
+            result["includeFacets"] = True
         return result
 
     def to_json_bytes(self) -> bytes:
@@ -927,9 +944,7 @@ class CatalogRequestEnvelopeV1:
         _validated_public_limit(byte_limit, MAX_REQUEST_BODY_BYTES)
         _validated_public_limit(cursor_char_limit, MAX_CURSOR_CHARS)
         value = _load_json_object(raw, byte_limit=byte_limit)
-        fields = (
-            cls.FIELDS | {"includeSuggestions"} if "includeSuggestions" in value else cls.FIELDS
-        )
+        fields = cls.FIELDS | ({"includeSuggestions", "includeFacets"} & value.keys())
         _exact_keys(value, fields)
         if (
             type(value["contractVersion"]) is not int
@@ -949,6 +964,7 @@ class CatalogRequestEnvelopeV1:
             request=request,
             cursor=cursor,
             include_suggestions=value.get("includeSuggestions", False),
+            include_facets=value.get("includeFacets", False),
         )
 
 
@@ -1070,6 +1086,7 @@ class CatalogResponseEnvelopeV1:
     next_cursor: str | None
     contract_version: int = CONTRACT_VERSION
     suggestions: tuple[SingleCardSuggestion, ...] | None = None
+    facets: tuple[ContextualFacet, ...] | None = None
 
     FIELDS = frozenset({"contractVersion", "nextCursor", "page"})
 
@@ -1097,6 +1114,7 @@ class CatalogResponseEnvelopeV1:
         object.__setattr__(self, "page", page)
 
         _public_suggestions(self.suggestions, page.request)
+        _public_metadata_facets(self.facets, page.request)
 
     def as_dict(self) -> dict[str, Any]:
         if (
@@ -1126,6 +1144,9 @@ class CatalogResponseEnvelopeV1:
         suggestions = _public_suggestions(self.suggestions, page.request)
         if suggestions is not None:
             result["suggestions"] = suggestions
+        facets = _public_metadata_facets(self.facets, page.request)
+        if facets is not None:
+            result["facets"] = facets
         return result
 
     def to_json_bytes(self) -> bytes:
@@ -1148,7 +1169,7 @@ class CatalogResponseEnvelopeV1:
             raise RuntimeApiContractError("response envelope type is invalid")
         _validated_public_limit(byte_limit, MAX_RESPONSE_BODY_BYTES)
         value = _load_json_object(raw, byte_limit=byte_limit)
-        fields = cls.FIELDS | {"suggestions"} if "suggestions" in value else cls.FIELDS
+        fields = cls.FIELDS | ({"suggestions", "facets"} & value.keys())
         _exact_keys(value, fields)
         if (
             type(value["contractVersion"]) is not int
@@ -1165,10 +1186,81 @@ class CatalogResponseEnvelopeV1:
             suggestions=(
                 _suggestions_from_wire(value["suggestions"]) if "suggestions" in value else None
             ),
+            facets=_metadata_facets_from_wire(value["facets"]) if "facets" in value else None,
         )
         if result.to_json_bytes() != raw:
             raise RuntimeApiContractError("response envelope JSON is not canonical")
         return result
+
+
+def _public_metadata_facets(
+    facets: tuple[ContextualFacet, ...] | None, request: CatalogRequestV1
+) -> list[dict[str, Any]] | None:
+    if facets is None:
+        return None
+    if (
+        request.product_family is not RequestFamily.SINGLE
+        or type(facets) is not tuple
+        or len(facets) != 2
+    ):
+        raise RuntimeApiContractError("metadata facets require two single dimensions")
+    result = []
+    for facet, dimension, selected in zip(
+        facets,
+        (FacetDimension.EXPANSION_CODE, FacetDimension.RARITY),
+        (request.filters.expansion_code, request.filters.rarity),
+        strict=True,
+    ):
+        if type(facet) is not ContextualFacet or facet.dimension is not dimension:
+            raise RuntimeApiContractError("metadata facet dimension is invalid")
+        try:
+            ContextualFacet(facet.dimension, facet.values, facet.missing_value_count)
+            values = []
+            for entry in facet.values:
+                FacetValueCount(entry.value, entry.count)
+                # Reuse the same exact source-value validation as filter input.
+                CatalogFiltersV1(None, None, rarity=entry.value)
+                values.append({"value": entry.value, "count": entry.count})
+            names = tuple(entry.value for entry in facet.values)
+            if names != tuple(sorted(names)) or (selected is not None and selected not in names):
+                raise RuntimeApiContractError("metadata facet order or selection is invalid")
+        except (FacetContractError, RuntimeContractError) as exc:
+            raise RuntimeApiContractError("metadata facet is invalid") from exc
+        result.append(
+            {
+                "dimension": dimension.value,
+                "values": values,
+                "missingValueCount": facet.missing_value_count,
+            }
+        )
+    return result
+
+
+def _metadata_facets_from_wire(value: Any) -> tuple[ContextualFacet, ...]:
+    if type(value) is not list or len(value) != 2:
+        raise RuntimeApiContractError("metadata facets must be a two-dimension array")
+    result = []
+    for facet in value:
+        if type(facet) is not dict:
+            raise RuntimeApiContractError("metadata facet must be an object")
+        _exact_keys(facet, {"dimension", "values", "missingValueCount"})
+        if type(facet["values"]) is not list:
+            raise RuntimeApiContractError("metadata facet values must be an array")
+        values = []
+        try:
+            for entry in facet["values"]:
+                if type(entry) is not dict:
+                    raise RuntimeApiContractError("metadata facet value must be an object")
+                _exact_keys(entry, {"value", "count"})
+                values.append(FacetValueCount(entry["value"], entry["count"]))
+            result.append(
+                ContextualFacet(
+                    FacetDimension(facet["dimension"]), tuple(values), facet["missingValueCount"]
+                )
+            )
+        except (ValueError, TypeError) as exc:
+            raise RuntimeApiContractError("metadata facet is invalid") from exc
+    return tuple(result)
 
 
 def _public_suggestions(
@@ -1399,7 +1491,15 @@ class RuntimeCatalogService:
             self._require_capabilities(lease, envelope.request, control)
             control.checkpoint()
             try:
-                if envelope.include_suggestions:
+                if envelope.include_facets:
+                    result = lease.fetch_page(
+                        envelope.request,
+                        envelope.cursor,
+                        control=control,
+                        include_suggestions=envelope.include_suggestions,
+                        include_facets=True,
+                    )
+                elif envelope.include_suggestions:
                     result = lease.fetch_page(
                         envelope.request, envelope.cursor, control=control, include_suggestions=True
                     )
@@ -1419,6 +1519,7 @@ class RuntimeCatalogService:
                 cursor_char_limit=self._limits.max_cursor_chars,
                 request_body_byte_limit=self._limits.max_request_body_bytes,
                 include_suggestions=envelope.include_suggestions,
+                include_facets=envelope.include_facets,
             )
             try:
                 body = response.to_json_bytes()
@@ -1662,20 +1763,22 @@ def _raw_request_is_incompatible(value: Any) -> bool:
     if type(value) is not dict or frozenset(value) != CatalogRequestV1.FIELDS:
         return False
     filters = value.get("filters")
-    if type(filters) is not dict or frozenset(filters) != frozenset({"inStock", "productSubtype"}):
+    try:
+        parsed_filters = CatalogFiltersV1.from_dict(filters)
+    except RuntimeContractError:
         return False
     family = value.get("productFamily")
     subtype = filters.get("productSubtype")
-    candidate = (
-        type(family) is str
-        and family in {item.value for item in RequestFamily}
-        and type(subtype) is str
-        and family != RequestFamily.SEALED.value
-    )
-    if not candidate:
+    if type(family) is not str or family not in {item.value for item in RequestFamily}:
+        return False
+    has_metadata = parsed_filters.expansion_code is not None or parsed_filters.rarity is not None
+    if not (
+        (subtype is not None and family != RequestFamily.SEALED.value)
+        or (has_metadata and family != RequestFamily.SINGLE.value)
+    ):
         return False
     sanitized = dict(value)
-    sanitized["productFamily"] = RequestFamily.SEALED.value
+    sanitized["filters"] = {"inStock": parsed_filters.in_stock, "productSubtype": None}
     try:
         request = CatalogRequestV1.from_dict(sanitized)
         _validate_query_bound(request.query)
@@ -1996,6 +2099,7 @@ def _fetch_evidence_bound_page(
     *,
     control: RequestControl,
     include_suggestions: bool = False,
+    include_facets: bool = False,
 ) -> CatalogLeaseResult:
     if not _canonical_request(request):
         raise CatalogBackendFailure(CatalogErrorCode.UNSUPPORTED_CAPABILITY)
@@ -2015,7 +2119,12 @@ def _fetch_evidence_bound_page(
         suggestions = generation.projection.suggest(
             request, limit=MAX_PUBLIC_SUGGESTIONS, checkpoint=control.checkpoint
         )
-    return CatalogLeaseResult(result.page, result.next_cursor, suggestions)
+    facets = (
+        generation.projection.metadata_facets(request, checkpoint=control.checkpoint)
+        if include_facets
+        else None
+    )
+    return CatalogLeaseResult(result.page, result.next_cursor, suggestions, facets)
 
 
 def _catalog_execution_error_code(error: Exception) -> CatalogErrorCode:
@@ -2057,10 +2166,13 @@ def _validated_result(
     cursor_char_limit: int,
     request_body_byte_limit: int,
     include_suggestions: bool = False,
+    include_facets: bool = False,
 ) -> CatalogResponseEnvelopeV1:
     if type(value) is not CatalogLeaseResult or type(value.page) is not CatalogPageV1:
         raise _OutputContractFailure
     if (value.suggestions is not None) != include_suggestions:
+        raise _OutputContractFailure
+    if (value.facets is not None) != include_facets:
         raise _OutputContractFailure
     try:
         page = CatalogPageV1.from_json_bytes(value.page.to_json_bytes())
@@ -2084,7 +2196,7 @@ def _validated_result(
         raise _OutputContractFailure
     try:
         return CatalogResponseEnvelopeV1(
-            page=page, next_cursor=next_cursor, suggestions=value.suggestions
+            page=page, next_cursor=next_cursor, suggestions=value.suggestions, facets=value.facets
         )
     except RuntimeApiContractError as exc:
         raise _OutputContractFailure from exc

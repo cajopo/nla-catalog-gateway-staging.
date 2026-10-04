@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from collections.abc import Callable
+from dataclasses import replace
 
 from nla_catalog_gateway.canonical_search import (
     MAX_CANONICAL_NAME_CODEPOINTS,
@@ -17,6 +19,7 @@ from nla_catalog_gateway.canonical_search import (
     SingleCardSuggestion,
     normalize_search_text,
 )
+from nla_catalog_gateway.facets import ContextualFacet, FacetDimension, FacetValueCount
 from nla_catalog_gateway.runtime_contract import CatalogProductRecordV1, CatalogRequestV1
 
 
@@ -87,7 +90,64 @@ def search_scope(request: CatalogRequestV1) -> tuple[str, tuple[object, ...]]:
     if request.filters.product_subtype is not None:
         clauses.append("product_subtype = ?")
         parameters.append(request.filters.product_subtype)
+    if request.filters.expansion_code is not None:
+        clauses.append(
+            "json_extract(CAST(product_record_json AS TEXT), '$.cardMetadata.expansionCode') = ?"
+        )
+        parameters.append(request.filters.expansion_code)
+    if request.filters.rarity is not None:
+        clauses.append(
+            "json_extract(CAST(product_record_json AS TEXT), '$.cardMetadata.rarity') = ?"
+        )
+        parameters.append(request.filters.rarity)
     return " AND ".join(clauses), tuple(parameters)
+
+
+def select_metadata_facets(
+    connection: sqlite3.Connection,
+    request: CatalogRequestV1,
+    *,
+    checkpoint: Callable[[], None] | None = None,
+) -> tuple[ContextualFacet, ...]:
+    """Complete contextual counts in one scan, never limited to the result page.
+
+    Stream only the two metadata values and count each dimension in memory.
+    SQLite GROUP BY on these expressions also sorts the full source JSON payload,
+    overflowing the runtime's bounded temporary storage on the real catalog.
+    """
+    base = replace(request, filters=replace(request.filters, expansion_code=None, rarity=None))
+    where, parameters = search_scope(base)
+    sql = f"""SELECT json_extract(CAST(product_record_json AS TEXT),
+                                 '$.cardMetadata.expansionCode'),
+                     json_extract(CAST(product_record_json AS TEXT), '$.cardMetadata.rarity')
+              FROM products WHERE {where}"""  # noqa: S608
+    totals: tuple[dict[str, int], dict[str, int]] = ({}, {})
+    missing = [0, 0]
+    selected = (request.filters.expansion_code, request.filters.rarity)
+    for expansion, rarity in connection.execute(sql, parameters):
+        if checkpoint is not None:
+            checkpoint()
+        values = (expansion, rarity)
+        for index in (0, 1):
+            other = 1 - index
+            if selected[other] is not None and values[other] != selected[other]:
+                continue
+            value = values[index]
+            if value is None:
+                missing[index] += 1
+            else:
+                totals[index][value] = totals[index].get(value, 0) + 1
+    result = []
+    for index, dimension in enumerate((FacetDimension.EXPANSION_CODE, FacetDimension.RARITY)):
+        if selected[index] is not None:
+            totals[index].setdefault(selected[index], 0)
+        counts = []
+        for value in sorted(totals[index]):
+            if checkpoint is not None:
+                checkpoint()
+            counts.append(FacetValueCount(value, totals[index][value]))
+        result.append(ContextualFacet(dimension, tuple(counts), missing[index]))
+    return tuple(result)
 
 
 def select_suggestions(
