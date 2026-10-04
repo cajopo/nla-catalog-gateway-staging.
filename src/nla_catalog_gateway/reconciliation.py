@@ -1244,7 +1244,7 @@ def _reconcile_database(
         connection,
         "SELECT 1 FROM products p LEFT JOIN publications r "
         "ON r.product_gid=p.gid AND r.publication_gid=? "
-        "WHERE r.product_gid IS NULL LIMIT 1",
+        "WHERE r.product_gid IS NULL AND p.status <> 'DRAFT' LIMIT 1",
         "missing Online Store publication evidence",
         (expectation.online_store_publication_gid,),
     )
@@ -1431,9 +1431,9 @@ def _apply_canonical_names(
 
 
 _PRODUCT_RUNTIME_SQL: Final = """
-SELECT p.*, r.is_published
+SELECT p.*, COALESCE(r.is_published, 0) AS is_published
 FROM products AS p
-JOIN publications AS r ON r.product_gid=p.gid AND r.publication_gid=?
+LEFT JOIN publications AS r ON r.product_gid=p.gid AND r.publication_gid=?
 ORDER BY length(p.gid), p.gid
 """
 

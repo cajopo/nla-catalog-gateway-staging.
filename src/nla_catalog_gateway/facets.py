@@ -39,6 +39,8 @@ _URL_KEY_ORDER = (
     "q",
     "inStock",
     "productSubtype",
+    "expansionCode",
+    "rarity",
     "sort",
     "pageSize",
 )
@@ -59,6 +61,8 @@ class FacetDimension(StrEnum):
     PRODUCT_FAMILY = "productFamily"
     IN_STOCK = "inStock"
     PRODUCT_SUBTYPE = "productSubtype"
+    EXPANSION_CODE = "expansionCode"
+    RARITY = "rarity"
 
 
 @dataclass(frozen=True, slots=True)
@@ -95,8 +99,15 @@ class ContextualFacet:
             raise FacetContractError("facet values must be unique")
         if type(self.missing_value_count) is not int or self.missing_value_count < 0:
             raise FacetContractError("missing facet count must be a non-negative integer")
-        if self.dimension is not FacetDimension.PRODUCT_SUBTYPE and self.missing_value_count:
-            raise FacetContractError("only productSubtype may account for missing values")
+        if (
+            self.dimension
+            in (
+                FacetDimension.PRODUCT_FAMILY,
+                FacetDimension.IN_STOCK,
+            )
+            and self.missing_value_count
+        ):
+            raise FacetContractError("required facets cannot account for missing values")
 
 
 @dataclass(frozen=True, slots=True)
@@ -212,7 +223,6 @@ UNSUPPORTED_FILTER_FIELDS = MappingProxyType(
         "finish": "backlog",
         "language": "backlog",
         "priceRange": "backlog",
-        "rarity": "backlog",
         "releaseDate": "backlog",
         "set": "backlog",
         "setCode": "backlog",
@@ -236,6 +246,10 @@ def serialize_url_state(request: CatalogRequestV1) -> str:
         values["inStock"] = "true" if request.filters.in_stock else "false"
     if request.filters.product_subtype is not None:
         values["productSubtype"] = request.filters.product_subtype
+    if request.filters.expansion_code is not None:
+        values["expansionCode"] = request.filters.expansion_code
+    if request.filters.rarity is not None:
+        values["rarity"] = request.filters.rarity
     pairs = [(key, values[key]) for key in _URL_KEY_ORDER if key in values]
     rendered = urlencode(pairs, doseq=False, safe="", quote_via=quote)
     if len(rendered.encode("ascii")) > MAX_URL_STATE_BYTES:
@@ -298,6 +312,8 @@ def parse_url_state(query_string: str) -> CatalogRequestV1:
             filters=CatalogFiltersV1(
                 in_stock=in_stock,
                 product_subtype=values.get("productSubtype"),
+                expansion_code=values.get("expansionCode"),
+                rarity=values.get("rarity"),
             ),
             page_size=int(raw_page_size),
             sort=values["sort"],
@@ -310,7 +326,7 @@ def parse_url_state(query_string: str) -> CatalogRequestV1:
 
 
 def switch_family(request: CatalogRequestV1, family: RequestFamily) -> CatalogRequestV1:
-    """Switch family while dropping the incompatible sealed-only subtype selection."""
+    """Switch family while dropping family-specific subtype and metadata selections."""
 
     request = _validated_request(request)
     if type(family) is not RequestFamily:
@@ -320,12 +336,12 @@ def switch_family(request: CatalogRequestV1, family: RequestFamily) -> CatalogRe
     return replace(
         request,
         product_family=family,
-        filters=replace(request.filters, product_subtype=None),
+        filters=replace(request.filters, product_subtype=None, expansion_code=None, rarity=None),
     )
 
 
 def switch_game(request: CatalogRequestV1, game: Game) -> CatalogRequestV1:
-    """Switch game and clear subtype state whose cross-game meaning is unverified."""
+    """Switch game and clear subtype/metadata state with no cross-game identity."""
 
     request = _validated_request(request)
     if type(game) is not Game:
@@ -335,7 +351,7 @@ def switch_game(request: CatalogRequestV1, game: Game) -> CatalogRequestV1:
     return replace(
         request,
         game=game,
-        filters=replace(request.filters, product_subtype=None),
+        filters=replace(request.filters, product_subtype=None, expansion_code=None, rarity=None),
     )
 
 
@@ -348,8 +364,8 @@ def evaluate_facets(
 ) -> FacetEvaluation:
     """Evaluate AND-across-facets counts, excluding each facet's own selection.
 
-    Multiple values within a future facet would be ORed, but v1 exposes only scalar
-    ``inStock`` and ``productSubtype`` selections.  ``query_product_gids`` is required
+    Multiple values within a future facet would be ORed; current selections are scalar.
+    ``query_product_gids`` is required
     exactly when ``q`` is non-empty and is deliberately supplied by the search oracle.
     """
 
@@ -449,6 +465,34 @@ def _evaluate_prepared_facets(
                 missing_value_count=missing_subtype_count,
             )
         )
+    if request.product_family is RequestFamily.SINGLE:
+        for dimension, attribute in (
+            (FacetDimension.EXPANSION_CODE, "expansion_code"),
+            (FacetDimension.RARITY, "rarity"),
+        ):
+            base = _matching_prepared_rows(
+                rows, request, query_scope, excluded=dimension, checkpoint=checkpoint
+            )
+            totals: dict[str, int] = {}
+            missing = 0
+            for row in base:
+                _run_checkpoint(checkpoint)
+                metadata = row.item.card_metadata
+                value = getattr(metadata, attribute) if metadata is not None else None
+                if value is None:
+                    missing += 1
+                else:
+                    totals[value] = totals.get(value, 0) + 1
+            selected = getattr(request.filters, attribute)
+            if selected is not None:
+                totals.setdefault(selected, 0)
+            facets.append(
+                ContextualFacet(
+                    dimension,
+                    tuple(FacetValueCount(value, totals[value]) for value in sorted(totals)),
+                    missing,
+                )
+            )
     _run_checkpoint(checkpoint)
     return FacetEvaluation(tuple(row.item for row in filtered_rows), tuple(facets))
 
@@ -485,6 +529,19 @@ def _matching_prepared_rows(
             excluded is not FacetDimension.PRODUCT_SUBTYPE
             and request.filters.product_subtype is not None
             and item.product_subtype != request.filters.product_subtype
+        ):
+            continue
+        metadata = item.card_metadata
+        if (
+            excluded is not FacetDimension.EXPANSION_CODE
+            and request.filters.expansion_code is not None
+            and (metadata is None or metadata.expansion_code != request.filters.expansion_code)
+        ):
+            continue
+        if (
+            excluded is not FacetDimension.RARITY
+            and request.filters.rarity is not None
+            and (metadata is None or metadata.rarity != request.filters.rarity)
         ):
             continue
         matches.append(row)

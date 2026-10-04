@@ -218,7 +218,7 @@ def test_url_state_bounds_types_and_field_count() -> None:
     with pytest.raises(FacetContractError, match="byte length"):
         parse_url_state("x" * (facets.MAX_URL_STATE_BYTES + 1))
     with pytest.raises(FacetContractError, match="invalid"):
-        parse_url_state("a=1&b=2&c=3&d=4&e=5&f=6&g=7&h=8")
+        parse_url_state("&".join(f"key{i}=1" for i in range(len(facets._SUPPORTED_URL_KEYS) + 1)))
 
     class RequestSubclass(CatalogRequestV1):
         pass
@@ -633,7 +633,7 @@ def test_reference_result_value_objects_enforce_exact_immutable_shapes() -> None
                 (),
                 missing_value_count=missing,  # type: ignore[arg-type]
             )
-    with pytest.raises(FacetContractError, match="only productSubtype"):
+    with pytest.raises(FacetContractError, match="required facets"):
         ContextualFacet(FacetDimension.IN_STOCK, (), missing_value_count=1)
 
     evaluation = FacetEvaluation((), (facet,))
@@ -661,7 +661,6 @@ def test_backlog_inventory_names_every_requested_but_unrepresented_dimension() -
         "finish": "backlog",
         "language": "backlog",
         "priceRange": "backlog",
-        "rarity": "backlog",
         "releaseDate": "backlog",
         "set": "backlog",
         "setCode": "backlog",

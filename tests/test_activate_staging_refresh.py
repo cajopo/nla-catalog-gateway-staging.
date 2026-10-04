@@ -705,6 +705,24 @@ def test_real_preflight_accepts_bound_evidence_without_writing(preflight_case):
     assert all(command[1] in ("inspect", "ps") for command in case.commands)
 
 
+@pytest.mark.parametrize("acquisition_sha", ["8" * 40, "invalid"])
+def test_recovery_preserves_acquisition_pin_separate_from_verified_producer(
+    preflight_case, acquisition_sha
+):
+    case = preflight_case
+    case.documents["operator-receipt.json"]["codeSha"] = acquisition_sha
+    case.documents["capture-checkpoint.v1.json"]["identity"]["sourceCodeSha"] = acquisition_sha
+    for name in ("operator-receipt.json", "capture-checkpoint.v1.json"):
+        (case.plan.capture / name).write_text(json.dumps(case.documents[name]))
+    if acquisition_sha == "invalid":
+        with pytest.raises(AssertionError):
+            operator.preflight(case.plan)
+    else:
+        result = operator.preflight(case.plan)
+        assert result[4] == case.plan.manifest
+        assert not case.plan.work.exists()
+
+
 @pytest.mark.parametrize(
     ("file", "key", "value"),
     [
