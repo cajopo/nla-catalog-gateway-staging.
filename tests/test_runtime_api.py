@@ -451,8 +451,9 @@ def test_request_envelope_rejects_non_bytes_oversize_surrogate_and_bad_request()
 def test_request_envelope_bounds_query_cursor_and_incompatible_context() -> None:
     with pytest.raises(RuntimeApiContractError):
         CatalogRequestEnvelopeV1(_request(family=RequestFamily.SINGLE, query="q" * 257), None)
-    with pytest.raises(IncompatibleCatalogRequestError):
-        CatalogRequestEnvelopeV1(_request(family=RequestFamily.ALL, query="q"), None)
+    for family in RequestFamily:
+        envelope = CatalogRequestEnvelopeV1(_request(family=family, query="q"), None)
+        assert CatalogRequestEnvelopeV1.from_json_bytes(envelope.to_json_bytes()) == envelope
     for cursor in ("", "not-signed", ".signature", "opaque.", "é.signature"):
         with pytest.raises(InvalidOpaqueCursorError):
             CatalogRequestEnvelopeV1(_request(), cursor)
@@ -947,7 +948,7 @@ def test_invalid_cursor_from_transport_or_backend_never_reaches_another_generati
 
 def test_incompatible_request_maps_to_fixed_error(test_capabilities: None) -> None:
     request = _request(family=RequestFamily.ALL).as_dict()
-    request["q"] = "card"
+    request["filters"]["productSubtype"] = "booster-box"
     raw = json.dumps(
         {"contractVersion": 1, "cursor": None, "request": request}, separators=(",", ":")
     ).encode()

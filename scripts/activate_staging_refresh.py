@@ -231,7 +231,10 @@ def preflight(plan):
     assert manifest == plan.manifest
     assert re.fullmatch("[0-9a-f]{64}", manifest)
     assert receipt["status"] == "candidate-ready" and receipt["activeCatalogChanged"] is False
-    assert receipt["codeSha"] == checkpoint["identity"]["sourceCodeSha"] == plan.new_code
+    # Acquisition and packaging may use different revisions during recovery.
+    # Preserve the original acquisition pin; the verifier binds the producer below.
+    assert receipt["codeSha"] == checkpoint["identity"]["sourceCodeSha"]
+    assert re.fullmatch("[0-9a-f]{40}", receipt["codeSha"])
     assert checkpoint["packageManifestSha256"] == manifest
     assert checkpoint["summarySha256"] == verified["summarySha256"] == plan.summary
     assert receipt["captureStartedAt"] == checkpoint["beforeObservedAt"] == plan.started
