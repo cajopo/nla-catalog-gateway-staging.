@@ -286,8 +286,24 @@ def retention(config, run, completed):
         if receipt["run"] != directory.name or receipt["status"] != "ready":
             raise ValueError("invalid completed run")
         resources = receipt["resources"]
-        if set(resources) != {"runtime", "before", "verifier", "promote"}:
+        kind = receipt.get("kind", "dataset-refresh")
+        expected_roles = (
+            {"runtime", "replaced"}
+            if kind == "image-upgrade"
+            else {"runtime", "before", "verifier", "promote"}
+        )
+        if kind not in {"dataset-refresh", "image-upgrade"} or set(resources) != expected_roles:
             raise ValueError("invalid completed resources")
+        if kind == "image-upgrade" and (
+            resources["runtime"] == resources["replaced"]
+            or receipt.get("oldImage") == receipt.get("newImage")
+            or any(
+                not isinstance(receipt.get(key), str)
+                or re.fullmatch("sha256:[0-9a-f]{64}", receipt[key]) is None
+                for key in ("oldImage", "newImage")
+            )
+        ):
+            raise ValueError("invalid image replacement receipt")
         for value in [
             receipt["manifestSha256"],
             receipt["previousManifestSha256"],

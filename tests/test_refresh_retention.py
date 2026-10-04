@@ -137,6 +137,60 @@ def rewrite(case, number):
     )
 
 
+def image_receipt(case):
+    """Historical image replacement shares the dataset, not previous ownership."""
+    receipt = {
+        **case.completed,
+        "kind": "image-upgrade",
+        "run": "20260922t123000z-bbbbbbbb",
+        "resources": {"runtime": case.current_id, "replaced": "a" * 64},
+        "oldImage": "sha256:" + "1" * 64,
+        "newImage": "sha256:" + "2" * 64,
+    }
+    directory = case.root / receipt["run"]
+    directory.mkdir()
+    (directory / "completed.json").write_text(json.dumps(receipt))
+    case.containers["a" * 64] = {
+        "Id": "a" * 64,
+        "State": {"Status": "exited", "Running": False},
+        "HostConfig": {"RestartPolicy": {"Name": "no"}},
+        "Mounts": [{"Type": "bind", "Source": str(case.store)}],
+    }
+    return directory, receipt
+
+
+def test_image_receipt_same_manifest_ownership_and_original_evidence_preserved(retained):
+    case = retained
+    directory, receipt = image_receipt(case)
+    original = (case.run / "completed.json").read_bytes()
+    run(case)
+    assert "a" * 64 in case.removed
+    assert case.current_id not in case.removed
+    assert (directory / "completed.json").exists()
+    assert (case.run / "completed.json").read_bytes() == original
+    assert receipt["manifestSha256"] == case.pointer["currentManifestSha256"]
+
+
+@pytest.mark.parametrize("failure", ["kind", "roles", "image", "same-runtime", "ownership"])
+def test_invalid_image_receipt_stops_retention_before_deletion(retained, failure):
+    case = retained
+    directory, receipt = image_receipt(case)
+    if failure == "kind":
+        receipt["kind"] = "unknown"
+    elif failure == "roles":
+        receipt["resources"]["promote"] = "f" * 64
+    elif failure == "image":
+        receipt["newImage"] = "latest"
+    elif failure == "same-runtime":
+        receipt["resources"]["replaced"] = case.current_id
+    else:
+        receipt["resources"]["replaced"] = case.receipts[0]["resources"]["runtime"]
+    (directory / "completed.json").write_text(json.dumps(receipt))
+    with pytest.raises(ValueError):
+        run(case)
+    assert not case.removed
+
+
 def test_retention_keeps_two_generations_and_only_immediate_container_backup(retained):
     case = retained
     # Missing old container is a previously removed resource, not a retry target.
