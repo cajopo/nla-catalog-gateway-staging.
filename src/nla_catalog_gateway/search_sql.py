@@ -1,14 +1,20 @@
-"""Literal name/code search over the existing immutable catalog database.
+"""Literal family-scoped search over the existing immutable catalog database.
 
 SKU and barcode come from the retained Shopify variant records, never from titles.
-Collector numbers come from source-ID-joined CSV metadata. Expansion names and
-rarity are never searched. No printed-code punctuation is inferred from SKUs.
+Collector numbers come from source-ID-joined CSV metadata. Single-card search
+never matches expansion names or rarity. Sealed/accessory search uses commercial
+titles; sealed also uses its classified subtype. The current projection has no
+structured expansion field for sealed products; none is inferred from card data.
+No printed-code punctuation is inferred from SKUs.
 """
 
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
+from collections.abc import Callable
+from dataclasses import replace
 
 from nla_catalog_gateway.canonical_search import (
     MAX_CANONICAL_NAME_CODEPOINTS,
@@ -17,7 +23,26 @@ from nla_catalog_gateway.canonical_search import (
     SingleCardSuggestion,
     normalize_search_text,
 )
+from nla_catalog_gateway.facets import ContextualFacet, FacetDimension, FacetValueCount
 from nla_catalog_gateway.runtime_contract import CatalogProductRecordV1, CatalogRequestV1
+
+_PRINT_VERSION = re.compile(r" \(V\.[0-9]+(?: - [^()]+)?\)\Z")
+_ONE_PIECE_NUMBER = re.compile(r" \((?:(?:OP|ST|EB|PRB)[0-9]{2}|P)-[0-9]{3}\)\Z")
+_POKEMON_LEVEL = re.compile(r" Lv\.[0-9]+\Z", re.IGNORECASE)
+
+
+def _suggestion_name(name: str, game: str) -> str:
+    """Group observed source print suffixes, not arbitrary parenthesized card text.
+
+    This is a suggestion label only: source names, IDs, search columns and product
+    results remain unchanged. Selecting the base name searches all its prints.
+    """
+    label = _PRINT_VERSION.sub("", name)
+    if game == "one-piece":
+        label = _ONE_PIECE_NUMBER.sub("", label)
+    if game == "pokemon":
+        label = _POKEMON_LEVEL.sub("", label)
+    return label if label.strip() else name
 
 
 def search_facts(record: CatalogProductRecordV1) -> tuple[str, str, int]:
@@ -75,23 +100,104 @@ def search_scope(request: CatalogRequestV1) -> tuple[str, tuple[object, ...]]:
         parameters.append(request.product_family.value)
     query = normalized_query(request)
     if query:
-        clauses.append(
+        single_match = (
             "(instr(normalized_card_name, ?) > 0 OR EXISTS "
             "(SELECT 1 FROM json_each(search_codes_json) AS code "
             "WHERE instr(code.value, ?) > 0))"
         )
-        parameters.extend((query, query))
+        # Evaluate titles at read time: the persisted, verified search facts and
+        # projection schema stay compatible with already-built generations.
+        commercial_match = (
+            "(instr(nla_search_text(commercial_title), ?) > 0 OR "
+            "CASE WHEN product_family = 'sealed' THEN "
+            "instr(nla_search_text(coalesce(product_subtype, '')), ?) > 0 ELSE 0 END)"
+        )
+        if request.product_family.value == "single":
+            clauses.append(single_match)
+            parameters.extend((query, query))
+        elif request.product_family.value == "all":
+            # CASE is lazy: singles never normalize their commercial title or
+            # accidentally match its expansion/version suffixes.
+            clauses.append(
+                f"(CASE WHEN product_family = 'single' THEN {single_match} "
+                f"ELSE {commercial_match} END)"
+            )
+            parameters.extend((query,) * 4)
+        else:
+            clauses.append(commercial_match)
+            parameters.extend((query, query))
     if request.filters.in_stock is not None:
         clauses.append("has_positive_inventory = ?")
         parameters.append(int(request.filters.in_stock))
     if request.filters.product_subtype is not None:
         clauses.append("product_subtype = ?")
         parameters.append(request.filters.product_subtype)
+    if request.filters.expansion_code is not None:
+        clauses.append(
+            "json_extract(CAST(product_record_json AS TEXT), '$.cardMetadata.expansionCode') = ?"
+        )
+        parameters.append(request.filters.expansion_code)
+    if request.filters.rarity is not None:
+        clauses.append(
+            "json_extract(CAST(product_record_json AS TEXT), '$.cardMetadata.rarity') = ?"
+        )
+        parameters.append(request.filters.rarity)
     return " AND ".join(clauses), tuple(parameters)
 
 
+def select_metadata_facets(
+    connection: sqlite3.Connection,
+    request: CatalogRequestV1,
+    *,
+    checkpoint: Callable[[], None] | None = None,
+) -> tuple[ContextualFacet, ...]:
+    """Complete contextual counts in one scan, never limited to the result page.
+
+    Stream only the two metadata values and count each dimension in memory.
+    SQLite GROUP BY on these expressions also sorts the full source JSON payload,
+    overflowing the runtime's bounded temporary storage on the real catalog.
+    """
+    base = replace(request, filters=replace(request.filters, expansion_code=None, rarity=None))
+    where, parameters = search_scope(base)
+    sql = f"""SELECT json_extract(CAST(product_record_json AS TEXT),
+                                 '$.cardMetadata.expansionCode'),
+                     json_extract(CAST(product_record_json AS TEXT), '$.cardMetadata.rarity')
+              FROM products WHERE {where}"""  # noqa: S608
+    totals: tuple[dict[str, int], dict[str, int]] = ({}, {})
+    missing = [0, 0]
+    selected = (request.filters.expansion_code, request.filters.rarity)
+    for expansion, rarity in connection.execute(sql, parameters):
+        if checkpoint is not None:
+            checkpoint()
+        values = (expansion, rarity)
+        for index in (0, 1):
+            other = 1 - index
+            if selected[other] is not None and values[other] != selected[other]:
+                continue
+            value = values[index]
+            if value is None:
+                missing[index] += 1
+            else:
+                totals[index][value] = totals[index].get(value, 0) + 1
+    result = []
+    for index, dimension in enumerate((FacetDimension.EXPANSION_CODE, FacetDimension.RARITY)):
+        if selected[index] is not None:
+            totals[index].setdefault(selected[index], 0)
+        counts = []
+        for value in sorted(totals[index]):
+            if checkpoint is not None:
+                checkpoint()
+            counts.append(FacetValueCount(value, totals[index][value]))
+        result.append(ContextualFacet(dimension, tuple(counts), missing[index]))
+    return tuple(result)
+
+
 def select_suggestions(
-    connection: sqlite3.Connection, request: CatalogRequestV1, *, limit: int
+    connection: sqlite3.Connection,
+    request: CatalogRequestV1,
+    *,
+    limit: int,
+    checkpoint: Callable[[], None] | None = None,
 ) -> tuple[SingleCardSuggestion, ...]:
     if type(limit) is not int or not 1 <= limit <= 20:
         raise CanonicalSearchError("suggestion limit must be between 1 and 20")
@@ -100,15 +206,37 @@ def select_suggestions(
         return ()
     where, parameters = search_scope(request)
     # The interpolated predicate contains fixed fragments only, never request values.
-    sql = f"""SELECT MIN(canonical_card_name), normalized_card_name,
+    sql = f"""SELECT canonical_card_name,
                      COUNT(*), SUM(has_positive_inventory)
               FROM products WHERE {where}
-              GROUP BY normalized_card_name
-              ORDER BY CASE WHEN normalized_card_name = ? THEN 0
-                            WHEN instr(normalized_card_name, ?) = 1 THEN 1 ELSE 2 END,
-                       normalized_card_name
-              LIMIT ?"""  # noqa: S608
-    return tuple(
-        SingleCardSuggestion(*row)
-        for row in connection.execute(sql, (*parameters, query, query, limit))
+              GROUP BY canonical_card_name"""  # noqa: S608
+    # Group before limiting: a run of print versions must not crowd out other names.
+    groups: dict[str, SingleCardSuggestion] = {}
+    for name, count, available in connection.execute(sql, parameters):
+        if checkpoint is not None:
+            checkpoint()
+        label = _suggestion_name(name, request.game.value)
+        normalized = normalize_search_text(label)
+        previous = groups.get(normalized)
+        groups[normalized] = SingleCardSuggestion(
+            min(label, previous.canonical_card_name) if previous else label,
+            normalized,
+            count + (previous.print_count if previous else 0),
+            available + (previous.available_print_count if previous else 0),
+        )
+    result = tuple(
+        sorted(
+            groups.values(),
+            key=lambda item: (
+                0
+                if item.normalized_card_name == query
+                else 1
+                if item.normalized_card_name.startswith(query)
+                else 2,
+                item.normalized_card_name,
+            ),
+        )[:limit]
     )
+    if checkpoint is not None:
+        checkpoint()
+    return result

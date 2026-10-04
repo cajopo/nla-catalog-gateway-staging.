@@ -1,0 +1,98 @@
+diff --git a/layout/theme.liquid b/layout/theme.liquid
+index b4bd68d..b9d5c85 100644
+--- a/layout/theme.liquid
++++ b/layout/theme.liquid
+@@ -324,7 +324,7 @@
+
+       window.variantStrings = {
+         addToCart: `{{ 'products.product.add_to_cart' | t }}`,
+-        soldOut: `{{ 'products.product.sold_out' | t }}`,
++        soldOut: `SOLD OUT`,
+         unavailable: `{{ 'products.product.unavailable' | t }}`,
+         unavailable_with_option: `{{ 'products.product.value_unavailable' | t: option_value: '[value]' }}`,
+       };
+diff --git a/sections/main-product.liquid b/sections/main-product.liquid
+index f981550..bfc084d 100644
+--- a/sections/main-product.liquid
++++ b/sections/main-product.liquid
+@@ -29,13 +29,20 @@
+       padding: 1rem 1.4rem;
+       border: 1px solid rgb(var(--color-foreground) / 18%);
+       border-radius: 999px;
+-      color: rgb(var(--color-foreground) / 72%);
++      color: #e00000;
+       font-size: 1.3rem;
+       font-weight: 700;
+       letter-spacing: 0.06em;
+       text-transform: uppercase;
+     }
+
++    .section-{{ section.id }}-padding .price__badge-sold-out,
++    .section-{{ section.id }}-padding .product-form__submit:disabled {
++      color: #e00000;
++      border-color: #e00000;
++      opacity: 1;
++    }
++
+     @media screen and (min-width: 750px) {
+       .section-{{ section.id }}-padding {
+         padding-top: {{ section.settings.padding_top }}px;
+@@ -121,7 +128,7 @@
+               {%- when 'price' -%}
+                 {% if catalog_only %}
+                   <div id="price-{{ section.id }}" role="status" {{ block.shopify_attributes }}>
+-                    <span class="nla-product__unavailable">{{ 'products.product.sold_out' | t }}</span>
++                    <span class="nla-product__unavailable">SOLD OUT</span>
+                   </div>
+                 {% else %}
+                   <div id="price-{{ section.id }}" role="status" {{ block.shopify_attributes }}>
+diff --git a/snippets/buy-buttons.liquid b/snippets/buy-buttons.liquid
+index 1cb004a..d0eaf13 100644
+--- a/snippets/buy-buttons.liquid
++++ b/snippets/buy-buttons.liquid
+@@ -86,7 +86,7 @@
+           >
+             <span>
+               {%- if product.selected_or_first_available_variant.available == false or quantity_rule_soldout -%}
+-                {{ 'products.product.sold_out' | t }}
++                SOLD OUT
+               {%- else -%}
+                 {{ 'products.product.add_to_cart' | t }}
+               {%- endif -%}
+@@ -108,7 +108,7 @@
+           class="product-form__submit button button--full-width button--primary"
+           disabled
+         >
+-          {{ 'products.product.sold_out' | t }}
++          SOLD OUT
+         </button>
+       </div>
+     </div>
+diff --git a/snippets/price.liquid b/snippets/price.liquid
+index 5d6ca6a..5c8fc2e 100644
+--- a/snippets/price.liquid
++++ b/snippets/price.liquid
+@@ -48,6 +48,7 @@
+     {%- if show_badges %} price--show-badge{% endif -%}
+   "
+ >
++  {%- if target.price > 0 or product == blank -%}
+   <div class="price__container">
+     {%- comment -%}
+       Explanation of description list:
+@@ -116,13 +117,14 @@
+       </span>
+     </small>
+   </div>
++  {%- endif -%}
+   {%- if show_badges -%}
+     <span class="badge price__badge-sale color-{{ settings.sale_badge_color_scheme }}">
+       {{ 'products.product.on_sale' | t }}
+     </span>
+
+     <span class="badge price__badge-sold-out color-{{ settings.sold_out_badge_color_scheme }}">
+-      {{ 'products.product.sold_out' | t }}
++      SOLD OUT
+     </span>
+   {%- endif -%}
+ </div>

@@ -40,7 +40,6 @@ from nla_catalog_gateway.pagination import (
     PaginationContractError,
     ProjectionBuildError,
     StaleGenerationError,
-    UnsupportedPaginationRequestError,
     build_catalog_projection,
 )
 from nla_catalog_gateway.runtime_contract import (
@@ -922,13 +921,13 @@ def test_sql_is_keyset_only_and_all_data_values_are_bound() -> None:
     assert all("?" in sql for sql in sql_values)
 
 
-def test_request_scope_rejects_non_single_search_and_forged_types(
+def test_request_scope_accepts_all_family_search_and_rejects_forged_types(
     tmp_path: Path,
 ) -> None:
     projection = _projection(tmp_path, (_record("1"),))
     paginator = _paginator(projection)
-    with pytest.raises(UnsupportedPaginationRequestError, match="search"):
-        paginator.fetch_page(_request(query="bolt"))
+    assert paginator.fetch_page(_request(query="Synthetic")).page.returned_product_count == 1
+    assert paginator.fetch_page(_request(query="bolt")).page.returned_product_count == 0
     assert paginator.fetch_page(_request(in_stock=True)).page.returned_product_count == 1
     with pytest.raises(PaginationContractError, match="CatalogRequestV1"):
         paginator.fetch_page(object())  # type: ignore[arg-type]

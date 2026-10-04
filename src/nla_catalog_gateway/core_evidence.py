@@ -234,6 +234,48 @@ def _expected_normalized_name(value: str) -> str:
     return " ".join(unicodedata.normalize("NFKC", value).casefold().split())
 
 
+def _expected_suggestion_label(name: str, game: Game) -> str:
+    """Independent suffix oracle; product matching still uses the unmodified name."""
+    label = name
+    start = label.rfind(" (V.")
+    if start >= 0 and label.endswith(")"):
+        suffix = label[start + 4 : -1]
+        number, separator, rarity = suffix.partition(" - ")
+        if (
+            number
+            and number.isascii()
+            and number.isdecimal()
+            and (not separator or (rarity and "(" not in rarity and ")" not in rarity))
+        ):
+            label = label[:start]
+    if game is Game.ONE_PIECE:
+        start = label.rfind(" (")
+        if start >= 0 and label.endswith(")"):
+            prefix, separator, number = label[start + 2 : -1].partition("-")
+            expansion = prefix == "P" or any(
+                prefix.startswith(series)
+                and len(prefix) == len(series) + 2
+                and prefix[len(series) :].isascii()
+                and prefix[len(series) :].isdecimal()
+                for series in ("OP", "ST", "EB", "PRB")
+            )
+            if (
+                expansion
+                and separator
+                and len(number) == 3
+                and number.isascii()
+                and number.isdecimal()
+            ):
+                label = label[:start]
+    if game is Game.POKEMON:
+        head, separator, suffix = label.rpartition(" ")
+        if separator and suffix[:3].lower() == "lv.":
+            level = suffix[3:]
+            if level and level.isascii() and level.isdecimal():
+                label = head
+    return label if label.strip() else name
+
+
 def _verify_search(
     records: tuple[CatalogProductRecordV1, ...],
     paginator: CatalogPaginator,
@@ -329,9 +371,10 @@ def _verify_search(
                 if cursor is not None or actual_gids != [fact[0].product_gid for fact in expected]:
                     raise CatalogCoreEvidenceError(_ERROR)
                 groups: dict[str, list[tuple[str, bool]]] = {}
-                for record, name, _, available in expected:
-                    groups.setdefault(name, []).append(
-                        (record.canonical_card_name or "", available)
+                for record, _, _, available in expected:
+                    label = _expected_suggestion_label(record.canonical_card_name or "", game)
+                    groups.setdefault(_expected_normalized_name(label), []).append(
+                        (label, available)
                     )
                 names = sorted(
                     groups,

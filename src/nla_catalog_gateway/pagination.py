@@ -24,7 +24,12 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Final
 
-from nla_catalog_gateway.canonical_search import CanonicalSearchError, SingleCardSuggestion
+from nla_catalog_gateway.canonical_search import (
+    CanonicalSearchError,
+    SingleCardSuggestion,
+    normalize_search_text,
+)
+from nla_catalog_gateway.facets import ContextualFacet
 from nla_catalog_gateway.runtime_contract import (
     MAX_CONTRACT_BYTES,
     CatalogItemV1,
@@ -40,6 +45,7 @@ from nla_catalog_gateway.search_sql import (
     normalized_query,
     search_facts,
     search_scope,
+    select_metadata_facets,
     select_suggestions,
 )
 from nla_catalog_gateway.taxonomy import Game, ProductFamily
@@ -291,8 +297,6 @@ def _validated_request(request: object) -> CatalogRequestV1:
 
 def _validate_proof_request(request: object) -> CatalogRequestV1:
     canonical = _validated_request(request)
-    if canonical.query not in (None, "") and canonical.product_family.value != "single":
-        raise UnsupportedPaginationRequestError("search currently requires the single family")
     try:
         normalized_query(canonical)
     except CanonicalSearchError as exc:
@@ -782,6 +786,10 @@ class CatalogProjection:
         limit: int,
     ) -> list[sqlite3.Row]:
         if request.query not in (None, "") or request.filters.nonempty:
+            if request.query not in (None, "") and request.product_family.value != "single":
+                connection.create_function(
+                    "nla_search_text", 1, normalize_search_text, deterministic=True
+                )
             where, parameters = search_scope(request)
             if after_digits is not None:
                 where += " AND (product_gid_length, product_gid_digits) > (?, ?)"
@@ -851,7 +859,49 @@ class CatalogProjection:
         try:
             with _readonly_connection(self.path) as connection:
                 connection.set_progress_handler(progress, _SQLITE_PROGRESS_VM_STEPS)
-                result = select_suggestions(connection, request, limit=limit)
+                result = select_suggestions(connection, request, limit=limit, checkpoint=checkpoint)
+        except sqlite3.Error as exc:
+            if failure is not None:
+                raise failure from None
+            raise DatasetUnavailableError("catalog dataset is unavailable") from exc
+        self._assert_file_unchanged()
+        if progress():
+            assert failure is not None
+            raise failure
+        return result
+
+    def metadata_facets(
+        self,
+        request: CatalogRequestV1,
+        *,
+        checkpoint: Callable[[], None] | None = None,
+    ) -> tuple[ContextualFacet, ...]:
+        """Read set/rarity counts from this pinned immutable projection."""
+        request = _validate_proof_request(request)
+        if request.product_family.value != "single":
+            raise UnsupportedPaginationRequestError("metadata facets require the single family")
+        if checkpoint is not None and not callable(checkpoint):
+            raise PaginationContractError("pagination checkpoint is invalid")
+        failure: BaseException | None = None
+
+        def progress() -> int:
+            nonlocal failure
+            try:
+                if checkpoint is not None:
+                    checkpoint()
+            except BaseException as exc:
+                failure = exc
+                return 1
+            return 0
+
+        if progress():
+            assert failure is not None
+            raise failure
+        self._assert_file_unchanged()
+        try:
+            with _readonly_connection(self.path) as connection:
+                connection.set_progress_handler(progress, _SQLITE_PROGRESS_VM_STEPS)
+                result = select_metadata_facets(connection, request, checkpoint=checkpoint)
         except sqlite3.Error as exc:
             if failure is not None:
                 raise failure from None
