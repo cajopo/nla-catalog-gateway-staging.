@@ -40,6 +40,11 @@ Official references checked on 2026-09-06:
 
 ## Release/data separation
 
+Current packaging update (#67, 2026-09-15): build once, prove the complete artifact,
+and package that exact verified projection. The historical double-build procedure
+below is superseded; its historical measurements are not timings for the new code.
+All package reopen, digest, permissions and publication/cleanup gates remain.
+
 Application releases never contain a Shopify snapshot or generated catalog database. The
 Windows authorized runner remains the only producer allowed to open the reconciled #47 bundle.
 `scripts/package_staging_generation.py` performs the real-core proof implemented by commit

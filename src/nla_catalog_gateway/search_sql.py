@@ -1,7 +1,8 @@
 """Literal name/code search over the existing immutable catalog database.
 
 SKU and barcode come from the retained Shopify variant records, never from titles.
-Printed collector codes need a verified source join before they can be indexed.
+Collector numbers come from source-ID-joined CSV metadata. Expansion names and
+rarity are never searched. No printed-code punctuation is inferred from SKUs.
 """
 
 from __future__ import annotations
@@ -34,6 +35,10 @@ def search_facts(record: CatalogProductRecordV1) -> tuple[str, str, int]:
     ):
         raise CanonicalSearchError("public single canonical name is missing or exceeds its limit")
     codes = set()
+    if record.card_metadata is not None and record.card_metadata.collector_number is not None:
+        number = normalize_search_text(record.card_metadata.collector_number)
+        if number:
+            codes.add(number)
     for variant in record.variants:
         for code in (variant.sku, variant.barcode):
             if code is None:

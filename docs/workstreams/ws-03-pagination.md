@@ -1,5 +1,9 @@
 # WS-03 — bounded synthetic keyset pagination proof (issue #7)
 
+Current runtime continuation: see `ws-03b-retained-cursors.md` (#69). The original
+active-only cursor behavior below describes the internal paginator, not a requirement
+to reject valid retained generations at the HTTP boundary. Full #7 remains open.
+
 ## Scope and authority boundary
 
 This workstream implements an internal, code-only proof of Product-level keyset pagination over

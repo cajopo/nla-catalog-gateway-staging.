@@ -1,5 +1,67 @@
 # NLA catalog gateway — current status
 
+## Current acquisition candidate — 2026-09-18 (#89)
+
+Merged #88 (`9fe7358`) supplies native Linux reconciliation. The next bounded
+slice acquires the existing two read-only Bulk exports on the VPS and reuses
+reconciliation/packaging, without a new service or automatic activation. Explicit
+checkpointed resume, independent counts and pinned canonical sources are required.
+See `workstreams/ws-07-vps-bulk-acquisition.md` for scope and verification status.
+Actual app credentials/installation, current source coverage and signed Shopify
+App Proxy proof remain separate; the full storefront goal and #11 remain open.
+Historical entries below do not supersede this current workstream.
+
+## Current retained-cursor candidate — 2026-09-15 (#69)
+
+- `agent/retained-cursor-generations` starts from packaging candidate `0621aed` (#67).
+- Valid signed cursors select their original verified generation after activation;
+  new searches use the active one. In-flight requests and key rotation are covered.
+- Eight bounded generation/codec slots; activation defers at capacity, never evicts a
+  valid cursor. Expiry frees memory only, not catalog files. Existing gates remain.
+- 257 distinct regressions pass, including the signed HTTP 30,001-product traversal;
+  runtime module line/branch coverage is 100%. Ruff (58 files), package build and
+  independent diff review pass. Preflight passes over 112 tracked files. Exact-head
+  CI remains required; final review SHA binding belongs in the delivery receipt.
+- Retention remains in-process: restart/replica continuity and real memory sizing
+  are explicitly open. Full #7 and the storefront goal are NOT complete.
+- No fresh real package, Shopify/PowerTools/theme write or deployment. Parent CI
+  timeout and the separate #68 workflow authorization gate are unchanged.
+- Details and reproducible commands: `docs/workstreams/ws-03b-retained-cursors.md`.
+
+## Current packaging simplification — 2026-09-15 (#67)
+
+- Branch `agent/staging-single-build` on source-metadata head `fbe3cfc` (#66).
+- Packaging builds once and retains the exact projection that passed every core
+  check. Standalone proofs remain ephemeral; failed proofs still remove output.
+- 122 focused tests pass; both changed implementation modules have 100% coverage.
+  Tests assert one build, unchanged file identity/fingerprint, rejection of bytes
+  changed after proof, and cleanup after proof/publication failures.
+- Independent review APPROVE (22 checks independently passed); 233 additional runtime,
+  sync-publication and activation regressions pass, including the 30,001-product HTTP
+  traversal. Ruff over all 57 Python files and package build pass; exact-head CI pending.
+- Parent #66 CodeQL passed but CI run `35018638110` was cancelled at the 15-minute
+  quality-job limit during the large search suite. Parent is not mergeable; no bypass.
+  No new real package or deployment.
+- Rechecked historical raw/reconciled/canonical temporary directories: no files.
+  The historical staging package and recovered original CSVs remain distinct inputs;
+  no stale package is relabeled as a current verified catalog.
+- Shopify read-only export inventory returned no bulk operations for the connected app
+  (not a claim about operations belonging to other apps); fresh acquisition remains open.
+- See `docs/workstreams/ws-09c-single-build-package.md`. Full storefront goal stays open.
+
+## Current source metadata candidate — 2026-09-15 (#65)
+
+- Branch `agent/source-card-codes`, parent `94d95ad` (#64) now CI/CodeQL green.
+- Original CSVs recovered outside Git; prior "awaiting CSV input" statements below
+  are superseded. All 291,787 public historical singles join by verified source ID.
+- Card metadata now reaches SQLite/public items; collector numbers feed scoped SQL
+  search/suggestions with sold-out records retained. No inferred printed-code aliases.
+- 485 focused tests pass, metadata module 100% covered; independent re-review APPROVE
+  after three fixes. All 332,667 real source rows parse; 30,001 collector-only results
+  traverse completely with sold-out inclusion. Exact-head CI remains required;
+  see `ws-01h-card-metadata.md`.
+- No current real-package acceptance, clone installation, sync/deploy or E2E completion.
+
 ## Current clone UI candidate — 2026-09-15 (#14)
 
 - `agent/theme-clone-integration` starts from `69f56a3` (#63), whose CI and CodeQL are green.

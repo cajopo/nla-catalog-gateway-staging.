@@ -77,6 +77,7 @@ MAX_HEADER_BYTES = 32 * 1024
 MAX_BODY_CHUNKS = 128
 DEFAULT_REQUEST_TIMEOUT_MS = 2_000
 MAX_PUBLIC_SUGGESTIONS = 10
+MAX_CURSOR_GENERATIONS = 8
 
 _MAX_REQUEST_TIMEOUT_MS = 30_000
 _MAX_RAW_QUERY_BYTES = 64 * 1024
@@ -343,7 +344,13 @@ class CatalogGenerationLease(Protocol):
 class CatalogBackend(Protocol):
     """Future adapter that atomically acquires one immutable generation lease."""
 
-    def acquire(self, *, control: RequestControl) -> CatalogGenerationLease: ...
+    def acquire(
+        self,
+        *,
+        control: RequestControl,
+        request: CatalogRequestV1 | None = None,
+        cursor: str | None = None,
+    ) -> CatalogGenerationLease: ...
 
 
 class RuntimeCapabilityGate(Protocol):
@@ -377,7 +384,13 @@ class DenyAllProxyAuthorizer:
 class UnavailableCatalogBackend:
     """Safe default until the accepted #7 projection adapter is available."""
 
-    def acquire(self, *, control: RequestControl) -> CatalogGenerationLease:
+    def acquire(
+        self,
+        *,
+        control: RequestControl,
+        request: CatalogRequestV1 | None = None,
+        cursor: str | None = None,
+    ) -> CatalogGenerationLease:
         del control
         raise CatalogBackendFailure(CatalogErrorCode.DATASET_UNAVAILABLE)
 
@@ -454,14 +467,25 @@ class AppProxyVerifierAuthorizer:
 
 @dataclass(frozen=True, slots=True, repr=False)
 class _EvidenceBoundGeneration:
-    verified: VerifiedReconciledGenerationV1 | VerifiedStagingGenerationV1 = field(repr=False)
+    manifest: DatasetManifestV1 = field(repr=False)
     projection: CatalogProjection = field(repr=False)
     cursor_codec: CursorCodecV1 = field(repr=False)
     evidence: VerifiedCatalogCoreEvidenceV1 = field(repr=False)
-    records: tuple[CatalogProductRecordV1, ...] = field(repr=False)
     paginator: CatalogPaginator = field(repr=False)
     clock: Callable[[], datetime] = field(repr=False, compare=False)
     binding: tuple[str, str, str, str, str, str] = field(repr=False)
+
+
+@dataclass(slots=True)
+class _CursorRetention:
+    generation: _EvidenceBoundGeneration = field(repr=False)
+    leases: int = 0
+    expires_at: datetime | None = None
+
+
+def _cursor_generation_key(generation: _EvidenceBoundGeneration) -> tuple[object, ...]:
+    codec = generation.cursor_codec
+    return generation.binding, codec.secret, codec.ttl_seconds
 
 
 class EvidenceBoundCatalogBackend:
@@ -471,6 +495,7 @@ class EvidenceBoundCatalogBackend:
         "_activation_token",
         "_active",
         "_clock",
+        "_cursor_generations",
         "_expected_code_sha",
         "_lock",
         "_token",
@@ -492,6 +517,7 @@ class EvidenceBoundCatalogBackend:
         self._activation_token = object()
         self._expected_code_sha = expected_code_sha
         self._clock = runtime_clock
+        self._cursor_generations: dict[tuple[object, ...], _CursorRetention] = {}
         self._active = _new_evidence_bound_generation(
             verified,
             projection,
@@ -527,6 +553,7 @@ class EvidenceBoundCatalogBackend:
         backend._activation_token = object()
         backend._expected_code_sha = expected_code_sha
         backend._clock = runtime_clock
+        backend._cursor_generations = {}
         backend._active = candidate
         return backend
 
@@ -557,8 +584,7 @@ class EvidenceBoundCatalogBackend:
             clock=self._clock,
         )
         with self._lock:
-            self._active = candidate
-            self._activation_token = object()
+            self._install_candidate(candidate)
 
     def activate_if_current(
         self,
@@ -584,8 +610,7 @@ class EvidenceBoundCatalogBackend:
                 or candidate.binding[0] != self._active.binding[0]
             ):
                 raise RuntimeApiContractError("catalog runtime binding is invalid")
-            self._active = candidate
-            self._activation_token = object()
+            self._install_candidate(candidate)
 
     def activate_staging_generation(
         self,
@@ -601,18 +626,125 @@ class EvidenceBoundCatalogBackend:
             clock=self._clock,
         )
         with self._lock:
-            self._active = candidate
-            self._activation_token = object()
+            self._install_candidate(candidate)
 
-    def acquire(self, *, control: RequestControl) -> EvidenceBoundCatalogLease:
+    def _now(self) -> datetime:
+        now = self._clock()
+        if type(now) is not datetime or now.tzinfo is not UTC:
+            raise PaginationContractError("pagination clock must return a UTC datetime")
+        return now
+
+    def activate_staging_generation_if_current(
+        self,
+        activation_token: object,
+        verified: VerifiedStagingGenerationV1,
+        cursor_codec: CursorCodecV1,
+    ) -> None:
+        """Conditionally install a verified package without overwriting another publisher."""
+        candidate = _new_evidence_bound_staging_generation(
+            verified,
+            cursor_codec,
+            expected_code_sha=self._expected_code_sha,
+            clock=self._clock,
+        )
+        with self._lock:
+            if (
+                activation_token is not self._activation_token
+                or candidate.binding[0] != self._active.binding[0]
+            ):
+                raise RuntimeApiContractError("catalog runtime binding is invalid")
+            self._install_candidate(candidate)
+
+    def _prune_cursor_generations(self, now: datetime) -> None:
+        # Only release memory/keys. Package files are never deleted here.
+        expired = [
+            key
+            for key, slot in self._cursor_generations.items()
+            if slot.leases == 0 and (slot.expires_at is None or slot.expires_at <= now)
+        ]
+        for key in expired:
+            del self._cursor_generations[key]
+
+    def _install_candidate(self, candidate: _EvidenceBoundGeneration) -> None:
+        # Caller owns the backend lock. Never evict a still-usable cursor to activate.
+        self._prune_cursor_generations(self._now())
+        if (
+            _cursor_generation_key(candidate) not in self._cursor_generations
+            and len(self._cursor_generations) >= MAX_CURSOR_GENERATIONS
+        ):
+            raise RuntimeApiContractError("catalog cursor retention capacity is exhausted")
+        self._active = candidate
+        self._activation_token = object()
+
+    def _select_cursor_generation(
+        self, cursor: str, request: CatalogRequestV1, now: datetime
+    ) -> _EvidenceBoundGeneration:
+        candidates = [
+            self._active,
+            *(slot.generation for slot in self._cursor_generations.values()),
+        ]
+        authenticated = False
+        for generation in candidates:
+            try:
+                context = generation.cursor_codec.decode(cursor, expected_request=request, now=now)
+            except (CursorContextMismatchError, CursorExpiredError):
+                raise
+            except InvalidCursorError:
+                continue
+            authenticated = True
+            if context.dataset_generation == generation.binding[2]:
+                return generation
+        if authenticated:
+            raise StaleGenerationError("cursor dataset generation is unavailable")
+        raise InvalidCursorError("cursor token is invalid")
+
+    def _release_cursor_lease(self, slot: _CursorRetention) -> None:
+        with self._lock:
+            slot.leases -= 1
+
+    def _retain_cursor(self, slot: _CursorRetention, expires_at: str) -> None:
+        expires = datetime.fromisoformat(expires_at.replace("Z", "+00:00"))
+        with self._lock:
+            if slot.expires_at is None or expires > slot.expires_at:
+                slot.expires_at = expires
+
+    def acquire(
+        self,
+        *,
+        control: RequestControl,
+        request: CatalogRequestV1 | None = None,
+        cursor: str | None = None,
+    ) -> EvidenceBoundCatalogLease:
         if type(control) is not RequestControl:
             raise CatalogBackendFailure(CatalogErrorCode.TEMPORARILY_UNAVAILABLE)
         control.checkpoint()
-        with self._lock:
-            lease = EvidenceBoundCatalogLease(
-                backend_token=self._token,
-                generation=self._active,
-            )
+        try:
+            with self._lock:
+                now = self._now()
+                self._prune_cursor_generations(now)
+                generation = self._active
+                if cursor is not None:
+                    if request is None:
+                        raise InvalidCursorError("cursor request is missing")
+                    generation = self._select_cursor_generation(cursor, request, now)
+                key = _cursor_generation_key(generation)
+                slot = self._cursor_generations.get(key)
+                if slot is None:
+                    if len(self._cursor_generations) >= MAX_CURSOR_GENERATIONS:
+                        raise PaginationContractError(
+                            "catalog cursor retention capacity is exhausted"
+                        )
+                    slot = _CursorRetention(generation)
+                    self._cursor_generations[key] = slot
+                slot.leases += 1
+                lease = EvidenceBoundCatalogLease(
+                    backend_token=self._token,
+                    generation=generation,
+                    on_close=lambda: self._release_cursor_lease(slot),
+                    on_cursor=lambda expires: self._retain_cursor(slot, expires),
+                )
+        except Exception as exc:
+            raise CatalogBackendFailure(_catalog_execution_error_code(exc)) from None
         try:
             control.checkpoint()
         except BaseException:
@@ -624,13 +756,22 @@ class EvidenceBoundCatalogBackend:
 class EvidenceBoundCatalogLease:
     """One pinned generation; close is idempotent and prevents later reads."""
 
-    __slots__ = ("_backend_token", "_closed", "_generation", "_lock")
+    __slots__ = ("_backend_token", "_closed", "_generation", "_lock", "_on_close", "_on_cursor")
 
-    def __init__(self, *, backend_token: object, generation: _EvidenceBoundGeneration) -> None:
+    def __init__(
+        self,
+        *,
+        backend_token: object,
+        generation: _EvidenceBoundGeneration,
+        on_close: Callable[[], None],
+        on_cursor: Callable[[str], None],
+    ) -> None:
         self._backend_token = backend_token
         self._generation = generation
         self._lock = threading.Lock()
         self._closed = False
+        self._on_close = on_close
+        self._on_cursor = on_cursor
 
     @property
     def dataset_generation(self) -> str:
@@ -670,12 +811,17 @@ class EvidenceBoundCatalogLease:
                 failure_code = None
             if failure_code is not None:
                 raise CatalogBackendFailure(failure_code)
+            context = result.page.next_cursor_context
+            if context is not None:
+                self._on_cursor(context.expires_at)
             control.checkpoint()
             return result
 
     def close(self) -> None:
         with self._lock:
-            self._closed = True
+            if not self._closed:
+                self._closed = True
+                self._on_close()
 
     def _authorized_generation(self, backend_token: object) -> _EvidenceBoundGeneration | None:
         with self._lock:
@@ -1245,7 +1391,7 @@ class RuntimeCatalogService:
             cursor_char_limit=self._limits.max_cursor_chars,
         )
         control.checkpoint()
-        lease = self._acquire(control)
+        lease = self._acquire(control, request=envelope.request, cursor=envelope.cursor)
         try:
             lease_generation, lease_shop = _lease_identity(lease)
             if lease_shop != self._expected_shop_domain:
@@ -1331,9 +1477,15 @@ class RuntimeCatalogService:
             raise RuntimeApiContractError("request body length is invalid")
         return b"".join(parts)
 
-    def _acquire(self, control: RequestControl) -> CatalogGenerationLease:
+    def _acquire(
+        self,
+        control: RequestControl,
+        *,
+        request: CatalogRequestV1 | None = None,
+        cursor: str | None = None,
+    ) -> CatalogGenerationLease:
         try:
-            lease = self._backend.acquire(control=control)
+            lease = self._backend.acquire(control=control, request=request, cursor=cursor)
         except CatalogBackendFailure:
             control.checkpoint()
             raise
@@ -1659,7 +1811,6 @@ def _new_evidence_bound_generation(
         ):
             raise RuntimeApiContractError("catalog runtime binding is invalid")
         candidate = _assemble_evidence_bound_generation(
-            verified=checked,
             projection=projection,
             cursor_codec=cursor_codec,
             evidence=evidence,
@@ -1699,7 +1850,6 @@ def _new_evidence_bound_staging_generation(
         ):
             raise RuntimeApiContractError("catalog runtime binding is invalid")
         candidate = _assemble_evidence_bound_generation(
-            verified=verified,
             projection=verified.projection,
             cursor_codec=cursor_codec,
             evidence=verified.evidence,
@@ -1723,7 +1873,6 @@ def _new_evidence_bound_staging_generation(
 
 def _assemble_evidence_bound_generation(
     *,
-    verified: VerifiedReconciledGenerationV1 | VerifiedStagingGenerationV1,
     projection: CatalogProjection,
     cursor_codec: CursorCodecV1,
     evidence: VerifiedCatalogCoreEvidenceV1,
@@ -1748,15 +1897,15 @@ def _assemble_evidence_bound_generation(
     ):
         raise RuntimeApiContractError("catalog runtime binding is invalid")
     shop_domain = _validated_shop(shop_domain)
+    manifest = DatasetManifestV1.from_json_bytes(manifest.to_json_bytes())
     manifest.validate_records(records)
-    reopened = CatalogProjection.open(
-        projection.path,
-        expected_generation=manifest.dataset_generation,
-    )
+    activation = AtomicCatalogActivation(projection)
+    reopened = activation.select()
     if (
         reopened._file_fingerprint != projection._file_fingerprint
         or reopened.manifest != manifest
         or projection.manifest != manifest
+        or reopened.dataset_generation != manifest.dataset_generation
     ):
         raise RuntimeApiContractError("catalog runtime binding is invalid")
     codec = CursorCodecV1(cursor_codec.secret, cursor_codec.ttl_seconds)
@@ -1786,16 +1935,15 @@ def _assemble_evidence_bound_generation(
     ):
         raise RuntimeApiContractError("catalog runtime binding is invalid")
     paginator = CatalogPaginator(
-        AtomicCatalogActivation(reopened),
+        activation,
         codec,
         clock=clock,
     )
     return _EvidenceBoundGeneration(
-        verified=verified,
+        manifest=manifest,
         projection=reopened,
         cursor_codec=codec,
         evidence=evidence,
-        records=records,
         paginator=paginator,
         clock=clock,
         binding=binding,
@@ -1806,11 +1954,12 @@ def _evidence_binding_is_current(generation: _EvidenceBoundGeneration) -> bool:
     try:
         if type(generation) is not _EvidenceBoundGeneration:
             return False
-        verified = generation.verified
+        manifest = generation.manifest
         projection = generation.projection
         evidence = generation.evidence
         if (
             type(projection) is not CatalogProjection
+            or type(manifest) is not DatasetManifestV1
             or type(generation.cursor_codec) is not CursorCodecV1
             or type(evidence) is not VerifiedCatalogCoreEvidenceV1
             or type(evidence.verification_version) is not int
@@ -1819,51 +1968,6 @@ def _evidence_binding_is_current(generation: _EvidenceBoundGeneration) -> bool:
         ):
             return False
         projection._assert_file_unchanged()
-        if type(verified) is VerifiedReconciledGenerationV1:
-            manifest = verified.generation.dataset_manifest
-            source_records = verified.generation.records
-            parts = verified.generation.source_manifest.parts
-            if type(parts) is not tuple or len(parts) != 2:
-                return False
-            binding = (
-                parts[0].shop_domain,
-                verified.summary_sha256,
-                manifest.dataset_generation,
-                manifest.catalog_content_sha256,
-                projection._file_fingerprint.content_sha256,
-                generation.binding[5],
-            )
-            source_is_current = (
-                parts[1].shop_domain == binding[0]
-                and parts[1].source_code_sha == parts[0].source_code_sha
-                and type(parts[0].source_code_sha) is str
-                and _CODE_SHA_RE.fullmatch(parts[0].source_code_sha) is not None
-            )
-        elif type(verified) is VerifiedStagingGenerationV1:
-            portable_projection = verified.projection
-            manifest = portable_projection.manifest
-            source_records = verified.records
-            binding = (
-                verified.evidence.shop_domain,
-                verified.evidence.summary_sha256,
-                manifest.dataset_generation,
-                manifest.catalog_content_sha256,
-                projection._file_fingerprint.content_sha256,
-                verified.evidence.code_sha,
-            )
-            source_is_current = (
-                type(verified.manifest_sha256) is str
-                and _SHA256_RE.fullmatch(verified.manifest_sha256) is not None
-                and type(portable_projection) is CatalogProjection
-                and type(source_records) is tuple
-                and verified.evidence is evidence
-                and source_records is generation.records
-                and portable_projection.path == projection.path
-                and portable_projection.manifest == projection.manifest
-                and portable_projection._file_fingerprint == projection._file_fingerprint
-            )
-        else:
-            return False
         evidence_binding = (
             evidence.shop_domain,
             evidence.summary_sha256,
@@ -1873,12 +1977,13 @@ def _evidence_binding_is_current(generation: _EvidenceBoundGeneration) -> bool:
             evidence.code_sha,
         )
         return (
-            generation.binding == binding == evidence_binding
-            and source_is_current
-            and source_records is generation.records
-            and projection.dataset_generation == binding[2]
+            generation.binding == evidence_binding
+            and projection.dataset_generation == evidence.dataset_generation
+            and projection._file_fingerprint.content_sha256 == evidence.projection_fingerprint
+            and manifest.dataset_generation == evidence.dataset_generation
+            and manifest.catalog_content_sha256 == evidence.catalog_content_sha256
             and projection.manifest == manifest
-            and generation.paginator._activation.active_generation == binding[2]
+            and generation.paginator._activation.active_generation == evidence.dataset_generation
         )
     except Exception:
         return False

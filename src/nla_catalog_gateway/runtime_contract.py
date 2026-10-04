@@ -24,6 +24,7 @@ from nla_catalog_gateway.bulk import (
     SourceSnapshotEvidence,
     SourceSnapshotManifest,
 )
+from nla_catalog_gateway.card_metadata import CardMetadataV1, optional_card_metadata
 from nla_catalog_gateway.taxonomy import Classification, Game, ProductFamily
 
 CONTRACT_VERSION = 1
@@ -349,6 +350,13 @@ def _source_identifier(value: Any, context: str) -> str | None:
     if text is not None and _POSITIVE_DECIMAL_RE.fullmatch(text) is None:
         raise _fail(f"{context} must be canonical positive decimal text")
     return text
+
+
+def _optional_card_metadata(value: dict[str, Any]) -> CardMetadataV1 | None:
+    try:
+        return optional_card_metadata(value)
+    except ValueError as exc:
+        raise _fail("card metadata is invalid") from exc
 
 
 def _validated_timestamp(value: Any, context: str) -> tuple[str, re.Match[str], datetime]:
@@ -694,6 +702,7 @@ class CatalogProductRecordV1(_JsonDto):
     subtype_reason: str | None
     variants: tuple[CatalogVariantRecordV1, ...]
     contract_version: int = CONTRACT_VERSION
+    card_metadata: CardMetadataV1 | None = None
 
     FIELDS = frozenset(
         {
@@ -742,6 +751,12 @@ class CatalogProductRecordV1(_JsonDto):
             raise _fail("game must be canonical")
         if type(self.product_family) is not ProductFamily:
             raise _fail("productFamily must be a persisted taxonomy family")
+        if self.card_metadata is not None and (
+            type(self.card_metadata) is not CardMetadataV1
+            or self.product_family is not ProductFamily.SINGLE
+            or self.sync_source_id is None
+        ):
+            raise _fail("card metadata requires a source-identified single")
         _nullable_subtype(self.product_subtype, "productSubtype")
         _rule_version(self.classification_rule_version, "classificationRuleVersion")
         _nullable_rule_id(self.classification_rule_id, "classificationRuleId")
@@ -822,6 +837,7 @@ class CatalogProductRecordV1(_JsonDto):
         tracks_inventory: bool,
         updated_at: str,
         variants: tuple[CatalogVariantRecordV1, ...],
+        card_metadata: CardMetadataV1 | None = None,
     ) -> Self:
         if type(classification) is not Classification:
             raise _fail("classification must be a taxonomy Classification")
@@ -846,11 +862,13 @@ class CatalogProductRecordV1(_JsonDto):
             subtype_rule_id=classification.subtype_rule_id,
             subtype_reason=classification.subtype_reason,
             variants=variants,
+            card_metadata=card_metadata,
         )
 
     def as_dict(self) -> dict[str, Any]:
         return {
             "canonicalCardName": self.canonical_card_name,
+            **({"cardMetadata": self.card_metadata.as_dict()} if self.card_metadata else {}),
             "classificationRuleId": self.classification_rule_id,
             "classificationRuleVersion": self.classification_rule_version,
             "commercialTitle": self.commercial_title,
@@ -877,7 +895,8 @@ class CatalogProductRecordV1(_JsonDto):
     def from_dict(cls, value: dict[str, Any]) -> Self:
         if type(value) is not dict:
             raise _fail("catalog product record must be an object")
-        _exact_keys(value, cls.FIELDS, "catalog product record")
+        fields = cls.FIELDS | ({"cardMetadata"} if "cardMetadata" in value else set())
+        _exact_keys(value, fields, "catalog product record")
         raw_variants = value["variants"]
         if type(raw_variants) is not list:
             raise _fail("variants must be an array")
@@ -912,6 +931,7 @@ class CatalogProductRecordV1(_JsonDto):
             subtype_rule_id=_nullable_rule_id(value["subtypeRuleId"], "subtypeRuleId"),
             subtype_reason=_nullable_reason(value["subtypeReason"], "subtypeReason"),
             variants=tuple(CatalogVariantRecordV1.from_dict(item) for item in raw_variants),
+            card_metadata=_optional_card_metadata(value),
         )
 
 
@@ -928,6 +948,7 @@ class CatalogItemV1(_JsonDto):
     product_subtype: str | None
     variants: tuple[CatalogVariantItemV1, ...]
     contract_version: int = CONTRACT_VERSION
+    card_metadata: CardMetadataV1 | None = None
 
     FIELDS = frozenset(
         {
@@ -956,6 +977,11 @@ class CatalogItemV1(_JsonDto):
             raise _fail("catalog item productFamily must be canonical ProductFamily")
         if self.product_family is ProductFamily.UNCLASSIFIED:
             raise _fail("public catalog item must have a classified productFamily")
+        if self.card_metadata is not None and (
+            type(self.card_metadata) is not CardMetadataV1
+            or self.product_family is not ProductFamily.SINGLE
+        ):
+            raise _fail("public card metadata requires a single")
         _nullable_subtype(self.product_subtype, "productSubtype")
         if self.product_family is not ProductFamily.SEALED and self.product_subtype is not None:
             raise _fail("only sealed public items may carry productSubtype")
@@ -994,11 +1020,13 @@ class CatalogItemV1(_JsonDto):
             variants=tuple(
                 CatalogVariantItemV1.from_variant_record(variant) for variant in record.variants
             ),
+            card_metadata=record.card_metadata,
         )
 
     def as_dict(self) -> dict[str, Any]:
         return {
             "canonicalCardName": self.canonical_card_name,
+            **({"cardMetadata": self.card_metadata.as_dict()} if self.card_metadata else {}),
             "commercialTitle": self.commercial_title,
             "contractVersion": self.contract_version,
             "game": self.game.value,
@@ -1013,7 +1041,8 @@ class CatalogItemV1(_JsonDto):
     def from_dict(cls, value: dict[str, Any]) -> Self:
         if type(value) is not dict:
             raise _fail("catalog item must be an object")
-        _exact_keys(value, cls.FIELDS, "catalog item")
+        fields = cls.FIELDS | ({"cardMetadata"} if "cardMetadata" in value else set())
+        _exact_keys(value, fields, "catalog item")
         raw_variants = value["variants"]
         if type(raw_variants) is not list:
             raise _fail("catalog item variants must be an array")
@@ -1029,6 +1058,7 @@ class CatalogItemV1(_JsonDto):
             product_family=_enum(ProductFamily, value["productFamily"], "productFamily"),
             product_subtype=_nullable_subtype(value["productSubtype"], "productSubtype"),
             variants=tuple(CatalogVariantItemV1.from_dict(item) for item in raw_variants),
+            card_metadata=_optional_card_metadata(value),
         )
 
 
@@ -1613,6 +1643,67 @@ def _count_tuple_from_dict(
 
 
 @dataclass(frozen=True, slots=True)
+class IncrementalLineageV1:
+    """Event-derived provenance; snapshot fields still identify the base export."""
+
+    base_dataset_generation: str
+    parent_dataset_generation: str
+    shop_domain: str
+    source_cut_at: str
+    event_count: int
+    event_lineage_sha256: str
+
+    FIELDS = frozenset(
+        {
+            "baseDatasetGeneration",
+            "parentDatasetGeneration",
+            "shopDomain",
+            "sourceCutAt",
+            "eventCount",
+            "eventLineageSha256",
+            "syncContractVersion",
+        }
+    )
+
+    def __post_init__(self) -> None:
+        _generation(self.base_dataset_generation, "incremental base generation")
+        _generation(self.parent_dataset_generation, "incremental parent generation")
+        shop = _string(self.shop_domain, "incremental shop")
+        if re.fullmatch(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.myshopify\.com", shop) is None:
+            raise _fail("incremental shop is invalid")
+        _timestamp(self.source_cut_at, "incremental source cut")
+        _positive_integer(self.event_count, "incremental event count")
+        _sha256(self.event_lineage_sha256, "incremental lineage")
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "baseDatasetGeneration": self.base_dataset_generation,
+            "parentDatasetGeneration": self.parent_dataset_generation,
+            "shopDomain": self.shop_domain,
+            "sourceCutAt": self.source_cut_at,
+            "eventCount": self.event_count,
+            "eventLineageSha256": self.event_lineage_sha256,
+            "syncContractVersion": 1,
+        }
+
+    @classmethod
+    def from_dict(cls, value: dict[str, Any]) -> Self:
+        if type(value) is not dict:
+            raise _fail("incremental lineage must be an object")
+        _exact_keys(value, cls.FIELDS, "incremental lineage")
+        if type(value["syncContractVersion"]) is not int or value["syncContractVersion"] != 1:
+            raise _fail("incremental lineage version is invalid")
+        return cls(
+            base_dataset_generation=value["baseDatasetGeneration"],
+            parent_dataset_generation=value["parentDatasetGeneration"],
+            shop_domain=value["shopDomain"],
+            source_cut_at=value["sourceCutAt"],
+            event_count=value["eventCount"],
+            event_lineage_sha256=value["eventLineageSha256"],
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class DatasetManifestV1(_JsonDto):
     source_snapshot_manifest_schema_version: int
     source_snapshot_manifest_sha256: str
@@ -1643,6 +1734,7 @@ class DatasetManifestV1(_JsonDto):
     public_item_count: int
     capability_matrix: CapabilityMatrixV1 = DEFAULT_CAPABILITIES_V1
     contract_version: int = CONTRACT_VERSION
+    incremental_lineage: IncrementalLineageV1 | None = None
 
     FIELDS = frozenset(
         {
@@ -1679,6 +1771,15 @@ class DatasetManifestV1(_JsonDto):
     )
 
     def __post_init__(self) -> None:
+        if self.incremental_lineage is not None:
+            if type(self.incremental_lineage) is not IncrementalLineageV1:
+                raise _fail("incremental lineage is invalid")
+            IncrementalLineageV1.from_dict(self.incremental_lineage.as_dict())
+            if (
+                _expiry_order_key(self.incremental_lineage.source_cut_at, "source cut")[1:]
+                > (_expiry_order_key(self.generated_at, "generatedAt")[1:])
+            ):
+                raise _fail("incremental source cut exceeds generation time")
         if type(self.contract_version) is not int or self.contract_version != CONTRACT_VERSION:
             raise _fail("dataset manifest contractVersion must be 1")
         if (
@@ -1840,6 +1941,14 @@ class DatasetManifestV1(_JsonDto):
             raise _fail(f"source {context} count must equal included plus excluded")
 
     def generation_descriptor(self) -> dict[str, Any]:
+        if self.incremental_lineage is not None:
+            return {
+                **self.incremental_lineage.as_dict(),
+                "catalogContentSha256": self.catalog_content_sha256,
+                "contractVersion": CONTRACT_VERSION,
+                "domain": "nla-catalog-incremental-generation-v1",
+                "taxonomyRuleVersion": self.taxonomy_rule_version,
+            }
         return {
             "catalogContentSha256": self.catalog_content_sha256,
             "contractVersion": CONTRACT_VERSION,
@@ -1858,6 +1967,11 @@ class DatasetManifestV1(_JsonDto):
     def as_dict(self) -> dict[str, Any]:
         return {
             "capabilityMatrix": self.capability_matrix.as_dict(),
+            **(
+                {"incrementalLineage": self.incremental_lineage.as_dict()}
+                if self.incremental_lineage is not None
+                else {}
+            ),
             "catalogContentSha256": self.catalog_content_sha256,
             "classifiedProductCount": self.classified_product_count,
             "contractVersion": self.contract_version,
@@ -1898,10 +2012,18 @@ class DatasetManifestV1(_JsonDto):
     def from_dict(cls, value: dict[str, Any]) -> Self:
         if type(value) is not dict:
             raise _fail("dataset manifest must be an object")
-        _exact_keys(value, cls.FIELDS, "dataset manifest")
+        incremental = "incrementalLineage" in value
+        _exact_keys(
+            value,
+            cls.FIELDS | ({"incrementalLineage"} if incremental else set()),
+            "dataset manifest",
+        )
         statuses = tuple(PRODUCT_STATUSES)
         families = tuple(family.value for family in ProductFamily)
         kwargs: dict[str, Any] = {
+            "incremental_lineage": (
+                IncrementalLineageV1.from_dict(value["incrementalLineage"]) if incremental else None
+            ),
             "contract_version": _positive_integer(value["contractVersion"], "contractVersion"),
             "source_snapshot_manifest_schema_version": _positive_integer(
                 value["sourceSnapshotManifestSchemaVersion"],

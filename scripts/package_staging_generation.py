@@ -14,7 +14,7 @@ from pathlib import Path
 
 from nla_catalog_gateway.core_evidence import _report_bytes, _verify_with_measurements
 from nla_catalog_gateway.generation_bundle import open_reconciled_generation
-from nla_catalog_gateway.pagination import CatalogProjection, build_catalog_projection
+from nla_catalog_gateway.pagination import CatalogProjection
 from nla_catalog_gateway.staging_generation import (
     ARTIFACT_FILENAMES,
     EVIDENCE_FILENAME,
@@ -25,6 +25,7 @@ from nla_catalog_gateway.staging_generation import (
     STAGING_PACKAGE_SCHEMA_VERSION,
     open_staging_generation,
 )
+from nla_catalog_gateway.sync import SyncCore
 
 _CONCRETE_PATH_TYPE = type(Path())
 _CODE_SHA_RE = re.compile(r"[0-9a-f]{40}\Z")
@@ -203,8 +204,10 @@ def run_packaging(
     expected_summary_sha256: str,
     code_sha: str,
     package_directory: Path,
+    *,
+    incremental_core: SyncCore | None = None,
 ) -> str:
-    """Prove, rebuild, package, and locally reopen one selected generation."""
+    """Build once, prove, package those exact bytes, and locally reopen them."""
 
     destination = _validated_destination(package_directory, bundle_directory)
     if type(code_sha) is not str or _CODE_SHA_RE.fullmatch(code_sha) is None:
@@ -214,23 +217,22 @@ def run_packaging(
     published = False
     completed = False
     try:
-        proof_path = work / ".core-proof.sqlite3"
         projection_path = work / PROJECTION_FILENAME
         with open_reconciled_generation(
             bundle_directory, expected_summary_sha256
         ) as verified_generation:
+            options = {} if incremental_core is None else {"incremental_core": incremental_core}
             result = _verify_with_measurements(
                 verified_generation,
-                projection_path=proof_path,
+                projection_path=projection_path,
                 code_sha=code_sha,
+                retain_projection=True,
+                **options,
             )
-            projection = build_catalog_projection(
-                projection_path,
-                manifest=verified_generation.generation.dataset_manifest,
-                records=verified_generation.generation.records,
-            )
+            projection = result.projection
             if (
                 type(projection) is not CatalogProjection
+                or projection.path != projection_path
                 or projection._file_fingerprint.content_sha256
                 != result.evidence.projection_fingerprint
             ):

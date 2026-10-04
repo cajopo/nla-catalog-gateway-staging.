@@ -577,6 +577,8 @@ def test_sqlite_progress_checkpoint_returns_continue_on_success(
     assert progress_results == [0]
 
 
+# Execute the full scale proof; small cases retain the 100% coverage gate.
+@pytest.mark.no_cover
 def test_complete_traversal_over_30000_products_has_no_gap_or_duplicate(
     tmp_path: Path,
 ) -> None:

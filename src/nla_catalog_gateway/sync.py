@@ -27,6 +27,7 @@ from nla_catalog_gateway.runtime_contract import (
     CONTRACT_VERSION,
     CatalogProductRecordV1,
     DatasetManifestV1,
+    IncrementalLineageV1,
     ProductStatus,
 )
 from nla_catalog_gateway.taxonomy import ClassificationReport, ProductFamily
@@ -1535,6 +1536,63 @@ class SyncCore:
         with self._lock:
             generation = self._pair.active.generation
         return _generation_view(generation)
+
+    def publication_snapshot(
+        self, expected_base: DatasetManifestV1
+    ) -> tuple[GenerationView, DatasetManifestV1]:
+        """Freeze one validated event-derived view and its honest SQL manifest.
+
+        Snapshot digests identify the unchanged base export. Counts describe the
+        derived catalog (including the base's unchanged excluded population), not
+        a newly acquired full Shopify snapshot. Publication must recheck this view.
+        """
+        base = _copy_manifest(expected_base)
+        with self._lock:
+            generation = self._pair.active.generation
+        _validate_generation(generation)
+        if generation.base_manifest != base or generation.applied_event_count == 0:
+            raise _error("incremental publication base or state is invalid")
+        view = _generation_view(generation)
+        included_published = sum(record.publishable for record in view.records)
+        excluded_statuses = dict(base.excluded_product_status_counts)
+        unclassified = dict(view.product_family_counts)[ProductFamily.UNCLASSIFIED.value]
+        manifest = replace(
+            base,
+            incremental_lineage=IncrementalLineageV1(
+                view.base_dataset_generation,
+                view.parent_dataset_generation,
+                view.shop_domain,
+                view.source_cut_at,
+                view.applied_event_count,
+                view.event_lineage_sha256,
+            ),
+            dataset_generation=view.dataset_generation,
+            catalog_content_sha256=view.catalog_content_sha256,
+            generated_at=view.built_at,
+            source_product_count=view.product_count + base.excluded_product_count,
+            included_product_count=view.product_count,
+            source_product_status_counts=tuple(
+                (status, count + excluded_statuses[status])
+                for status, count in view.product_status_counts
+            ),
+            included_product_status_counts=view.product_status_counts,
+            classified_product_count=view.product_count - unclassified,
+            unclassified_product_count=unclassified,
+            product_family_counts=view.product_family_counts,
+            source_variant_count=view.variant_count + base.excluded_variant_count,
+            included_variant_count=view.variant_count,
+            source_identity_product_count=(
+                view.source_identity_product_count + base.excluded_source_identity_product_count
+            ),
+            included_source_identity_product_count=view.source_identity_product_count,
+            source_active_online_store_published_product_count=(
+                included_published + base.excluded_active_online_store_published_product_count
+            ),
+            included_active_online_store_published_product_count=included_published,
+            public_item_count=view.public_item_count,
+        )
+        manifest.validate_records(view.records)
+        return view, manifest
 
     def previous_dataset(self) -> GenerationView | None:
         with self._lock:

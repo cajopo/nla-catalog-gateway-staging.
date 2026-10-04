@@ -1,8 +1,25 @@
 # NLA catalog gateway — execution roadmap
 
+## Current next step — 2026-09-18 (#89)
+
+After merged native Linux reconciliation #88 (`9fe7358`), deliver one minimal Bulk
+acquisition command producing a verified candidate with the existing core. No
+new scheduler/service or automatic publication. Read
+`workstreams/ws-07-vps-bulk-acquisition.md`. Real Shopify installation/auth, current
+canonical inputs, incremental/scheduled sync, persistent activation/restart and
+actual proxy/theme E2E remain outstanding; the full goal is unchanged.
+
 ## Current goal overlay — 2026-09-15
 
-Current work is #14 / draft PR #64 (`agent/theme-clone-integration`) on green runtime #63: connect the
+Current action: #67 / `agent/staging-single-build` on #66 (`fbe3cfc`). Package the exact
+core-verified projection with one build, preserving every gate. This is a bounded
+audit simplification, not a rewrite. See `ws-09c-single-build-package.md`.
+
+Previous action: #65 / `agent/source-card-codes` on #64. Recovered source CSVs remove
+the source-location blocker. Carry collector metadata through the existing verified
+join and SQL/API path; see `ws-01h-card-metadata.md`. Full goal stays unchanged.
+
+Previous slice is #14 / draft PR #64 (`agent/theme-clone-integration`) on green runtime #63: connect the
 customer-facing path with a reusable game-scoped search/page component. Local UI/browser
 fixtures are not a clone installation or real E2E. Read `ws-10-theme-clone.md` before any
 upload; locale fragments must be merged, never replace the existing translations wholesale.
