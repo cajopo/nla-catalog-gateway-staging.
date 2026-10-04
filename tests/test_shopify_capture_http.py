@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import http.client
 import io
+import itertools
 import json
 import socket
 import ssl
@@ -148,6 +149,20 @@ def test_oauth_and_graphql_construct_exact_requests_and_cache_token(boundary):
     assert len(boundary.calls) == 3
 
 
+@pytest.mark.parametrize(
+    "scopes",
+    [
+        ",".join(f"{mode}_{resource}" for mode, resource in zip(modes, resources, strict=True))
+        for resources in [("products", "inventory", "locations")]
+        for modes in itertools.product(("read", "write"), repeat=3)
+    ],
+)
+def test_write_scopes_also_grant_corresponding_reads(boundary, scopes):
+    boundary.responses = [_token(scope=scopes), _json({"data": {"ok": True}})]
+    assert _client().graphql(QUERY, {}) == {"ok": True}
+    assert len(boundary.calls) == 2
+
+
 def test_proxy_and_redirect_handlers_are_fail_closed(boundary, monkeypatch):
     monkeypatch.setenv("HTTPS_PROXY", "http://synthetic-proxy.invalid:1234")
     _client()
@@ -223,6 +238,9 @@ def test_invalid_configuration_is_rejected_without_network(boundary, changes):
         {"scope": "read_products,read_locations"},
         {"scope": "read_inventory,read_locations"},
         {"scope": "read_products_extra,read_inventory,read_locations"},
+        {"scope": "write_products_extra,read_inventory,read_locations"},
+        {"scope": "write_publications,read_inventory,read_locations"},
+        {"scope": "write_products,read_inventory"},
         {"scope": ["read_products", "read_inventory", "read_locations"]},
         {"access_token": ""},
         {"access_token": ACCESS + "\r\nInjected: value"},

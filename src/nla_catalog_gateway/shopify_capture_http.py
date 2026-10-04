@@ -215,7 +215,13 @@ class ShopifyCaptureHttp:
             or type(expires) is not int
             or expires <= 0
             or not isinstance(scope, str)
-            or not _REQUIRED_SCOPES.issubset({item.strip() for item in scope.split(",")})
+            # Shopify write scopes include the corresponding read permission and
+            # may replace it in the OAuth response (manage-access-scopes docs).
+            or not all(
+                {required, required.replace("read_", "write_", 1)}
+                & {item.strip() for item in scope.split(",")}
+                for required in _REQUIRED_SCOPES
+            )
         ):
             raise ValueError("invalid OAuth response")
         self._refresh_at = started + expires - min(60, expires / 10)
