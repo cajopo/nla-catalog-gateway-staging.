@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from time import perf_counter
 from typing import Any
 
 import pytest
@@ -11,6 +12,7 @@ from nla_catalog_gateway.facets import (
     FacetDimension,
     FacetEvaluation,
     FacetValueCount,
+    PreparedFacetCatalog,
     evaluate_facets,
     has_positive_inventory,
     inventory_fact_label,
@@ -332,6 +334,39 @@ def test_subtype_facet_returns_every_value_including_rare_beyond_top_100() -> No
     assert result.result_count == 1
 
 
+def test_prepared_catalog_reuses_validation_for_over_30k_high_cardinality_items(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    catalog = tuple(
+        _item(
+            index,
+            family=ProductFamily.SEALED,
+            subtype=f"type-{index % 105:03d}",
+            inventory=index % 2,
+        )
+        for index in range(1, 30_002)
+    )
+    prepared = PreparedFacetCatalog(catalog)
+
+    def forbidden_revalidation(_item: CatalogItemV1) -> CatalogItemV1:
+        raise AssertionError("prepared requests must not rebuild the validated item graph")
+
+    monkeypatch.setattr(facets, "_validated_item", forbidden_revalidation)
+    started = perf_counter()
+    result = prepared.evaluate(
+        _request(
+            family=RequestFamily.SEALED,
+            in_stock=True,
+            subtype="type-104",
+        )
+    )
+    elapsed = perf_counter() - started
+
+    assert result.result_count == 142
+    assert len(result.facet(FacetDimension.PRODUCT_SUBTYPE).values) == 105
+    assert elapsed < 2.0
+
+
 def test_query_scope_is_explicit_empty_safe_and_cross_game_fail_closed() -> None:
     catalog = _catalog()
     request = _request(query="resolved elsewhere", in_stock=True)
@@ -463,6 +498,94 @@ def test_oracle_uses_decoded_copies_not_forged_nested_runtime_objects() -> None:
     normalized = evaluate_facets((benign_item,), _request())
     assert not has_positive_inventory(normalized.items[0])
     assert type(normalized.items[0].variants[0]) is CatalogVariantItemV1
+
+
+def test_optional_checkpoint_preserves_results_and_has_deterministic_calls() -> None:
+    catalog = _catalog()
+    request = _request(family=RequestFamily.SEALED, in_stock=False, subtype="booster-box")
+    expected = evaluate_facets(catalog, request)
+    call_counts = []
+
+    for _ in range(2):
+        calls = 0
+
+        def checkpoint() -> None:
+            nonlocal calls
+            calls += 1
+
+        assert evaluate_facets(catalog, request, checkpoint=checkpoint) == expected
+        call_counts.append(calls)
+
+    assert call_counts[0] == call_counts[1]
+    assert call_counts[0] > len(catalog)
+
+
+def test_checkpoint_cancellation_propagates_unchanged_without_partial_result() -> None:
+    class RequestCancelled(Exception):
+        pass
+
+    cancellation = RequestCancelled()
+    calls = 0
+
+    def checkpoint() -> None:
+        nonlocal calls
+        calls += 1
+        if calls == 10:
+            raise cancellation
+
+    with pytest.raises(RequestCancelled) as captured:
+        evaluate_facets(_catalog(), _request(), checkpoint=checkpoint)
+
+    assert captured.value is cancellation
+    assert calls == 10
+
+
+def test_prepared_item_sort_checkpoint_propagates_cancellation_unchanged() -> None:
+    catalog = _catalog()
+    cancellation = RuntimeError("request cancelled")
+    calls = 0
+
+    def checkpoint() -> None:
+        nonlocal calls
+        calls += 1
+        if calls == 2 * len(catalog) + 2:
+            raise cancellation
+
+    with pytest.raises(RuntimeError, match="request cancelled") as captured:
+        PreparedFacetCatalog(catalog, checkpoint=checkpoint)
+    assert captured.value is cancellation
+    assert calls == 2 * len(catalog) + 2
+
+
+def test_query_scope_loop_is_cancellable_and_checkpoint_must_be_callable() -> None:
+    catalog = _catalog()
+    query_gids = tuple(item.product_gid for item in catalog if item.game is Game.MAGIC)
+
+    class RequestCancelled(Exception):
+        pass
+
+    calls = 0
+
+    def checkpoint() -> None:
+        nonlocal calls
+        calls += 1
+        if calls == len(catalog) + 3:
+            raise RequestCancelled
+
+    with pytest.raises(RequestCancelled):
+        evaluate_facets(
+            catalog,
+            _request(query="card"),
+            query_product_gids=query_gids,
+            checkpoint=checkpoint,
+        )
+    assert calls == len(catalog) + 3
+
+    with pytest.raises(FacetContractError, match="checkpoint must be callable"):
+        evaluate_facets(catalog, _request(), checkpoint=object())  # type: ignore[arg-type]
+    prepared = PreparedFacetCatalog(catalog)
+    with pytest.raises(FacetContractError, match="checkpoint must be callable"):
+        prepared.evaluate(_request(), checkpoint=object())  # type: ignore[arg-type]
 
 
 def test_inventory_and_price_labels_use_only_v1_facts() -> None:

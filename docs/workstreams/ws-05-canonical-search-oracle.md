@@ -3,10 +3,10 @@
 ## Scope and result
 
 This issue #9 slice is a framework-independent acceptance oracle over exact
-`CatalogProductRecordV1` inputs. It implements no SQL/index, HTTP/API endpoint, UI, facets,
-cursor, sync, deployment, Shopify call, or public wire-contract change. The runtime v1
-capability matrix remains unchanged: search and catalog output are not promoted by this
-synthetic work.
+`CatalogProductRecordV1` inputs plus a generation-scoped, prepared in-memory search index.
+It implements no SQL, HTTP/API endpoint, UI, facets, cursor, sync, deployment, Shopify call,
+or public wire-contract change. The runtime v1 capability matrix remains unchanged: search
+and catalog output are not promoted by this synthetic work.
 
 The oracle requires one canonical `Game`, considers only `single` Products in that game, and
 emits only `ACTIVE` plus Online-Store-published records. `canonical_card_name` is its sole
@@ -49,6 +49,31 @@ game filtering, so a future baseline proof need not partition away cross-game le
 Duplicate Product GIDs, non-v1 records, forged runtime records, invalid Unicode, or
 non-canonical game values fail closed.
 
+Both oracle entry points accept an optional keyword-only `checkpoint`. It is invoked before
+input validation, before each record handled by validation and selection, and throughout
+result ordering and materialization loops. A checkpoint return value has no meaning:
+cancellation is signalled only by raising the caller's runtime cancellation exception. The
+oracle neither catches nor translates that exception, so it propagates unchanged and no
+partial search result or coverage report is returned. With no checkpoint, call signatures
+and domain-error behavior remain backward compatible.
+
+## Prepared activation index
+
+`prepare_single_card_search(records)` validates and canonically copies the complete bounded
+Product tuple once, then retains only immutable storefront search fields in four isolated,
+sorted game indexes. A serving composition must build this concrete `SingleCardSearchIndex`
+once when a verified generation is activated, bind that exact index to the generation, and
+pass it to `search_single_cards` (or call its `search` method). Exact and prefix lookups start
+with a binary search; contains matching scans only the pre-normalized game index. Requests do
+not render or decode Product/Variant graphs, normalize catalog names, or sort the full game
+again. The original tuple call remains compatible as the reference/oracle path.
+
+Preparation and every potentially long request loop retain cooperative checkpoints. Invalid
+records, duplicate Product GIDs, unsupported names, a forged/uninitialized prepared index,
+an invalid game, or an over-bound query fail closed with value-free domain errors. The index
+is a detached snapshot: replacement of the source tuple after activation cannot alter its
+stored search fields.
+
 Every supplied Product is outer-validated, rendered to canonical v1 JSON, and decoded back
 through the complete runtime schema before it is searched or reported. Only the reconstructed
 Product graph is consumed. This makes nested Variant and selected-option validation part of
@@ -70,7 +95,9 @@ traps, availability counts, and missing-name reporting.
   counts;
 - recall, result distributions, latency, or ordering on the current Shopify baseline;
 - availability correctness beyond the explicit positive-`total_inventory` oracle rule;
-- a production search/index capability.
+- a production search/index capability. The synthetic regression proves only that one
+  worst-case contains request over 30,001 prepared records stays below the two-second request
+  budget on CI; index preparation is deliberately outside that request measurement.
 
 Those claims require the independently reviewed real-baseline reconciliation gate and a
 separate production implementation. Until then every relevant runtime capability remains

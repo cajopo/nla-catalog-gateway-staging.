@@ -1,14 +1,16 @@
-"""Synthetic acceptance oracle for deterministic single-card search.
+"""Deterministic single-card search semantics and prepared in-memory index.
 
-This module deliberately does not implement a production index, SQL, HTTP, pagination,
-or a public wire contract.  It consumes the frozen runtime v1 Product records so tests can
-prove the search semantics before any provisional capability is promoted.
+This module deliberately does not implement SQL, HTTP, pagination, or a public wire
+contract.  It consumes frozen runtime v1 Product records so callers can prepare one
+generation-scoped index without promoting any provisional capability.
 """
 
 from __future__ import annotations
 
 import unicodedata
-from dataclasses import dataclass
+from bisect import bisect_left
+from collections.abc import Callable
+from dataclasses import dataclass, field
 from enum import StrEnum
 
 from nla_catalog_gateway.runtime_contract import CatalogProductRecordV1
@@ -32,13 +34,6 @@ class MatchTier(StrEnum):
     EXACT = "exact"
     PREFIX = "prefix"
     CONTAINS = "contains"
-
-
-_TIER_ORDER = {
-    MatchTier.EXACT: 0,
-    MatchTier.PREFIX: 1,
-    MatchTier.CONTAINS: 2,
-}
 
 
 @dataclass(frozen=True, slots=True)
@@ -76,6 +71,52 @@ class SingleCardSearchResult:
     match_tier: MatchTier | None
     hits: tuple[SingleCardHit, ...]
     suggestions: tuple[SingleCardSuggestion, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class _IndexedSingleCard:
+    product_gid: str
+    canonical_card_name: str
+    normalized_card_name: str
+    product_gid_sort_key: tuple[int, str]
+    available: bool
+
+
+@dataclass(frozen=True, slots=True)
+class _GameSingleCardIndex:
+    game: Game
+    entries: tuple[_IndexedSingleCard, ...]
+    normalized_names: tuple[str, ...]
+
+
+_SEARCH_INDEX_SEAL = object()
+
+
+@dataclass(frozen=True, slots=True, init=False, repr=False)
+class SingleCardSearchIndex:
+    """Opaque, immutable search index prepared once for one catalog generation."""
+
+    _games: tuple[_GameSingleCardIndex, ...] = field(repr=False)
+    _seal: object = field(repr=False)
+
+    def __new__(cls, *_args: object, **_kwargs: object) -> SingleCardSearchIndex:
+        raise CanonicalSearchError("search index must be created from runtime v1 records")
+
+    def search(
+        self,
+        *,
+        game: Game,
+        query: str,
+        checkpoint: Callable[[], None] | None = None,
+    ) -> SingleCardSearchResult:
+        """Search this generation snapshot without touching Product graphs."""
+
+        return _search_prepared_index(
+            self,
+            game=game,
+            query=query,
+            checkpoint=checkpoint,
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -122,20 +163,62 @@ def normalize_search_text(value: str) -> str:
     return " ".join(unicodedata.normalize("NFKC", value).casefold().split())
 
 
-def search_single_cards(
+def prepare_single_card_search(
     records: tuple[CatalogProductRecordV1, ...],
+    *,
+    checkpoint: Callable[[], None] | None = None,
+) -> SingleCardSearchIndex:
+    """Validate one generation and prepare immutable game-scoped search indexes."""
+
+    if checkpoint is not None:
+        checkpoint()
+    checked_records = _validated_records(records, checkpoint=checkpoint)
+    game_indexes: list[_GameSingleCardIndex] = []
+    for game in Game:
+        if checkpoint is not None:
+            checkpoint()
+        game_indexes.append(
+            _build_game_index(
+                checked_records,
+                game=game,
+                checkpoint=checkpoint,
+            )
+        )
+    index = object.__new__(SingleCardSearchIndex)
+    object.__setattr__(index, "_games", tuple(game_indexes))
+    object.__setattr__(index, "_seal", _SEARCH_INDEX_SEAL)
+    return index
+
+
+def search_single_cards(
+    records: tuple[CatalogProductRecordV1, ...] | SingleCardSearchIndex,
     *,
     game: Game,
     query: str,
+    checkpoint: Callable[[], None] | None = None,
 ) -> SingleCardSearchResult:
     """Search publishable singles in exactly one game using canonical names only.
 
     The strongest tier present wins globally: exact suppresses prefix and contains, while
     prefix suppresses contains.  Every Product in that tier is returned in normalized-name
-    then unbounded-decimal Product-GID order.
+    then unbounded-decimal Product-GID order.  A checkpoint may cancel by raising; its return
+    value is ignored and its exception propagates unchanged, without a partial result.
+
+    Existing tuple callers remain supported.  Serving callers should instead pass the
+    concrete index returned by :func:`prepare_single_card_search`, prepared once when the
+    verified catalog generation is activated.
     """
 
-    checked_records = _validated_records(records)
+    if type(records) is SingleCardSearchIndex:
+        return _search_prepared_index(
+            records,
+            game=game,
+            query=query,
+            checkpoint=checkpoint,
+        )
+    if checkpoint is not None:
+        checkpoint()
+    checked_records = _validated_records(records, checkpoint=checkpoint)
     checked_game = _validated_game(game)
     normalized_query = _bounded_normalize(
         query,
@@ -152,10 +235,29 @@ def search_single_cards(
             suggestions=(),
         )
 
-    candidates: list[tuple[MatchTier, str, tuple[int, str], CatalogProductRecordV1]] = []
-    for record in checked_records:
+    return _search_game_index(
+        _build_game_index(
+            checked_records,
+            game=checked_game,
+            checkpoint=checkpoint,
+        ),
+        normalized_query=normalized_query,
+        checkpoint=checkpoint,
+    )
+
+
+def _build_game_index(
+    records: tuple[CatalogProductRecordV1, ...],
+    *,
+    game: Game,
+    checkpoint: Callable[[], None] | None,
+) -> _GameSingleCardIndex:
+    entries: list[_IndexedSingleCard] = []
+    for record in records:
+        if checkpoint is not None:
+            checkpoint()
         if (
-            record.game is not checked_game
+            record.game is not game
             or record.product_family is not ProductFamily.SINGLE
             or not record.publishable
         ):
@@ -163,49 +265,166 @@ def search_single_cards(
         canonical_name = record.canonical_card_name
         if canonical_name is None:
             raise CanonicalSearchError("publishable single is missing its canonical card name")
-        normalized_name = _bounded_normalize(
-            canonical_name,
-            context="canonical card name",
-            maximum=MAX_CANONICAL_NAME_CODEPOINTS,
-        )
-        tier = _match_tier(normalized_name, normalized_query)
-        if tier is not None:
-            candidates.append(
-                (tier, normalized_name, _product_gid_sort_key(record.product_gid), record)
+        entries.append(
+            _IndexedSingleCard(
+                product_gid=record.product_gid,
+                canonical_card_name=canonical_name,
+                normalized_card_name=_bounded_normalize(
+                    canonical_name,
+                    context="canonical card name",
+                    maximum=MAX_CANONICAL_NAME_CODEPOINTS,
+                ),
+                product_gid_sort_key=_product_gid_sort_key(record.product_gid),
+                available=record.total_inventory > 0,
             )
+        )
 
-    if not candidates:
+    if checkpoint is None:
+        entries.sort(key=lambda entry: (entry.normalized_card_name, entry.product_gid_sort_key))
+    else:
+
+        def checkpointed_sort_key(
+            entry: _IndexedSingleCard,
+        ) -> tuple[str, tuple[int, str]]:
+            checkpoint()
+            return entry.normalized_card_name, entry.product_gid_sort_key
+
+        entries.sort(key=checkpointed_sort_key)
+
+    normalized_names: list[str] = []
+    for entry in entries:
+        if checkpoint is not None:
+            checkpoint()
+        normalized_names.append(entry.normalized_card_name)
+    return _GameSingleCardIndex(
+        game=game,
+        entries=tuple(entries),
+        normalized_names=tuple(normalized_names),
+    )
+
+
+def _search_prepared_index(
+    index: SingleCardSearchIndex,
+    *,
+    game: Game,
+    query: str,
+    checkpoint: Callable[[], None] | None,
+) -> SingleCardSearchResult:
+    if checkpoint is not None:
+        checkpoint()
+    try:
+        game_indexes = index._games
+        seal = index._seal
+    except (AttributeError, TypeError):
+        invalid_index = True
+    else:
+        invalid_index = (
+            type(index) is not SingleCardSearchIndex
+            or seal is not _SEARCH_INDEX_SEAL
+            or type(game_indexes) is not tuple
+            or len(game_indexes) != len(Game)
+        )
+    if invalid_index:
+        raise CanonicalSearchError("prepared search index is invalid")
+
+    checked_game = _validated_game(game)
+    normalized_query = _bounded_normalize(
+        query,
+        context="query",
+        maximum=MAX_QUERY_CODEPOINTS,
+    )
+    for expected_game, game_index in zip(Game, game_indexes, strict=True):
+        if checkpoint is not None:
+            checkpoint()
+        if type(game_index) is not _GameSingleCardIndex or game_index.game is not expected_game:
+            raise CanonicalSearchError("prepared search index is invalid")
+    if not normalized_query:
+        return SingleCardSearchResult(
+            mode=SearchMode.BROWSE,
+            game=checked_game,
+            normalized_query="",
+            match_tier=None,
+            hits=(),
+            suggestions=(),
+        )
+
+    selected_game_index = game_indexes[tuple(Game).index(checked_game)]
+    return _search_game_index(
+        selected_game_index,
+        normalized_query=normalized_query,
+        checkpoint=checkpoint,
+    )
+
+
+def _search_game_index(
+    index: _GameSingleCardIndex,
+    *,
+    normalized_query: str,
+    checkpoint: Callable[[], None] | None,
+) -> SingleCardSearchResult:
+    start = bisect_left(index.normalized_names, normalized_query)
+    selected: list[_IndexedSingleCard] = []
+    selected_tier: MatchTier | None = None
+
+    if start < len(index.normalized_names) and index.normalized_names[start] == normalized_query:
+        selected_tier = MatchTier.EXACT
+        for position in range(start, len(index.entries)):
+            if checkpoint is not None:
+                checkpoint()
+            if index.normalized_names[position] != normalized_query:
+                break
+            selected.append(index.entries[position])
+    else:
+        for position in range(start, len(index.entries)):
+            if checkpoint is not None:
+                checkpoint()
+            if not index.normalized_names[position].startswith(normalized_query):
+                break
+            selected.append(index.entries[position])
+        if selected:
+            selected_tier = MatchTier.PREFIX
+        else:
+            for entry in index.entries:
+                if checkpoint is not None:
+                    checkpoint()
+                if normalized_query in entry.normalized_card_name:
+                    selected.append(entry)
+            if selected:
+                selected_tier = MatchTier.CONTAINS
+
+    if checkpoint is not None:
+        checkpoint()
+    if selected_tier is None:
         return SingleCardSearchResult(
             mode=SearchMode.SEARCH,
-            game=checked_game,
+            game=index.game,
             normalized_query=normalized_query,
             match_tier=None,
             hits=(),
             suggestions=(),
         )
 
-    selected_tier = min(candidates, key=lambda candidate: _TIER_ORDER[candidate[0]])[0]
-    selected = sorted(
-        (candidate for candidate in candidates if candidate[0] is selected_tier),
-        key=lambda candidate: (candidate[1], candidate[2]),
-    )
-    hits = tuple(
-        SingleCardHit(
-            product_gid=record.product_gid,
-            canonical_card_name=record.canonical_card_name,
-            normalized_card_name=normalized_name,
-            match_tier=tier,
-            available=record.total_inventory > 0,
+    hits_list: list[SingleCardHit] = []
+    for entry in selected:
+        if checkpoint is not None:
+            checkpoint()
+        hits_list.append(
+            SingleCardHit(
+                product_gid=entry.product_gid,
+                canonical_card_name=entry.canonical_card_name,
+                normalized_card_name=entry.normalized_card_name,
+                match_tier=selected_tier,
+                available=entry.available,
+            )
         )
-        for tier, normalized_name, _gid_key, record in selected
-    )
+    hits = tuple(hits_list)
     return SingleCardSearchResult(
         mode=SearchMode.SEARCH,
-        game=checked_game,
+        game=index.game,
         normalized_query=normalized_query,
         match_tier=selected_tier,
         hits=hits,
-        suggestions=_group_suggestions(hits),
+        suggestions=_group_suggestions(hits, checkpoint=checkpoint),
     )
 
 
@@ -213,34 +432,58 @@ def report_missing_canonical_names(
     records: tuple[CatalogProductRecordV1, ...],
     *,
     game: Game,
+    checkpoint: Callable[[], None] | None = None,
 ) -> CanonicalNameReport:
-    """Account for classified singles with no canonical name in one mandatory game."""
+    """Account for classified singles with no canonical name in one mandatory game.
 
-    checked_records = _validated_records(records)
+    A checkpoint may cancel by raising; its return value is ignored and its exception
+    propagates unchanged, without a partial report.
+    """
+
+    if checkpoint is not None:
+        checkpoint()
+    checked_records = _validated_records(records, checkpoint=checkpoint)
     checked_game = _validated_game(game)
-    scoped = tuple(
-        record
-        for record in checked_records
-        if record.game is checked_game and record.product_family is ProductFamily.SINGLE
-    )
-    missing = tuple(
-        MissingCanonicalName(
-            product_gid=record.product_gid,
-            game=checked_game,
-            publishable=record.publishable,
-        )
-        for record in sorted(scoped, key=lambda item: _product_gid_sort_key(item.product_gid))
-        if record.canonical_card_name is None
-    )
+    scoped: list[CatalogProductRecordV1] = []
+    for record in checked_records:
+        if checkpoint is not None:
+            checkpoint()
+        if record.game is checked_game and record.product_family is ProductFamily.SINGLE:
+            scoped.append(record)
+
+    if checkpoint is None:
+        scoped.sort(key=lambda item: _product_gid_sort_key(item.product_gid))
+    else:
+
+        def checkpointed_sort_key(item: CatalogProductRecordV1) -> tuple[int, str]:
+            checkpoint()
+            return _product_gid_sort_key(item.product_gid)
+
+        scoped.sort(key=checkpointed_sort_key)
+
+    missing_items: list[MissingCanonicalName] = []
+    for record in scoped:
+        if checkpoint is not None:
+            checkpoint()
+        if record.canonical_card_name is None:
+            missing_items.append(
+                MissingCanonicalName(
+                    product_gid=record.product_gid,
+                    game=checked_game,
+                    publishable=record.publishable,
+                )
+            )
     return CanonicalNameReport(
         game=checked_game,
         single_record_count=len(scoped),
-        missing=missing,
+        missing=tuple(missing_items),
     )
 
 
 def _validated_records(
     records: tuple[CatalogProductRecordV1, ...],
+    *,
+    checkpoint: Callable[[], None] | None = None,
 ) -> tuple[CatalogProductRecordV1, ...]:
     if type(records) is not tuple:
         raise CanonicalSearchError("search records must be a tuple")
@@ -249,6 +492,8 @@ def _validated_records(
     checked: list[CatalogProductRecordV1] = []
     seen: set[str] = set()
     for record in records:
+        if checkpoint is not None:
+            checkpoint()
         if type(record) is not CatalogProductRecordV1:
             raise CanonicalSearchError("search records must contain runtime v1 Product records")
         try:
@@ -286,16 +531,6 @@ def _bounded_normalize(value: str, *, context: str, maximum: int) -> str:
     return normalized
 
 
-def _match_tier(normalized_name: str, normalized_query: str) -> MatchTier | None:
-    if normalized_name == normalized_query:
-        return MatchTier.EXACT
-    if normalized_name.startswith(normalized_query):
-        return MatchTier.PREFIX
-    if normalized_query in normalized_name:
-        return MatchTier.CONTAINS
-    return None
-
-
 def _product_gid_sort_key(product_gid: str) -> tuple[int, str]:
     digits = product_gid.removeprefix("gid://shopify/Product/")
     return len(digits), digits
@@ -303,20 +538,40 @@ def _product_gid_sort_key(product_gid: str) -> tuple[int, str]:
 
 def _group_suggestions(
     hits: tuple[SingleCardHit, ...],
+    *,
+    checkpoint: Callable[[], None] | None = None,
 ) -> tuple[SingleCardSuggestion, ...]:
     grouped: dict[str, list[SingleCardHit]] = {}
     for hit in hits:
+        if checkpoint is not None:
+            checkpoint()
         grouped.setdefault(hit.normalized_card_name, []).append(hit)
+    if checkpoint is None:
+        normalized_names = sorted(grouped)
+    else:
+
+        def checkpointed_name_sort_key(normalized_name: str) -> str:
+            checkpoint()
+            return normalized_name
+
+        normalized_names = sorted(grouped, key=checkpointed_name_sort_key)
     suggestions: list[SingleCardSuggestion] = []
-    for normalized_name in sorted(grouped):
+    for normalized_name in normalized_names:
+        if checkpoint is not None:
+            checkpoint()
         group = grouped[normalized_name]
-        representative = min(group, key=lambda hit: _product_gid_sort_key(hit.product_gid))
+        representative = group[0]
+        available_print_count = 0
+        for hit in group:
+            if checkpoint is not None:
+                checkpoint()
+            available_print_count += hit.available
         suggestions.append(
             SingleCardSuggestion(
                 canonical_card_name=representative.canonical_card_name,
                 normalized_card_name=normalized_name,
                 print_count=len(group),
-                available_print_count=sum(hit.available for hit in group),
+                available_print_count=available_print_count,
             )
         )
     return tuple(suggestions)

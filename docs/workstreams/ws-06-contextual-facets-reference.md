@@ -58,6 +58,20 @@ workstream must supply an exact, unique tuple of matching Product GIDs. Unknown,
 malformed, or cross-game query GIDs are rejected rather than ignored. An empty tuple is a
 valid explicit empty search result.
 
+## Prepared evaluation boundary
+
+`PreparedFacetCatalog` decodes and validates the immutable Product graph once when a
+generation is activated. It then retains canonical items in numeric Product-GID order and
+the derived positive-inventory fact used by the accepted algebra. Each request still
+round-trips its `CatalogRequestV1`, validates every supplied search GID, evaluates the same
+contextual counts, and runs cooperative checkpoints throughout; it does not rebuild or
+re-serialize the complete Variant graph.
+
+The regression suite evaluates a high-cardinality filtered request over 30,001 prepared
+Products inside the two-second runtime budget. Preparation remains an activation operation,
+not request handling, and this boundary does not authorize public output or change any
+capability state.
+
 ## Inventory and price facts
 
 `inStock=true` means only that at least one v1 Variant has `inventoryQuantity > 0`;
@@ -79,6 +93,6 @@ Selected-option display text is not promoted into a canonical condition/finish/l
 vocabulary. Additional sorts likewise remain backlog until producer coverage and
 normalization rules are independently evidenced.
 
-`CapabilityMatrixV1.facets` and `catalogOutput` remain `unsupported`. These synthetic tests
-prove reference algebra only; they do not prove the real baseline, SQL equivalence,
-high-cardinality performance, or a production serving path.
+`CapabilityMatrixV1.facets` and `catalogOutput` remain `unsupported`. These tests prove the
+reference algebra and bounded prepared high-cardinality evaluation only; they do not prove
+the real baseline, SQL equivalence, or a production serving path.

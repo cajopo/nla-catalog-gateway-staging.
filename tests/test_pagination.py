@@ -10,7 +10,7 @@ import shutil
 import sqlite3
 import stat
 import threading
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
@@ -357,10 +357,13 @@ def test_page_size_plus_one_sentinel_is_not_loaded_as_a_returned_product(
     requested_variant_parents: list[tuple[str, ...]] = []
 
     def recording_variant_rows(
-        connection: sqlite3.Connection, product_gids: tuple[str, ...]
+        connection: sqlite3.Connection,
+        product_gids: tuple[str, ...],
+        *,
+        checkpoint: Callable[[], None] | None = None,
     ) -> dict[str, tuple[pagination.CatalogVariantItemV1, ...]]:
         requested_variant_parents.append(product_gids)
-        return original(connection, product_gids)
+        return original(connection, product_gids, checkpoint=checkpoint)
 
     monkeypatch.setattr(
         CatalogProjection,
@@ -371,6 +374,175 @@ def test_page_size_plus_one_sentinel_is_not_loaded_as_a_returned_product(
     assert first.page.has_next_page is True
     assert [item.product_gid for item in first.page.items] == ["gid://shopify/Product/1"]
     assert requested_variant_parents == [("gid://shopify/Product/1",)]
+
+
+def test_optional_checkpoint_propagates_cancellation_without_returning_a_page(
+    tmp_path: Path,
+) -> None:
+    projection = _projection(tmp_path, (_record("1"),))
+    paginator = _paginator(projection)
+    cancellation = RuntimeError("request cancelled")
+
+    def checkpoint() -> None:
+        raise cancellation
+
+    with pytest.raises(RuntimeError, match="request cancelled") as captured:
+        paginator.fetch_page(_request(), checkpoint=checkpoint)
+    assert captured.value is cancellation
+
+    context = CursorContextV1.from_request(
+        _request(),
+        projection.dataset_generation,
+        last_product_gid=None,
+        expires_at="2026-09-02T12:30:00.000000Z",
+    )
+    with pytest.raises(PaginationContractError, match="checkpoint"):
+        projection.fetch_page(_request(), context, checkpoint=object())  # type: ignore[arg-type]
+    with pytest.raises(PaginationContractError, match="checkpoint"):
+        paginator.fetch_page(_request(), checkpoint=object())  # type: ignore[arg-type]
+
+
+def test_paginator_runs_checkpoint_after_projection_and_cursor_encoding(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    projection = _projection(tmp_path, (_record("1"), _record("2")))
+    request = _request(page_size=1)
+    context = CursorContextV1.from_request(
+        request,
+        projection.dataset_generation,
+        last_product_gid=None,
+        expires_at="2026-09-02T12:30:00.000000Z",
+    )
+    page = projection.fetch_page(request, context)
+    assert page.next_cursor_context is not None
+    events: list[str] = []
+
+    def fetch_page(*_args: object, **_kwargs: object) -> CatalogPageV1:
+        events.append("fetch")
+        return page
+
+    def encode(*_args: object, **_kwargs: object) -> str:
+        events.append("encode")
+        return "next-cursor"
+
+    monkeypatch.setattr(
+        CatalogProjection,
+        "fetch_page",
+        fetch_page,
+    )
+    monkeypatch.setattr(CursorCodecV1, "encode", encode)
+
+    def checkpoint() -> None:
+        events.append("checkpoint")
+
+    result = _paginator(projection).fetch_page(request, checkpoint=checkpoint)
+
+    assert result.next_cursor == "next-cursor"
+    assert events == [
+        "checkpoint",
+        "checkpoint",
+        "fetch",
+        "checkpoint",
+        "encode",
+        "checkpoint",
+    ]
+
+
+def test_variant_decode_loop_runs_value_free_checkpoint(tmp_path: Path) -> None:
+    projection = _projection(tmp_path, (_record("1"),))
+    cancellation = RuntimeError("request cancelled")
+    calls = 0
+
+    def checkpoint() -> None:
+        nonlocal calls
+        calls += 1
+        raise cancellation
+
+    with pagination._readonly_connection(projection.path) as connection:
+        variants = CatalogProjection._variant_rows(
+            connection,
+            ("gid://shopify/Product/1",),
+        )
+        assert tuple(variants) == ("gid://shopify/Product/1",)
+        with pytest.raises(RuntimeError, match="request cancelled") as captured:
+            CatalogProjection._variant_rows(
+                connection,
+                ("gid://shopify/Product/1",),
+                checkpoint=checkpoint,
+            )
+    assert captured.value is cancellation
+    assert calls == 1
+
+
+def test_sqlite_progress_checkpoint_preserves_exception_and_is_removed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    projection = _projection(tmp_path, (_record("1"),))
+    paginator = _paginator(projection)
+    cancellation = RuntimeError("request cancelled")
+    inside_sql = False
+    progress_events: list[tuple[bool, int]] = []
+    progress_results: list[int] = []
+
+    class TrackingConnection(sqlite3.Connection):
+        def set_progress_handler(self, progress_handler: Callable[[], int] | None, n: int) -> None:
+            progress_events.append((progress_handler is not None, n))
+            if progress_handler is not None:
+                progress_results.append(progress_handler())
+            super().set_progress_handler(progress_handler, n)
+
+    original_connect = sqlite3.connect
+    original_product_rows = CatalogProjection._product_rows
+
+    def tracking_connect(*args: object, **kwargs: object) -> sqlite3.Connection:
+        return original_connect(*args, **kwargs, factory=TrackingConnection)
+
+    def long_product_rows(
+        connection: sqlite3.Connection,
+        *,
+        request: CatalogRequestV1,
+        after_digits: str | None,
+        limit: int,
+    ) -> list[sqlite3.Row]:
+        nonlocal inside_sql
+        inside_sql = True
+        try:
+            connection.execute(
+                """WITH RECURSIVE counter(value) AS (
+                       VALUES (0)
+                       UNION ALL
+                       SELECT value + 1 FROM counter WHERE value < 1000000
+                   )
+                   SELECT sum(value) FROM counter"""
+            ).fetchone()
+        finally:
+            inside_sql = False
+        return original_product_rows(
+            connection,
+            request=request,
+            after_digits=after_digits,
+            limit=limit,
+        )
+
+    def checkpoint() -> None:
+        if inside_sql:
+            raise cancellation
+
+    monkeypatch.setattr(pagination.sqlite3, "connect", tracking_connect)
+    monkeypatch.setattr(
+        CatalogProjection,
+        "_product_rows",
+        staticmethod(long_product_rows),
+    )
+
+    with pytest.raises(RuntimeError, match="request cancelled") as captured:
+        paginator.fetch_page(_request(), checkpoint=checkpoint)
+    assert captured.value is cancellation
+    assert progress_events == [
+        (True, pagination._SQLITE_PROGRESS_VM_STEPS),
+        (False, 0),
+    ]
+    assert progress_results == [0]
 
 
 def test_complete_traversal_over_30000_products_has_no_gap_or_duplicate(
@@ -554,6 +726,32 @@ def test_cursor_rejects_wrong_version_context_generation_and_expiry() -> None:
     raw = json.dumps(payload, separators=(",", ":"), sort_keys=True).encode()
     with pytest.raises(InvalidCursorError):
         codec.decode(_token_for_raw(raw), expected_request=request, now=NOW)
+
+
+def test_cursor_codec_authenticates_search_and_filter_request_contexts() -> None:
+    codec = CursorCodecV1(HMAC_KEY)
+    requests = (
+        _request(family=RequestFamily.SINGLE, query="Black Lotus"),
+        _request(family=RequestFamily.SEALED, in_stock=True),
+    )
+    for request in requests:
+        context = CursorContextV1.from_request(
+            request,
+            GENERATION_A,
+            last_product_gid="gid://shopify/Product/2",
+            expires_at="2026-09-02T12:30:00.000000Z",
+        )
+        token = codec.encode(context)
+
+        assert (
+            codec.decode(
+                token,
+                expected_request=request,
+                expected_generation=GENERATION_A,
+                now=NOW,
+            )
+            == context
+        )
 
 
 def test_generation_activation_makes_old_cursor_deterministically_stale(
