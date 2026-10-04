@@ -28,7 +28,7 @@ from nla_catalog_gateway.taxonomy import ClassificationReport, Game, ProductFami
 NOW = "2026-09-05T10:00:00Z"
 SHOP = "synthetic.myshopify.com"
 RULE_VERSION = "2026-09-01.1"
-SUMMARY_NAME = "reconciliation-summary.v1.json"
+SUMMARY_NAME = "reconciliation-summary.v2.json"
 CATALOG_NAME = "catalog-records.v1.jsonl"
 EXPECTED_NAMES = frozenset((*generation_bundle._ARTIFACT_FILENAMES, SUMMARY_NAME))
 
@@ -330,6 +330,7 @@ def _write_bundle(
             for filename in generation_bundle._ARTIFACT_FILENAMES
         ],
         "capabilityPromotion": "not-performed",
+        "canonicalNameAudit": None,
         "catalogRecordCount": len(records),
         "classifiedProductCount": value.taxonomy_report.classified,
         "datasetActivation": "not-performed",
@@ -675,6 +676,100 @@ def _write_summary(case: BundleCase, value: dict[str, Any]) -> str:
     raw = _canonical_json_bytes(value)
     (case.directory / SUMMARY_NAME).write_bytes(raw)
     return hashlib.sha256(raw).hexdigest()
+
+
+def test_summary_accepts_and_accounts_for_canonical_name_audit(
+    bundle_case: BundleCase,
+) -> None:
+    summary = _summary_document(bundle_case)
+    summary["canonicalNameAudit"] = {
+        "duplicateProductExcess": 1,
+        "manifestSha256": "1" * 64,
+        "mappingBytes": 123,
+        "mappingRecordCount": 3,
+        "mappingSha256": "2" * 64,
+        "matchedProductCount": 3,
+        "matchedUniqueKeyCount": 2,
+        "unusedMappingCount": 1,
+    }
+    parsed = generation_bundle._parse_summary(_canonical_json_bytes(summary))
+    assert parsed.canonical_name_audit is not None
+    assert parsed.canonical_name_audit.duplicate_product_excess == 1
+
+    summary["canonicalNameAudit"]["unusedMappingCount"] = 2
+    with pytest.raises(generation_bundle.GenerationBundleError):
+        generation_bundle._parse_summary(_canonical_json_bytes(summary))
+
+    summary["canonicalNameAudit"] = []
+    with pytest.raises(generation_bundle.GenerationBundleError):
+        generation_bundle._parse_summary(_canonical_json_bytes(summary))
+
+    summary["canonicalNameAudit"] = {
+        "duplicateProductExcess": 0,
+        "manifestSha256": "1" * 64,
+        "mappingBytes": 0,
+        "mappingRecordCount": 0,
+        "mappingSha256": "2" * 64,
+        "matchedProductCount": 0,
+        "matchedUniqueKeyCount": 0,
+        "unusedMappingCount": 0,
+    }
+    assert (
+        generation_bundle._parse_summary(_canonical_json_bytes(summary)).canonical_name_audit
+        is not None
+    )
+
+    for changes in (
+        {"mappingBytes": 1},
+        {"mappingBytes": 0, "mappingRecordCount": 1, "unusedMappingCount": 1},
+        {
+            "mappingBytes": 1,
+            "mappingRecordCount": 1,
+            "matchedProductCount": summary["catalogRecordCount"] + 1,
+            "matchedUniqueKeyCount": 1,
+            "duplicateProductExcess": summary["catalogRecordCount"],
+            "unusedMappingCount": 0,
+        },
+    ):
+        summary["canonicalNameAudit"] = {
+            "duplicateProductExcess": 0,
+            "manifestSha256": "1" * 64,
+            "mappingBytes": 0,
+            "mappingRecordCount": 0,
+            "mappingSha256": "2" * 64,
+            "matchedProductCount": 0,
+            "matchedUniqueKeyCount": 0,
+            "unusedMappingCount": 0,
+            **changes,
+        }
+        with pytest.raises(generation_bundle.GenerationBundleError):
+            generation_bundle._parse_summary(_canonical_json_bytes(summary))
+
+
+def test_verified_generation_retains_authenticated_canonical_name_audit(
+    bundle_case: BundleCase,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    summary = _summary_document(bundle_case)
+    summary["canonicalNameAudit"] = {
+        "duplicateProductExcess": 0,
+        "manifestSha256": "1" * 64,
+        "mappingBytes": 100,
+        "mappingRecordCount": 1,
+        "mappingSha256": "2" * 64,
+        "matchedProductCount": 1,
+        "matchedUniqueKeyCount": 1,
+        "unusedMappingCount": 0,
+    }
+    trust_root = _write_summary(bundle_case, summary)
+    _install_backend(monkeypatch)
+
+    with generation_bundle.open_reconciled_generation(
+        bundle_case.directory,
+        trust_root,
+    ) as verified:
+        assert verified.generation.canonical_name_audit is not None
+        assert verified.generation.canonical_name_audit.manifest_sha256 == "1" * 64
 
 
 def _rewrite_artifact(case: BundleCase, filename: str, raw: bytes) -> str:

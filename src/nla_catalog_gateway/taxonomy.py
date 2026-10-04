@@ -514,6 +514,15 @@ def _resolve_subtype(
     return selected.subtype, selected.rule_id, None
 
 
+def product_type_rule(product_type: str, config: TaxonomyConfig) -> ProductTypeRule | None:
+    """Return the configured structured rule for one Shopify product type."""
+
+    _validate_config(config)
+    if type(product_type) is not str:
+        raise TaxonomyError("product_type must be a string")
+    return config.product_types.get(_normalize(product_type))
+
+
 def classify_product(facts: ProductFacts, config: TaxonomyConfig) -> Classification:
     _validate_config(config)
     _validate_facts(facts)

@@ -61,7 +61,17 @@ jobs:
         with:
           persist-credentials: false
       - run: docker build --tag nla-catalog-gateway:foundation .
+      - name: Inspect runtime image contract
+        run: |
+          docker image inspect --format '{{json .Config.Cmd}}' nla-catalog-gateway:foundation |
+            python -c 'import json,sys; assert json.load(sys.stdin) == ["python", "-m", "nla_catalog_gateway.runtime_bootstrap"]'
+          docker image inspect --format '{{json .Config.User}}' nla-catalog-gateway:foundation |
+            python -c 'import json,sys; assert json.load(sys.stdin) == "appuser"'
+      - name: Verify fail-closed container commands
+        run: |
+          python -c 'import subprocess; p=subprocess.run(["docker", "run", "--rm", "nla-catalog-gateway:foundation"], capture_output=True, text=True); assert (p.returncode, p.stdout, p.stderr) == (1, "VALUE_FREE_RESULT: REJECTED\n", "")'
+          python -c 'import subprocess; p=subprocess.run(["docker", "run", "--rm", "nla-catalog-gateway:foundation", "python", "/app/scripts/manage_staging_activation.py"], capture_output=True, text=True); assert (p.returncode, p.stdout, p.stderr) == (1, "VALUE_FREE_RESULT: REJECTED\n", "")'
       - name: Run foundation image
         run: |
-          docker run --rm nla-catalog-gateway:foundation |
+          docker run --rm nla-catalog-gateway:foundation python -m nla_catalog_gateway |
             python -c 'import json,sys; p=json.load(sys.stdin); assert p == {"readOnlyProjection": True, "service": "nla-catalog-gateway", "status": "foundation", "version": "0.0.1"}; print(json.dumps(p, sort_keys=True))'

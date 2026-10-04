@@ -60,9 +60,11 @@ from nla_catalog_gateway.runtime_contract import (
     CatalogProductRecordV1,
     CatalogRequestV1,
     CursorContextV1,
+    DatasetManifestV1,
     RequestFamily,
     RuntimeContractError,
 )
+from nla_catalog_gateway.staging_generation import VerifiedStagingGenerationV1
 from nla_catalog_gateway.taxonomy import ProductFamily
 
 MAX_REQUEST_BODY_BYTES = 64 * 1024
@@ -453,7 +455,7 @@ class AppProxyVerifierAuthorizer:
 
 @dataclass(frozen=True, slots=True, repr=False)
 class _EvidenceBoundGeneration:
-    verified: VerifiedReconciledGenerationV1 = field(repr=False)
+    verified: VerifiedReconciledGenerationV1 | VerifiedStagingGenerationV1 = field(repr=False)
     projection: CatalogProjection = field(repr=False)
     cursor_codec: CursorCodecV1 = field(repr=False)
     evidence: VerifiedCatalogCoreEvidenceV1 = field(repr=False)
@@ -481,16 +483,11 @@ class EvidenceBoundCatalogBackend:
         expected_code_sha: str,
         clock: Callable[[], datetime] | None = None,
     ) -> None:
-        if (
-            type(expected_code_sha) is not str
-            or _CODE_SHA_RE.fullmatch(expected_code_sha) is None
-            or (clock is not None and not callable(clock))
-        ):
-            raise RuntimeApiContractError("catalog runtime binding is invalid")
+        runtime_clock = _validated_backend_clock(expected_code_sha, clock)
         self._lock = threading.Lock()
         self._token = object()
         self._expected_code_sha = expected_code_sha
-        self._clock = clock or (lambda: datetime.now(UTC))
+        self._clock = runtime_clock
         self._active = _new_evidence_bound_generation(
             verified,
             projection,
@@ -499,6 +496,34 @@ class EvidenceBoundCatalogBackend:
             expected_code_sha=self._expected_code_sha,
             clock=self._clock,
         )
+
+    @classmethod
+    def from_staging_generation(
+        cls,
+        verified: VerifiedStagingGenerationV1,
+        cursor_codec: CursorCodecV1,
+        *,
+        expected_code_sha: str,
+        clock: Callable[[], datetime] | None = None,
+    ) -> EvidenceBoundCatalogBackend:
+        """Create a backend from one exact portable staging-generation proof."""
+
+        if cls is not EvidenceBoundCatalogBackend:
+            raise RuntimeApiContractError("catalog runtime binding is invalid")
+        runtime_clock = _validated_backend_clock(expected_code_sha, clock)
+        candidate = _new_evidence_bound_staging_generation(
+            verified,
+            cursor_codec,
+            expected_code_sha=expected_code_sha,
+            clock=runtime_clock,
+        )
+        backend = object.__new__(cls)
+        backend._lock = threading.Lock()
+        backend._token = object()
+        backend._expected_code_sha = expected_code_sha
+        backend._clock = runtime_clock
+        backend._active = candidate
+        return backend
 
     @property
     def active_generation(self) -> str:
@@ -517,6 +542,22 @@ class EvidenceBoundCatalogBackend:
             projection,
             cursor_codec,
             evidence,
+            expected_code_sha=self._expected_code_sha,
+            clock=self._clock,
+        )
+        with self._lock:
+            self._active = candidate
+
+    def activate_staging_generation(
+        self,
+        verified: VerifiedStagingGenerationV1,
+        cursor_codec: CursorCodecV1,
+    ) -> None:
+        """Atomically activate one completely verified portable generation."""
+
+        candidate = _new_evidence_bound_staging_generation(
+            verified,
+            cursor_codec,
             expected_code_sha=self._expected_code_sha,
             clock=self._clock,
         )
@@ -1447,6 +1488,19 @@ def _canonical_request(request: object) -> bool:
     return canonical == request
 
 
+def _validated_backend_clock(
+    expected_code_sha: object,
+    clock: Callable[[], datetime] | None,
+) -> Callable[[], datetime]:
+    if (
+        type(expected_code_sha) is not str
+        or _CODE_SHA_RE.fullmatch(expected_code_sha) is None
+        or (clock is not None and not callable(clock))
+    ):
+        raise RuntimeApiContractError("catalog runtime binding is invalid")
+    return clock if clock is not None else lambda: datetime.now(UTC)
+
+
 def _new_evidence_bound_generation(
     verified: VerifiedReconciledGenerationV1,
     projection: CatalogProjection,
@@ -1457,15 +1511,7 @@ def _new_evidence_bound_generation(
     clock: Callable[[], datetime],
 ) -> _EvidenceBoundGeneration:
     try:
-        if (
-            type(verified) is not VerifiedReconciledGenerationV1
-            or type(projection) is not CatalogProjection
-            or type(cursor_codec) is not CursorCodecV1
-            or type(evidence) is not VerifiedCatalogCoreEvidenceV1
-            or type(expected_code_sha) is not str
-            or _CODE_SHA_RE.fullmatch(expected_code_sha) is None
-            or not callable(clock)
-        ):
+        if type(verified) is not VerifiedReconciledGenerationV1:
             raise RuntimeApiContractError("catalog runtime binding is invalid")
         checked = VerifiedReconciledGenerationV1(
             verified.generation,
@@ -1486,72 +1532,157 @@ def _new_evidence_bound_generation(
             or _CODE_SHA_RE.fullmatch(parts[0].source_code_sha) is None
         ):
             raise RuntimeApiContractError("catalog runtime binding is invalid")
-        reopened = CatalogProjection.open(
-            projection.path,
-            expected_generation=manifest.dataset_generation,
-        )
-        if (
-            reopened._file_fingerprint != projection._file_fingerprint
-            or reopened.manifest != manifest
-            or projection.manifest != manifest
-        ):
-            raise RuntimeApiContractError("catalog runtime binding is invalid")
-        codec = CursorCodecV1(cursor_codec.secret, cursor_codec.ttl_seconds)
-        binding = (
-            shop_domain,
-            checked.summary_sha256,
-            manifest.dataset_generation,
-            manifest.catalog_content_sha256,
-            reopened._file_fingerprint.content_sha256,
-            expected_code_sha,
-        )
-        evidence_binding = (
-            evidence.shop_domain,
-            evidence.summary_sha256,
-            evidence.dataset_generation,
-            evidence.catalog_content_sha256,
-            evidence.projection_fingerprint,
-            evidence.code_sha,
-        )
-        if (
-            binding != evidence_binding
-            or evidence.code_sha != expected_code_sha
-            or _SHA256_RE.fullmatch(binding[1]) is None
-            or _GENERATION_RE.fullmatch(binding[2]) is None
-            or _SHA256_RE.fullmatch(binding[3]) is None
-            or _SHA256_RE.fullmatch(binding[4]) is None
-        ):
-            raise RuntimeApiContractError("catalog runtime binding is invalid")
-        public_items = [
-            CatalogItemV1.from_product_record(record)
-            for record in records
-            if record.publishable and record.product_family is not ProductFamily.UNCLASSIFIED
-        ]
-        public_items.sort(key=lambda item: _product_gid_key(item.product_gid))
-        paginator = CatalogPaginator(
-            AtomicCatalogActivation(reopened),
-            codec,
-            clock=clock,
-        )
-        search = prepare_single_card_search(records)
-        facets = PreparedFacetCatalog(tuple(public_items))
-        return _EvidenceBoundGeneration(
+        candidate = _assemble_evidence_bound_generation(
             verified=checked,
-            projection=reopened,
-            cursor_codec=codec,
+            projection=projection,
+            cursor_codec=cursor_codec,
             evidence=evidence,
             records=records,
-            items=tuple(public_items),
-            search=search,
-            facets=facets,
-            paginator=paginator,
+            manifest=manifest,
+            shop_domain=shop_domain,
+            summary_sha256=checked.summary_sha256,
+            expected_code_sha=expected_code_sha,
             clock=clock,
-            binding=binding,
         )
     except RuntimeApiContractError:
         raise
     except Exception:
-        raise RuntimeApiContractError("catalog runtime binding is invalid") from None
+        rejected = True
+    else:
+        rejected = False
+    if rejected:
+        raise RuntimeApiContractError("catalog runtime binding is invalid")
+    return candidate
+
+
+def _new_evidence_bound_staging_generation(
+    verified: VerifiedStagingGenerationV1,
+    cursor_codec: CursorCodecV1,
+    *,
+    expected_code_sha: str,
+    clock: Callable[[], datetime],
+) -> _EvidenceBoundGeneration:
+    try:
+        if (
+            type(verified) is not VerifiedStagingGenerationV1
+            or type(verified.manifest_sha256) is not str
+            or _SHA256_RE.fullmatch(verified.manifest_sha256) is None
+            or type(verified.projection) is not CatalogProjection
+            or type(verified.records) is not tuple
+            or type(verified.evidence) is not VerifiedCatalogCoreEvidenceV1
+        ):
+            raise RuntimeApiContractError("catalog runtime binding is invalid")
+        candidate = _assemble_evidence_bound_generation(
+            verified=verified,
+            projection=verified.projection,
+            cursor_codec=cursor_codec,
+            evidence=verified.evidence,
+            records=verified.records,
+            manifest=verified.projection.manifest,
+            shop_domain=verified.evidence.shop_domain,
+            summary_sha256=verified.evidence.summary_sha256,
+            expected_code_sha=expected_code_sha,
+            clock=clock,
+        )
+    except RuntimeApiContractError:
+        raise
+    except Exception:
+        rejected = True
+    else:
+        rejected = False
+    if rejected:
+        raise RuntimeApiContractError("catalog runtime binding is invalid")
+    return candidate
+
+
+def _assemble_evidence_bound_generation(
+    *,
+    verified: VerifiedReconciledGenerationV1 | VerifiedStagingGenerationV1,
+    projection: CatalogProjection,
+    cursor_codec: CursorCodecV1,
+    evidence: VerifiedCatalogCoreEvidenceV1,
+    records: tuple[CatalogProductRecordV1, ...],
+    manifest: DatasetManifestV1,
+    shop_domain: str,
+    summary_sha256: str,
+    expected_code_sha: str,
+    clock: Callable[[], datetime],
+) -> _EvidenceBoundGeneration:
+    if (
+        type(projection) is not CatalogProjection
+        or type(cursor_codec) is not CursorCodecV1
+        or type(evidence) is not VerifiedCatalogCoreEvidenceV1
+        or type(manifest) is not DatasetManifestV1
+        or type(records) is not tuple
+        or type(expected_code_sha) is not str
+        or _CODE_SHA_RE.fullmatch(expected_code_sha) is None
+        or not callable(clock)
+    ):
+        raise RuntimeApiContractError("catalog runtime binding is invalid")
+    shop_domain = _validated_shop(shop_domain)
+    manifest.validate_records(records)
+    reopened = CatalogProjection.open(
+        projection.path,
+        expected_generation=manifest.dataset_generation,
+    )
+    if (
+        reopened._file_fingerprint != projection._file_fingerprint
+        or reopened.manifest != manifest
+        or projection.manifest != manifest
+    ):
+        raise RuntimeApiContractError("catalog runtime binding is invalid")
+    codec = CursorCodecV1(cursor_codec.secret, cursor_codec.ttl_seconds)
+    binding = (
+        shop_domain,
+        summary_sha256,
+        manifest.dataset_generation,
+        manifest.catalog_content_sha256,
+        reopened._file_fingerprint.content_sha256,
+        expected_code_sha,
+    )
+    evidence_binding = (
+        evidence.shop_domain,
+        evidence.summary_sha256,
+        evidence.dataset_generation,
+        evidence.catalog_content_sha256,
+        evidence.projection_fingerprint,
+        evidence.code_sha,
+    )
+    if (
+        binding != evidence_binding
+        or evidence.code_sha != expected_code_sha
+        or _SHA256_RE.fullmatch(binding[1]) is None
+        or _GENERATION_RE.fullmatch(binding[2]) is None
+        or _SHA256_RE.fullmatch(binding[3]) is None
+        or _SHA256_RE.fullmatch(binding[4]) is None
+    ):
+        raise RuntimeApiContractError("catalog runtime binding is invalid")
+    public_items = [
+        CatalogItemV1.from_product_record(record)
+        for record in records
+        if record.publishable and record.product_family is not ProductFamily.UNCLASSIFIED
+    ]
+    public_items.sort(key=lambda item: _product_gid_key(item.product_gid))
+    paginator = CatalogPaginator(
+        AtomicCatalogActivation(reopened),
+        codec,
+        clock=clock,
+    )
+    search = prepare_single_card_search(records)
+    facets = PreparedFacetCatalog(tuple(public_items))
+    return _EvidenceBoundGeneration(
+        verified=verified,
+        projection=reopened,
+        cursor_codec=codec,
+        evidence=evidence,
+        records=records,
+        items=tuple(public_items),
+        search=search,
+        facets=facets,
+        paginator=paginator,
+        clock=clock,
+        binding=binding,
+    )
 
 
 def _evidence_binding_is_current(generation: _EvidenceBoundGeneration) -> bool:
@@ -1562,8 +1693,7 @@ def _evidence_binding_is_current(generation: _EvidenceBoundGeneration) -> bool:
         projection = generation.projection
         evidence = generation.evidence
         if (
-            type(verified) is not VerifiedReconciledGenerationV1
-            or type(projection) is not CatalogProjection
+            type(projection) is not CatalogProjection
             or type(generation.cursor_codec) is not CursorCodecV1
             or type(evidence) is not VerifiedCatalogCoreEvidenceV1
             or type(generation.search) is not SingleCardSearchIndex
@@ -1572,18 +1702,51 @@ def _evidence_binding_is_current(generation: _EvidenceBoundGeneration) -> bool:
         ):
             return False
         projection._assert_file_unchanged()
-        manifest = verified.generation.dataset_manifest
-        parts = verified.generation.source_manifest.parts
-        if type(parts) is not tuple or len(parts) != 2:
+        if type(verified) is VerifiedReconciledGenerationV1:
+            manifest = verified.generation.dataset_manifest
+            source_records = verified.generation.records
+            parts = verified.generation.source_manifest.parts
+            if type(parts) is not tuple or len(parts) != 2:
+                return False
+            binding = (
+                parts[0].shop_domain,
+                verified.summary_sha256,
+                manifest.dataset_generation,
+                manifest.catalog_content_sha256,
+                projection._file_fingerprint.content_sha256,
+                generation.binding[5],
+            )
+            source_is_current = (
+                parts[1].shop_domain == binding[0]
+                and parts[1].source_code_sha == parts[0].source_code_sha
+                and type(parts[0].source_code_sha) is str
+                and _CODE_SHA_RE.fullmatch(parts[0].source_code_sha) is not None
+            )
+        elif type(verified) is VerifiedStagingGenerationV1:
+            portable_projection = verified.projection
+            manifest = portable_projection.manifest
+            source_records = verified.records
+            binding = (
+                verified.evidence.shop_domain,
+                verified.evidence.summary_sha256,
+                manifest.dataset_generation,
+                manifest.catalog_content_sha256,
+                projection._file_fingerprint.content_sha256,
+                verified.evidence.code_sha,
+            )
+            source_is_current = (
+                type(verified.manifest_sha256) is str
+                and _SHA256_RE.fullmatch(verified.manifest_sha256) is not None
+                and type(portable_projection) is CatalogProjection
+                and type(source_records) is tuple
+                and verified.evidence is evidence
+                and source_records is generation.records
+                and portable_projection.path == projection.path
+                and portable_projection.manifest == projection.manifest
+                and portable_projection._file_fingerprint == projection._file_fingerprint
+            )
+        else:
             return False
-        binding = (
-            parts[0].shop_domain,
-            verified.summary_sha256,
-            manifest.dataset_generation,
-            manifest.catalog_content_sha256,
-            projection._file_fingerprint.content_sha256,
-            generation.binding[5],
-        )
         evidence_binding = (
             evidence.shop_domain,
             evidence.summary_sha256,
@@ -1594,10 +1757,8 @@ def _evidence_binding_is_current(generation: _EvidenceBoundGeneration) -> bool:
         )
         return (
             generation.binding == binding == evidence_binding
-            and parts[1].shop_domain == binding[0]
-            and parts[1].source_code_sha == parts[0].source_code_sha
-            and type(parts[0].source_code_sha) is str
-            and _CODE_SHA_RE.fullmatch(parts[0].source_code_sha) is not None
+            and source_is_current
+            and source_records is generation.records
             and projection.dataset_generation == binding[2]
             and projection.manifest == manifest
             and generation.paginator._activation.active_generation == binding[2]

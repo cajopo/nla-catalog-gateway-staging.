@@ -27,7 +27,10 @@ A minimal container smoke test is available:
 
 ```bash
 docker build -t nla-catalog-gateway:foundation .
-docker run --rm nla-catalog-gateway:foundation
+docker run --rm nla-catalog-gateway:foundation python -m nla_catalog_gateway
 ```
 
-The expected output is a JSON foundation status. It is not a claim that the catalog runtime has been implemented or deployed.
+The expected output is a JSON foundation status. The image's default command is the fail-closed
+staging runtime launcher; it requires the host-only configuration and external verified package
+documented in `docs/workstreams/ws-09b-staging-deploy.md`. Building or running this smoke is not a
+claim that the catalog runtime has been deployed.

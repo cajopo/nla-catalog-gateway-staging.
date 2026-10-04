@@ -7,6 +7,7 @@ existing pagination implementation, and removes that projection before returning
 
 from __future__ import annotations
 
+import json
 import re
 import secrets
 import stat
@@ -98,6 +99,53 @@ class _OperationalMeasurements:
 class _VerificationResult:
     evidence: VerifiedCatalogCoreEvidenceV1
     measurements: _OperationalMeasurements
+
+
+def _report_bytes(result: _VerificationResult) -> bytes:
+    """Serialize the canonical portable evidence report shared by both producers."""
+
+    if type(result) is not _VerificationResult:
+        raise ValueError
+    measurements = result.measurements
+    if type(measurements) is not _OperationalMeasurements:
+        raise ValueError
+    durations = {
+        "facetEvaluation": measurements.facet_evaluation_nanoseconds,
+        "paginationTraversal": measurements.pagination_traversal_nanoseconds,
+        "projectionBuild": measurements.projection_build_nanoseconds,
+        "searchQuery": measurements.search_query_nanoseconds,
+        "syncBootstrap": measurements.sync_bootstrap_nanoseconds,
+    }
+    counts = {
+        "facetEvaluations": measurements.facet_evaluation_count,
+        "paginationPages": measurements.pagination_page_count,
+        "searchQueries": measurements.search_query_count,
+        "syncBootstraps": 1,
+    }
+    if any(
+        type(value) is not int or value < 0 for value in (*durations.values(), *counts.values())
+    ):
+        raise ValueError
+    return json.dumps(
+        {
+            "bindings": {
+                "catalogContentSha256": result.evidence.catalog_content_sha256,
+                "codeSha": result.evidence.code_sha,
+                "datasetGeneration": result.evidence.dataset_generation,
+                "projectionFingerprint": result.evidence.projection_fingerprint,
+                "shopDomain": result.evidence.shop_domain,
+                "summarySha256": result.evidence.summary_sha256,
+            },
+            "durationNanoseconds": durations,
+            "operationCounts": counts,
+            "result": "ACCEPTED",
+            "schemaVersion": 1,
+        },
+        allow_nan=False,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
 
 
 def _gid_key(product_gid: str) -> tuple[int, str]:

@@ -31,6 +31,7 @@ from nla_catalog_gateway.reconciliation import (
     MAX_PART_MANIFEST_BYTES,
     MAX_RECONCILED_MANIFEST_BYTES,
     RECONCILED_MANIFEST_SCHEMA_VERSION,
+    CanonicalNameAuditV1,
     ReconciledCatalogGenerationV1,
     ReconciledSourceManifestV2,
     SnapshotPart,
@@ -38,7 +39,7 @@ from nla_catalog_gateway.reconciliation import (
 )
 from nla_catalog_gateway.taxonomy import ClassificationReport, ProductFamily
 
-SUMMARY_SCHEMA_VERSION = 1
+SUMMARY_SCHEMA_VERSION = 2
 TAXONOMY_REPORT_SCHEMA_VERSION = 1
 MAX_SUMMARY_BYTES = 64 * 1024
 MAX_TAXONOMY_REPORT_BYTES = 2 * 1024 * 1024
@@ -50,7 +51,7 @@ MAX_VARIANTS_PER_PRODUCT = 10_000
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 _CONCRETE_PATH_TYPE = type(Path())
-_SUMMARY_FILENAME = "reconciliation-summary.v1.json"
+_SUMMARY_FILENAME = "reconciliation-summary.v2.json"
 _ARTIFACT_FILENAMES = (
     "catalog-records.v1.jsonl",
     "dataset-manifest.v1.json",
@@ -103,6 +104,7 @@ _SUMMARY_FIELDS = frozenset(
     {
         "artifacts",
         "capabilityPromotion",
+        "canonicalNameAudit",
         "catalogRecordCount",
         "classifiedProductCount",
         "datasetActivation",
@@ -119,6 +121,18 @@ _SUMMARY_FIELDS = frozenset(
 )
 _ARTIFACT_FIELDS = frozenset({"bytes", "filename", "recordCount", "sha256"})
 _AUDIT_FIELDS = frozenset({"approvedQuerySha256", "part", "rawTerminalQuerySha256", "transport"})
+_CANONICAL_NAME_AUDIT_FIELDS = frozenset(
+    {
+        "duplicateProductExcess",
+        "manifestSha256",
+        "mappingBytes",
+        "mappingRecordCount",
+        "mappingSha256",
+        "matchedProductCount",
+        "matchedUniqueKeyCount",
+        "unusedMappingCount",
+    }
+)
 _SOURCE_FIELDS = frozenset(
     {
         "activeOnlineStorePublishedProductCount",
@@ -197,6 +211,7 @@ class _TerminalQueryAudit:
 @dataclass(frozen=True, slots=True)
 class _SummaryContract:
     artifacts: tuple[_ArtifactContract, ...]
+    canonical_name_audit: CanonicalNameAuditV1 | None
     catalog_record_count: int
     classified_product_count: int
     dataset_generation: str
@@ -515,8 +530,41 @@ def _parse_summary(raw: bytes) -> _SummaryContract:
             )
         )
 
+    raw_canonical_audit = value["canonicalNameAudit"]
+    canonical_audit = None
+    if raw_canonical_audit is not None:
+        if type(raw_canonical_audit) is not dict:
+            raise GenerationBundleError(_CONTENT_ERROR)
+        _exact_keys(raw_canonical_audit, _CANONICAL_NAME_AUDIT_FIELDS)
+        mapping_count = _count(raw_canonical_audit["mappingRecordCount"])
+        mapping_bytes = _count(raw_canonical_audit["mappingBytes"])
+        matched_unique = _count(raw_canonical_audit["matchedUniqueKeyCount"])
+        matched_products = _count(raw_canonical_audit["matchedProductCount"])
+        duplicate_excess = _count(raw_canonical_audit["duplicateProductExcess"])
+        unused = _count(raw_canonical_audit["unusedMappingCount"])
+        if (
+            (mapping_bytes == 0) != (mapping_count == 0)
+            or matched_unique > mapping_count
+            or matched_products < matched_unique
+            or matched_products > catalog_count
+            or duplicate_excess != matched_products - matched_unique
+            or unused != mapping_count - matched_unique
+        ):
+            raise GenerationBundleError(_CONTENT_ERROR)
+        canonical_audit = CanonicalNameAuditV1(
+            manifest_sha256=_sha256(raw_canonical_audit["manifestSha256"]),
+            mapping_sha256=_sha256(raw_canonical_audit["mappingSha256"]),
+            mapping_bytes=mapping_bytes,
+            mapping_record_count=mapping_count,
+            matched_unique_key_count=matched_unique,
+            matched_product_count=matched_products,
+            duplicate_product_excess=duplicate_excess,
+            unused_mapping_count=unused,
+        )
+
     return _SummaryContract(
         artifacts=tuple(artifacts),
+        canonical_name_audit=canonical_audit,
         catalog_record_count=catalog_count,
         classified_product_count=classified,
         dataset_generation=_generation(value["datasetGeneration"]),
@@ -1077,6 +1125,7 @@ def _prepare_verified_generation(
         taxonomy_report=report,
         records=records,
         dataset_manifest=dataset,
+        canonical_name_audit=summary.canonical_name_audit,
     )
     backend.verify(bundle)
     return VerifiedReconciledGenerationV1(

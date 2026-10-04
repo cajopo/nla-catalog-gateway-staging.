@@ -21,8 +21,17 @@ from typing import Any, BinaryIO, NoReturn, cast
 
 from nla_catalog_gateway import bulk, runtime_contract
 from nla_catalog_gateway import reconciliation as reconciliation_model
+from nla_catalog_gateway.canonical_names import (
+    MAX_MANIFEST_BYTES as MAX_CANONICAL_NAME_MANIFEST_BYTES,
+)
+from nla_catalog_gateway.canonical_names import (
+    CanonicalNamesError,
+    load_canonical_names,
+    load_canonical_names_manifest,
+)
 from nla_catalog_gateway.reconciliation import (
     BulkOperationTerminalEvidenceV1,
+    CanonicalNamesInputV1,
     ReconciledCatalogGenerationV1,
     ReconciliationExpectationV1,
     SnapshotPart,
@@ -34,7 +43,7 @@ from nla_catalog_gateway.reconciliation import (
 from nla_catalog_gateway.taxonomy import load_taxonomy
 
 CONTROL_DOCUMENT_MAX_BYTES = 64 * 1024
-SUMMARY_SCHEMA_VERSION = 1
+SUMMARY_SCHEMA_VERSION = 2
 TAXONOMY_REPORT_SCHEMA_VERSION = 1
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
@@ -66,6 +75,7 @@ _NATIVE_READ_BUFFER_BYTES = 1024 * 1024
 _ERROR_INSUFFICIENT_BUFFER = 122
 _ERROR_MORE_DATA = 234
 _ERROR_HANDLE_EOF = 38
+_SHA256_PATTERN = re.compile(r"[0-9a-f]{64}\Z")
 _FINAL_VOLUME_GUID_PATTERN = re.compile(
     r"^\\\\\?\\(Volume\{[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-"
     r"[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}\})\\(.*)$"
@@ -78,13 +88,13 @@ _OUTPUT_FILENAMES = frozenset(
         "catalog-records.v1.jsonl",
         "dataset-manifest.v1.json",
         "products-part-manifest.v1.json",
-        "reconciliation-summary.v1.json",
+        "reconciliation-summary.v2.json",
         "source-manifest.v2.json",
         "taxonomy-report.v1.json",
         "variants-part-manifest.v1.json",
     }
 )
-_EXPECTATION_KEYS = {
+_EXPECTATION_V1_KEYS = {
     "apiVersion",
     "expectedActiveOnlineStorePublishedProductCount",
     "onlineStorePublicationGid",
@@ -94,6 +104,11 @@ _EXPECTATION_KEYS = {
     "snapshotSetId",
     "sourceCodeSha",
     "variantCount",
+}
+_EXPECTATION_V2_KEYS = _EXPECTATION_V1_KEYS | {
+    "canonicalNameManifestSha256",
+    "canonicalNameRecordCount",
+    "expectedCanonicalNameProductCount",
 }
 _TERMINAL_KEYS = {
     "completedAt",
@@ -202,6 +217,18 @@ class _TerminalQueryAuditEvidence:
             "rawTerminalQuerySha256": self.raw_terminal_query_sha256,
             "transport": self.transport,
         }
+
+
+@dataclass(frozen=True, slots=True)
+class _LoadedExpectation:
+    core: ReconciliationExpectationV1
+    canonical_name_manifest_sha256: str | None = None
+    canonical_name_record_count: int | None = None
+    expected_canonical_name_product_count: int | None = None
+
+    @property
+    def requires_canonical_names(self) -> bool:
+        return self.canonical_name_manifest_sha256 is not None
 
 
 def _canonical_json_bytes(value: Any) -> bytes:
@@ -1020,14 +1047,23 @@ def _require_schema_version(payload: dict[str, Any], context: str) -> None:
         raise ReconciliationCliError(f"{context} schemaVersion must be integer 1")
 
 
-def _load_expectation(source: Path | _PinnedInputFile) -> ReconciliationExpectationV1:
+def _load_expectation(source: Path | _PinnedInputFile) -> _LoadedExpectation:
     payload = _load_control_document(source, "reconciliation expectation")
+    version = payload.get("schemaVersion")
+    expected_keys = (
+        _EXPECTATION_V1_KEYS
+        if version == 1 and type(version) is int
+        else _EXPECTATION_V2_KEYS
+        if version == 2 and type(version) is int
+        else frozenset()
+    )
+    if not expected_keys:
+        raise ReconciliationCliError("reconciliation expectation schemaVersion is invalid")
     try:
-        bulk._exact_keys(payload, _EXPECTATION_KEYS, "reconciliation expectation")
+        bulk._exact_keys(payload, expected_keys, "reconciliation expectation")
     except bulk.BulkContractError as exc:
         raise ReconciliationCliError("reconciliation expectation has invalid fields") from exc
-    _require_schema_version(payload, "reconciliation expectation")
-    return ReconciliationExpectationV1(
+    core = ReconciliationExpectationV1(
         snapshot_set_id=payload["snapshotSetId"],
         shop_domain=payload["shopDomain"],
         api_version=payload["apiVersion"],
@@ -1038,6 +1074,26 @@ def _load_expectation(source: Path | _PinnedInputFile) -> ReconciliationExpectat
         expected_active_online_store_published_product_count=payload[
             "expectedActiveOnlineStorePublishedProductCount"
         ],
+    )
+    if version == 1:
+        return _LoadedExpectation(core=core)
+    manifest_sha = payload["canonicalNameManifestSha256"]
+    record_count = payload["canonicalNameRecordCount"]
+    product_count = payload["expectedCanonicalNameProductCount"]
+    if type(manifest_sha) is not str or _SHA256_PATTERN.fullmatch(manifest_sha) is None:
+        raise ReconciliationCliError("canonical-name manifest trust root is invalid")
+    if (
+        type(record_count) is not int
+        or record_count < 0
+        or type(product_count) is not int
+        or product_count < 0
+    ):
+        raise ReconciliationCliError("canonical-name expectation counts are invalid")
+    return _LoadedExpectation(
+        core=core,
+        canonical_name_manifest_sha256=manifest_sha,
+        canonical_name_record_count=record_count,
+        expected_canonical_name_product_count=product_count,
     )
 
 
@@ -1569,6 +1625,11 @@ def _write_generation_output(
         summary = {
             "artifacts": [item.as_dict() for item in artifacts],
             "capabilityPromotion": "not-performed",
+            "canonicalNameAudit": (
+                None
+                if generation.canonical_name_audit is None
+                else generation.canonical_name_audit.as_dict()
+            ),
             "catalogRecordCount": len(generation.records),
             "classifiedProductCount": generation.taxonomy_report.classified,
             "datasetActivation": "not-performed",
@@ -1586,7 +1647,7 @@ def _write_generation_output(
         _write_bytes(
             directory,
             identity,
-            "reconciliation-summary.v1.json",
+            "reconciliation-summary.v2.json",
             summary_bytes,
             created,
         )
@@ -1615,6 +1676,8 @@ def run_reconciliation(
     variants_terminal: Path,
     expectation_path: Path,
     output_directory: Path,
+    canonical_names_jsonl: Path | None = None,
+    canonical_names_manifest: Path | None = None,
 ) -> dict[str, object]:
     """Validate external evidence, reconcile it, and publish one provisional output set."""
 
@@ -1625,9 +1688,17 @@ def run_reconciliation(
         (variants_terminal, "variants terminal evidence"),
         (expectation_path, "reconciliation expectation"),
     )
+    if (canonical_names_jsonl is None) != (canonical_names_manifest is None):
+        raise ReconciliationCliError("canonical-name inputs must be provided together")
     resolved_external = [
         _regular_file(path, context, external=True) for path, context in external_values
     ]
+    resolved_canonical = []
+    if canonical_names_jsonl is not None and canonical_names_manifest is not None:
+        resolved_canonical = [
+            _regular_file(canonical_names_jsonl, "canonical-name sidecar", external=True),
+            _regular_file(canonical_names_manifest, "canonical-name manifest", external=True),
+        ]
     products_query_path, products_query_state = _regular_file(
         products_query, "products query", external=False
     )
@@ -1635,6 +1706,7 @@ def run_reconciliation(
         variants_query, "variants query", external=False
     )
     identities = [state.identity for _path, state in resolved_external]
+    identities.extend(state.identity for _path, state in resolved_canonical)
     identities.extend((products_query_state.identity, variants_query_state.identity))
     if len(set(identities)) != len(identities):
         raise ReconciliationCliError("input files must have distinct identities")
@@ -1698,6 +1770,25 @@ def run_reconciliation(
             stack,
             freeze_maximum=reconciliation_model.MAX_BULK_QUERY_BYTES,
         )
+        canonical_pinned: tuple[_PinnedInputFile, ...] = ()
+        if resolved_canonical:
+            (sidecar_path, sidecar_state), (manifest_path, manifest_state) = resolved_canonical
+            sidecar_input = _pin_regular_file(
+                sidecar_path,
+                sidecar_state,
+                "canonical-name sidecar",
+                stack,
+                external=True,
+            )
+            canonical_manifest_input = _pin_regular_file(
+                manifest_path,
+                manifest_state,
+                "canonical-name manifest",
+                stack,
+                freeze_maximum=MAX_CANONICAL_NAME_MANIFEST_BYTES,
+                external=True,
+            )
+            canonical_pinned = (sidecar_input, canonical_manifest_input)
         pinned_inputs = (
             products_snapshot_input,
             variants_snapshot_input,
@@ -1706,8 +1797,50 @@ def run_reconciliation(
             expectation_input,
             products_query_input,
             variants_query_input,
+            *canonical_pinned,
         )
-        expectation = _load_expectation(expectation_input)
+        loaded_expectation = _load_expectation(expectation_input)
+        if loaded_expectation.requires_canonical_names != bool(canonical_pinned):
+            raise ReconciliationCliError(
+                "reconciliation expectation and canonical-name inputs do not agree"
+            )
+        expectation = loaded_expectation.core
+        canonical_names_input = None
+        if canonical_pinned:
+            sidecar_input, canonical_manifest_input = canonical_pinned
+            assert loaded_expectation.canonical_name_manifest_sha256 is not None
+            assert loaded_expectation.canonical_name_record_count is not None
+            assert loaded_expectation.expected_canonical_name_product_count is not None
+            try:
+                canonical_manifest = load_canonical_names_manifest(
+                    _read_pinned_bytes(
+                        canonical_manifest_input,
+                        maximum=MAX_CANONICAL_NAME_MANIFEST_BYTES,
+                    ),
+                    expected_sha256=loaded_expectation.canonical_name_manifest_sha256,
+                )
+                if (
+                    canonical_manifest.sidecar.record_count
+                    != loaded_expectation.canonical_name_record_count
+                ):
+                    raise ReconciliationCliError(
+                        "canonical-name record count does not match expectation"
+                    )
+                sidecar_input.handle.seek(0)
+                canonical_records = load_canonical_names(
+                    sidecar_input.handle,
+                    manifest=canonical_manifest,
+                )
+                canonical_names_input = CanonicalNamesInputV1(
+                    manifest=canonical_manifest,
+                    manifest_sha256=loaded_expectation.canonical_name_manifest_sha256,
+                    records=canonical_records,
+                    expected_product_count=(
+                        loaded_expectation.expected_canonical_name_product_count
+                    ),
+                )
+            except CanonicalNamesError as exc:
+                raise ReconciliationCliError("canonical-name evidence is invalid") from exc
         products_terminal_evidence = _load_terminal_evidence(
             products_terminal_input, "products terminal evidence"
         )
@@ -1769,6 +1902,7 @@ def run_reconciliation(
             ),
             expectation=expectation,
             taxonomy_config=load_taxonomy(),
+            canonical_names=canonical_names_input,
         )
         for pinned in pinned_inputs:
             _verify_pinned_input(pinned)
@@ -1790,6 +1924,8 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--products-terminal", required=True, type=Path)
     parser.add_argument("--variants-terminal", required=True, type=Path)
     parser.add_argument("--expectation", required=True, type=Path)
+    parser.add_argument("--canonical-names-jsonl", type=Path)
+    parser.add_argument("--canonical-names-manifest", type=Path)
     parser.add_argument("--output-directory", required=True, type=Path)
     return parser.parse_args(argv)
 
@@ -1806,6 +1942,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             variants_terminal=args.variants_terminal,
             expectation_path=args.expectation,
             output_directory=args.output_directory,
+            canonical_names_jsonl=args.canonical_names_jsonl,
+            canonical_names_manifest=args.canonical_names_manifest,
         )
         print(
             _canonical_json_bytes(
