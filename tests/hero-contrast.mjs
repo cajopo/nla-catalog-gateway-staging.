@@ -1,0 +1,27 @@
+import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { createRequire } from 'node:module';
+
+const [artifactRoot, skillRoot] = process.argv.slice(2);
+assert(artifactRoot && skillRoot, 'Pass artifact and Shopify Liquid skill directories');
+const require = createRequire(join(skillRoot, 'package.json'));
+const { toLiquidHtmlAST } = require('@shopify/liquid-html-parser');
+const backup = JSON.parse(readFileSync(join(artifactRoot, 'backup-exact.json'), 'utf8'));
+assert.equal(backup.themeId, 'gid://shopify/OnlineStoreTheme/175195881740');
+assert.equal(backup.role, 'UNPUBLISHED');
+assert.equal(backup.files.length, 1);
+const file = backup.files[0];
+assert.equal(file.filename, 'sections/nla-home.liquid');
+const before = file.body.content;
+const after = readFileSync(join(artifactRoot, 'prepared', file.filename), 'utf8');
+toLiquidHtmlAST(before);
+toLiquidHtmlAST(after);
+const anchor = '  .nla-hero h1 {\n    max-width: 75rem;\n    margin: 0;\n';
+const rule = '    color: var(--nla-white, #ffffff);\n';
+assert.equal(before.split(anchor).length, 2);
+assert.equal(after, before.replace(anchor, anchor + rule));
+const css = after.match(/{% stylesheet %}([\s\S]*?){% endstylesheet %}/)[1];
+assert.match(css, /\.nla-hero h1\s*\{[^}]*color: var\(--nla-white, #ffffff\);/);
+assert(!css.match(/\.nla-hero h1\s*\{[^}]*!important/));
+console.log('PASS: exact clone guard; both Liquid/HTML parses; one scoped heading color addition; all markup, settings, links, other CSS and responsive rules unchanged. Not browser visual QA.');

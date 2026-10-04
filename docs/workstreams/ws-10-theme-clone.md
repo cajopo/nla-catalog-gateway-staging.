@@ -117,3 +117,54 @@ code is unchanged; the full Python suite/container remain the exact-head remote 
 
 References: [theme component settings](https://shopify.dev/docs/storefronts/themes/architecture/settings),
 [Admin theme-file text](https://shopify.dev/docs/api/admin-graphql/2026-07/objects/OnlineStoreThemeFileBodyText).
+
+## Metadata controls candidate, 2026-09-21
+
+Issue #14 continuation, based on PR #91 (`c5a5dff`), dependent on the runtime
+metadata-facet contract in PR #94, including its cursor-page follow-up. Not uploaded.
+
+The catalog page adds native, labelled expansion-code and rarity selects with contextual
+product counts. All values come from the gateway; there is no top-100 truncation or
+invented expansion-name mapping. Counts span the matching catalog, not the visible page.
+Each dimension excludes its own selection, retains the other selection and stock/search
+scope, and preserves a selected zero-count value so it can be cleared. Missing metadata
+is not presented as an invented selectable value; it remains included with no selection.
+
+Selections use raw exact values in the request and URL. Game changes clear both; changing
+either filter starts a new first page. Back/forward and direct cursor URLs restore the
+selected values and receive counts from the same pinned generation as the products.
+Header search remains a game-scoped fresh search, without invisible page filters.
+Suggestion requests keep page filter scope but do not request counts. Incoming values
+are rendered with `textContent`; malformed counts, duplicate values, missing selections,
+request-echo mismatches and cross-filter product metadata fail closed.
+
+Only the snippet and five `nla_catalog` translation keys in the English/Italian fragments
+change the UI. Merge those keys into the clone's existing locale files; never replace a
+complete merchant locale with a fragment. No header layout, settings, native product
+page, commercial data, MAIN theme or publication change is included.
+
+Local Shopify Liquid validation revision 1 passed the snippet and both locale fragments
+with instrumentation disabled. The initial automatic permission rejection was resolved
+by inspecting the validator: full-app checks run locally and telemetry returns before
+network access when opted out; the unchanged command then passed. The URL-state VM
+regression passes. The browser fixture is updated for optional counts and passes syntax
+checking, but has NOT been executed for this candidate. VM tests are not browser,
+Shopify App Proxy, mobile layout or real-catalog E2E evidence.
+
+Do not upload this candidate against the currently serving runtime, which lacks this
+response extension. Require matching backend CI, staging validation, clone backup and
+browser acceptance first. Rollback restores the backed-up clone snippet and only the
+added locale keys; no data migration is needed. New-market ingestion remains blocked
+on CardTrader access and is not enabled by these controls.
+
+`node tests/theme-url-state.mjs` and `node tests/theme-metadata-filters.mjs` PASS.
+The latter exercises the actual snippet script in a VM: complete 131-value options,
+literal Unicode/HTML-looking values, zero-count selections, URL/cursor restoration,
+malformed URL rejection before fetch, game/header isolation, strict response checks,
+first-page filter changes retaining stock and the other filter, stale responses and
+cancelled-request control recovery. Product/image rendering is deliberately stubbed.
+Independent reviewer `/root/theme_title_review` approved the candidate and reran
+both VM suites, with no blocker. Real-browser focus/keyboard/mobile and clone
+back/forward remain release gates, not results inferred from the VM tests.
+Staged repository preflight PASS over 125 files, zero findings; diff whitespace and
+browser-fixture syntax checks PASS. No Python production code changed in this slice.

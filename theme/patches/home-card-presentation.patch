@@ -1,0 +1,64 @@
+diff --git a/snippets/nla-product-card.liquid b/snippets/nla-product-card.liquid
+--- a/snippets/nla-product-card.liquid
++++ b/snippets/nla-product-card.liquid
+@@ -27,19 +27,21 @@
+       {% else %}
+         {{ 'product-1' | placeholder_svg_tag }}
+       {% endif %}
+-      {% if catalog_only %}
+-        <span class="nla-product-card__status">{{ 'products.product.sold_out' | t }}</span>
++      {% if catalog_only or product.available == false %}
++        <span class="nla-product-card__status">SOLD OUT</span>
+       {% endif %}
+     </div>
+     <div class="nla-product-card__body">
+       <span>{{ product.type | escape }}</span>
+       <h3>{{ product.title | escape }}</h3>
+-      {% if catalog_only %}
+-        <strong class="nla-product-card__unavailable">{{ 'products.product.sold_out' | t }}</strong>
+-      {% else %}
+-        <strong>{{ product.price_min | money }}</strong>
++      {% if catalog_only or product.available == false %}
++        <strong class="nla-product-card__unavailable">SOLD OUT</strong>
+       {% endif %}
++      {% unless catalog_only %}
++        {% if product.price_min > 0 %}
++        <strong>{{ product.price_min | money }}</strong>
++        {% endif %}
++      {% endunless %}
+     </div>
+   </a>
+ </article>
+-
+diff --git a/sections/nla-home.liquid b/sections/nla-home.liquid
+--- a/sections/nla-home.liquid
++++ b/sections/nla-home.liquid
+@@ -170,5 +170,10 @@
+   }
+
++  .nla-home h2,
++  .nla-home h3 {
++    color: var(--nla-white, #ffffff);
++  }
++
+   .nla-home__shell {
+     width: min(100% - 3.2rem, 134rem);
+     margin: 0 auto;
+@@ -545,7 +550,7 @@
+     border: 1px solid rgb(255 255 255 / 16%);
+     border-radius: 999px;
+     background: rgb(13 14 18 / 88%);
+-    color: var(--nla-silver);
++    color: #ff4d4f;
+     font-size: 0.9rem;
+     font-weight: 900;
+     letter-spacing: 0.08em;
+@@ -581,7 +586,7 @@
+   }
+
+   .nla-product-card__body .nla-product-card__unavailable {
+-    color: var(--nla-silver);
++    color: #ff4d4f;
+     font-size: 1.25rem;
+     letter-spacing: 0.06em;
+     text-transform: uppercase;
