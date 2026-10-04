@@ -1,0 +1,6 @@
+{
+  "nla_catalog": {
+    "name": "NLA catalog", "endpoint": "App Proxy path",
+    "endpoint_help": "Same-origin /apps/ path of the verified staging gateway. Leave empty until connected."
+  }
+}

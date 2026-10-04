@@ -1,0 +1,16 @@
+{
+  "nla_catalog": {
+    "title": "Card catalog", "game": "Game", "choose_game": "Choose a game",
+    "magic": "Magic", "pokemon": "Pokémon", "yugioh": "Yu-Gi-Oh!", "one_piece": "One Piece",
+    "search_label": "Card name or code", "placeholder": "Enter a card name or code", "search": "Search",
+    "stock_only": "In-stock cards only", "suggestions": "Suggestions", "retry": "Try again",
+    "restart": "Restart search", "pagination": "Catalog pages", "first": "First page", "next": "Next page",
+    "loading": "Loading catalog…", "empty": "No matching cards.", "results": "Results",
+    "unavailable": "The catalog is temporarily unavailable. Please try again.",
+    "unconfigured": "The test catalog is not connected yet.", "changed": "The catalog changed. Restart the search to continue.",
+    "invalid": "This search link is invalid. Start a new search.", "sold_out": "Sold out", "in_stock": "In stock",
+    "unknown_price": "Price unavailable", "image_notice": "View the image and all variants on the product page.",
+    "price_notice": "Catalog prices use the store currency. Shopify confirms current price and availability on the product page.",
+    "javascript_required": "Enable JavaScript to use the complete catalog."
+  }
+}

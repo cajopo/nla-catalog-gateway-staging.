@@ -1,5 +1,20 @@
 # NLA catalog gateway — current status
 
+## Current clone UI candidate — 2026-09-15 (#14)
+
+- `agent/theme-clone-integration` starts from `69f56a3` (#63), whose CI and CodeQL are green.
+- Local reusable Liquid header/page component: game selector, scoped adaptive suggestions,
+  sold-out visibility, keyset page navigation and explicit failure/restart states.
+- Real clone ID/UNPUBLISHED role and existing header/search checksums read; no upload or
+  Shopify mutation. Endpoint remains deliberately unconfigured pending real staging.
+- Official validation passed all seven Liquid/theme files; all 18 headless-browser fixture
+  checks pass. Three P2 state/focus findings and one P3 keyboard finding were corrected;
+  independent re-review APPROVE. No clone installation or real E2E is claimed.
+  Published as draft PR #64 on #63; implementation commit `0d0345c`.
+  Exact-head remote CI remains pending; see `ws-10-theme-clone.md`.
+- The architecture audit recommends targeted simplification, not a wholesale rewrite.
+  Full goal remains open: printed codes, images, real package, durable sync, deployment/E2E.
+
 ## Current runtime candidate — 2026-09-15 (#62)
 
 - Branch `agent/runtime-verified-output`, based on `162edb4` (#61). No merge/deployment.

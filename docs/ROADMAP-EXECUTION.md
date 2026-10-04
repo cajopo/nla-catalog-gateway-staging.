@@ -2,15 +2,16 @@
 
 ## Current goal overlay — 2026-09-15
 
-Current work is #62 (`agent/runtime-verified-output`) on #61: make the verified runtime
-servable through the existing authenticated path, certify current SQL behavior and remove
-unused bootstrap copies. Real package acceptance/deployment are not implied. See current
-status and runtime workstream for proof-version migration and tests.
+Current work is #14 / draft PR #64 (`agent/theme-clone-integration`) on green runtime #63: connect the
+customer-facing path with a reusable game-scoped search/page component. Local UI/browser
+fixtures are not a clone installation or real E2E. Read `ws-10-theme-clone.md` before any
+upload; locale fragments must be merged, never replace the existing translations wholesale.
+The audit's simplification findings are recorded as direction, not a new rewrite workstream.
+Real data codes/images, package acceptance, durable sync, staging and E2E stay on the path.
 
-Work resumes with #60 on `agent/search-name-code-v2`: SQLite literal name/code search and
-suggestions, sold-out cards and complete keyset traversal. Remaining: verified printed-code
-data, clone UI, runtime activation, durable updates, staging and E2E. Suggestions are now
-wired into the first-page HTTP search response; this does not enable public output.
+Completed local runtime slice #62 removed unconditional output denials while retaining
+authentication and verified-generation checks. #60 supplies literal name/SKU/barcode SQL
+search and opt-in suggestions; printed-code semantics remain outstanding.
 Dependency PRs through #57 remain unmerged; live remains Jacopo's #18 gate. STATUS-CURRENT
 and the #60 workstream distinguish executable evidence from pending work.
 
