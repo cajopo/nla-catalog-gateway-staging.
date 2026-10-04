@@ -1,5 +1,41 @@
 # NLA catalog gateway — current status
 
+## Current working update — 2026-09-15 (#60)
+
+- Main is `22787055bbfa676b6700af0611fe5530186d3d5e`; dependency PRs through #57
+  remain open. The search branch is `agent/search-name-code-v2`, based on #57
+  (`3c24e1db93be18c1df90ea5635bc7f93ae120c48`). No merge or deployment is claimed.
+- The current user goal requires literal substring matches in card name OR code,
+  scoped by game, including sold-out cards, complete pagination and adaptive suggestions.
+- In-progress code routes runtime search/stock-filter pagination through SQLite keyset,
+  replacing per-request Python search/facet/result scans. Schema v2 derives and verifies
+  normalized names, variant SKU/barcode codes and inventory facts from retained source records.
+- Printed collector codes are NOT yet covered by this adapter. They require the verified
+  CSV source join; do not equate SKU/barcode support with completion of the card-code goal.
+- Database suggestions share the search predicate. The optional HTTP suggestion envelope
+  is now implemented with explicit first-page opt-in (maximum ten groups), with signed-request
+  integration tests. The theme-clone UI is still missing; static output gates remain closed.
+- The configured `C:\\NLA_DATA` directory is currently absent. Inspected raw/canonical
+  source directories contained no files, but the September 7 staging package was recovered.
+  Fresh read-only SQL inventory found 291,787 public singles: Magic 122,530; Pokemon 71,604;
+  Yu-Gi-Oh 85,991; One Piece 11,662. All have SKU, none barcode. Sample SKUs concatenate
+  set/collector and internal suffixes, not necessarily printed-code punctuation. These are
+  coverage observations, not package reauthentication or real schema-v2 acceptance.
+- Focused verification: 66 pagination/search cases with 100% coverage of both modules,
+  149 runtime cases, 78 contract cases; large traversals executed separately. Independent
+  review approved after resolving one P2. Build, scoped Ruff and preflight pass. Full CI
+  remains pending; see `docs/workstreams/ws-05-name-code-search-v2.md` for exact limitations.
+  No Shopify, PowerTools, MAIN theme, provider or live mutation has occurred.
+- Follow-up: 198 runtime/suggestion/sync-publication regressions passed, runtime API at
+  100% coverage; opt-in compatibility fix approved independently. The preceding `ab0c26e`
+  has fully green CI/CodeQL (2,249 tests on Python 3.12). New-head CI remains required.
+  The 30,001-product HTTP traversal also passed, including sub-two-second search plus
+  suggestions together on the synthetic fixture. No real-catalog latency claim.
+
+The following September 1 snapshot is retained as history, NOT current repository state.
+
+## Historical snapshot
+
 Last verified: 2026-09-01T02:59:58+02:00
 Repository: `cajopo/nla-catalog-gateway-staging.`
 

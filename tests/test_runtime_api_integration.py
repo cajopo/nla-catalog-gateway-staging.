@@ -500,7 +500,7 @@ def test_invalid_query_cursor_is_rejected_before_search_scan(
     def forbidden_search(*_args: Any, **_kwargs: Any) -> Any:
         raise AssertionError("search must not run before cursor verification")
 
-    monkeypatch.setattr(runtime_api, "search_single_cards", forbidden_search)
+    monkeypatch.setattr(CatalogProjection, "_product_rows", forbidden_search)
     with pytest.raises(CatalogBackendFailure) as invalid:
         lease.fetch_page(
             _request(family=RequestFamily.SINGLE, query="Shared magic"),
@@ -835,7 +835,11 @@ def test_service_traverses_over_30000_and_keeps_search_and_filter_under_two_seco
         request: CatalogRequestV1,
         cursor: str | None = None,
     ) -> tuple[runtime_api.CatalogResponseEnvelopeV1, float]:
-        body = CatalogRequestEnvelopeV1(request, cursor).to_json_bytes()
+        body = CatalogRequestEnvelopeV1(
+            request,
+            cursor,
+            include_suggestions=(cursor is None and bool(request.query)),
+        ).to_json_bytes()
         http_request = runtime_api.RuntimeHttpRequest(
             method="POST",
             path=endpoint,
@@ -887,6 +891,11 @@ def test_service_traverses_over_30000_and_keeps_search_and_filter_under_two_seco
         f"gid://shopify/Product/{target_id}",
     )
     assert searched.next_cursor is None
+    assert searched.suggestions is not None
+    assert [
+        (s.canonical_card_name, s.print_count, s.available_print_count)
+        for s in searched.suggestions
+    ] == [(target_name, 1, 0)]
     assert search_elapsed < 2.0
 
     filtered, filter_elapsed = call(
@@ -926,58 +935,36 @@ def test_runtime_paths_propagate_identical_cancellation(
     lease = case.backend.acquire(control=control)
 
     if phase == "search":
-        original_search = runtime_api.search_single_cards
-
-        def entering_search(*args: Any, **kwargs: Any) -> Any:
-            trigger.active = True
-            return original_search(*args, **kwargs)
-
-        monkeypatch.setattr(runtime_api, "search_single_cards", entering_search)
         request = _request(family=RequestFamily.SINGLE, query="Shared magic")
     elif phase == "facets":
-        original_facets = runtime_api.PreparedFacetCatalog.evaluate
-
-        def entering_facets(*args: Any, **kwargs: Any) -> Any:
-            trigger.active = True
-            return original_facets(*args, **kwargs)
-
-        monkeypatch.setattr(runtime_api.PreparedFacetCatalog, "evaluate", entering_facets)
         request = _request(in_stock=True)
     else:
-        original_rows = CatalogProjection._product_rows
-
-        def long_product_rows(
-            connection: sqlite3.Connection,
-            *,
-            request: CatalogRequestV1,
-            after_digits: str | None,
-            limit: int,
-        ) -> list[sqlite3.Row]:
-            trigger.active = True
-            try:
-                connection.execute(
-                    """WITH RECURSIVE counter(value) AS (
-                           VALUES (0)
-                           UNION ALL
-                           SELECT value + 1 FROM counter WHERE value < 1000000
-                       )
-                       SELECT sum(value) FROM counter"""
-                ).fetchone()
-            finally:
-                trigger.active = False
-            return original_rows(
-                connection,
-                request=request,
-                after_digits=after_digits,
-                limit=limit,
-            )
-
-        monkeypatch.setattr(
-            CatalogProjection,
-            "_product_rows",
-            staticmethod(long_product_rows),
-        )
         request = _request(family=RequestFamily.SEALED)
+
+    original_rows = CatalogProjection._product_rows
+
+    def long_product_rows(
+        connection: sqlite3.Connection,
+        *,
+        request: CatalogRequestV1,
+        after_digits: str | None,
+        limit: int,
+    ) -> list[sqlite3.Row]:
+        trigger.active = True
+        try:
+            connection.execute(
+                """WITH RECURSIVE counter(value) AS (
+                       VALUES (0)
+                       UNION ALL
+                       SELECT value + 1 FROM counter WHERE value < 1000000
+                   )
+                   SELECT sum(value) FROM counter"""
+            ).fetchone()
+        finally:
+            trigger.active = False
+        return original_rows(connection, request=request, after_digits=after_digits, limit=limit)
+
+    monkeypatch.setattr(CatalogProjection, "_product_rows", staticmethod(long_product_rows))
 
     with pytest.raises(RequestCancelled) as caught:
         lease.fetch_page(request, None, control=control)

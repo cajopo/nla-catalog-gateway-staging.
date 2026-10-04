@@ -25,12 +25,12 @@ from nla_catalog_gateway.app_proxy_security import (
     VerifiedAppProxyRequest,
 )
 from nla_catalog_gateway.canonical_search import (
+    MAX_CANONICAL_NAME_CODEPOINTS,
     CanonicalSearchError,
-    SearchMode,
     SingleCardSearchIndex,
+    SingleCardSuggestion,
     normalize_search_text,
     prepare_single_card_search,
-    search_single_cards,
 )
 from nla_catalog_gateway.core_evidence import VerifiedCatalogCoreEvidenceV1
 from nla_catalog_gateway.facets import FacetContractError, PreparedFacetCatalog
@@ -59,7 +59,6 @@ from nla_catalog_gateway.runtime_contract import (
     CatalogPageV1,
     CatalogProductRecordV1,
     CatalogRequestV1,
-    CursorContextV1,
     DatasetManifestV1,
     RequestFamily,
     RuntimeContractError,
@@ -79,6 +78,7 @@ MAX_HEADER_VALUE_BYTES = 8 * 1024
 MAX_HEADER_BYTES = 32 * 1024
 MAX_BODY_CHUNKS = 128
 DEFAULT_REQUEST_TIMEOUT_MS = 2_000
+MAX_PUBLIC_SUGGESTIONS = 10
 
 _MAX_REQUEST_TIMEOUT_MS = 30_000
 _MAX_RAW_QUERY_BYTES = 64 * 1024
@@ -319,6 +319,7 @@ class CatalogLeaseResult:
 
     page: CatalogPageV1
     next_cursor: str | None
+    suggestions: tuple[SingleCardSuggestion, ...] | None = None
 
 
 class CatalogGenerationLease(Protocol):
@@ -336,6 +337,7 @@ class CatalogGenerationLease(Protocol):
         cursor: str | None,
         *,
         control: RequestControl,
+        include_suggestions: bool = False,
     ) -> CatalogLeaseResult: ...
 
     def close(self) -> None: ...
@@ -650,6 +652,7 @@ class EvidenceBoundCatalogLease:
         cursor: str | None,
         *,
         control: RequestControl,
+        include_suggestions: bool = False,
     ) -> CatalogLeaseResult:
         if type(control) is not RequestControl:
             raise CatalogBackendFailure(CatalogErrorCode.TEMPORARILY_UNAVAILABLE)
@@ -663,6 +666,7 @@ class EvidenceBoundCatalogLease:
                     request,
                     cursor,
                     control=control,
+                    include_suggestions=include_suggestions,
                 )
             except (CatalogBackendFailure, RequestDeadlineExceeded):
                 raise
@@ -728,6 +732,7 @@ class CatalogRequestEnvelopeV1:
     request: CatalogRequestV1
     cursor: str | None
     contract_version: int = CONTRACT_VERSION
+    include_suggestions: bool = False
 
     FIELDS = frozenset({"contractVersion", "cursor", "request"})
 
@@ -738,13 +743,24 @@ class CatalogRequestEnvelopeV1:
             raise RuntimeApiContractError("request envelope request must be canonical")
         _validate_request_scope(self.request)
         _validated_cursor(self.cursor, MAX_CURSOR_CHARS)
+        if type(self.include_suggestions) is not bool:
+            raise RuntimeApiContractError("includeSuggestions must be a boolean")
+        if self.include_suggestions and (
+            self.cursor is not None
+            or self.request.product_family is not RequestFamily.SINGLE
+            or not normalize_search_text(self.request.query or "")
+        ):
+            raise IncompatibleCatalogRequestError("suggestions require a first-page single search")
 
     def as_dict(self) -> dict[str, Any]:
-        return {
+        result = {
             "contractVersion": self.contract_version,
             "cursor": self.cursor,
             "request": self.request.as_dict(),
         }
+        if self.include_suggestions:
+            result["includeSuggestions"] = True
+        return result
 
     def to_json_bytes(self) -> bytes:
         if type(self) is not CatalogRequestEnvelopeV1:
@@ -771,7 +787,10 @@ class CatalogRequestEnvelopeV1:
         _validated_public_limit(byte_limit, MAX_REQUEST_BODY_BYTES)
         _validated_public_limit(cursor_char_limit, MAX_CURSOR_CHARS)
         value = _load_json_object(raw, byte_limit=byte_limit)
-        _exact_keys(value, cls.FIELDS)
+        fields = (
+            cls.FIELDS | {"includeSuggestions"} if "includeSuggestions" in value else cls.FIELDS
+        )
+        _exact_keys(value, fields)
         if (
             type(value["contractVersion"]) is not int
             or value["contractVersion"] != CONTRACT_VERSION
@@ -786,7 +805,11 @@ class CatalogRequestEnvelopeV1:
             raise RuntimeApiContractError("catalog request is invalid") from exc
         _validate_request_scope(request)
         cursor = _validated_cursor(value["cursor"], cursor_char_limit)
-        return cls(request=request, cursor=cursor)
+        return cls(
+            request=request,
+            cursor=cursor,
+            include_suggestions=value.get("includeSuggestions", False),
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -906,6 +929,7 @@ class CatalogResponseEnvelopeV1:
     page: _PublicCatalogPageV1 | CatalogPageV1
     next_cursor: str | None
     contract_version: int = CONTRACT_VERSION
+    suggestions: tuple[SingleCardSuggestion, ...] | None = None
 
     FIELDS = frozenset({"contractVersion", "nextCursor", "page"})
 
@@ -932,6 +956,8 @@ class CatalogResponseEnvelopeV1:
             raise RuntimeApiContractError("opaque cursor must match terminal page state")
         object.__setattr__(self, "page", page)
 
+        _public_suggestions(self.suggestions, page.request)
+
     def as_dict(self) -> dict[str, Any]:
         if (
             type(self.contract_version) is not int
@@ -952,11 +978,15 @@ class CatalogResponseEnvelopeV1:
         cursor = _validated_cursor(self.next_cursor, MAX_CURSOR_CHARS)
         if page.has_next_page != (cursor is not None):
             raise RuntimeApiContractError("opaque cursor must match terminal page state")
-        return {
+        result = {
             "contractVersion": self.contract_version,
             "nextCursor": cursor,
             "page": page.as_dict(),
         }
+        suggestions = _public_suggestions(self.suggestions, page.request)
+        if suggestions is not None:
+            result["suggestions"] = suggestions
+        return result
 
     def to_json_bytes(self) -> bytes:
         if type(self) is not CatalogResponseEnvelopeV1:
@@ -978,7 +1008,8 @@ class CatalogResponseEnvelopeV1:
             raise RuntimeApiContractError("response envelope type is invalid")
         _validated_public_limit(byte_limit, MAX_RESPONSE_BODY_BYTES)
         value = _load_json_object(raw, byte_limit=byte_limit)
-        _exact_keys(value, cls.FIELDS)
+        fields = cls.FIELDS | {"suggestions"} if "suggestions" in value else cls.FIELDS
+        _exact_keys(value, fields)
         if (
             type(value["contractVersion"]) is not int
             or value["contractVersion"] != CONTRACT_VERSION
@@ -991,10 +1022,82 @@ class CatalogResponseEnvelopeV1:
         result = cls(
             page=page,
             next_cursor=_validated_cursor(value["nextCursor"], MAX_CURSOR_CHARS),
+            suggestions=(
+                _suggestions_from_wire(value["suggestions"]) if "suggestions" in value else None
+            ),
         )
         if result.to_json_bytes() != raw:
             raise RuntimeApiContractError("response envelope JSON is not canonical")
         return result
+
+
+def _public_suggestions(
+    suggestions: tuple[SingleCardSuggestion, ...] | None, request: CatalogRequestV1
+) -> list[dict[str, Any]] | None:
+    """Expose only bounded name/count groups, never source codes or internal context."""
+    if suggestions is None:
+        return None
+    if (
+        type(suggestions) is not tuple
+        or len(suggestions) > MAX_PUBLIC_SUGGESTIONS
+        or request.product_family is not RequestFamily.SINGLE
+        or not normalize_search_text(request.query or "")
+    ):
+        raise RuntimeApiContractError("suggestion scope or count is invalid")
+    result = []
+    seen = set()
+    for suggestion in suggestions:
+        if type(suggestion) is not SingleCardSuggestion:
+            raise RuntimeApiContractError("suggestion type is invalid")
+        try:
+            normalized = normalize_search_text(suggestion.canonical_card_name)
+        except CanonicalSearchError as exc:
+            raise RuntimeApiContractError("suggestion name is invalid") from exc
+        if (
+            not normalized
+            or len(suggestion.canonical_card_name) > MAX_CANONICAL_NAME_CODEPOINTS
+            or normalized != suggestion.normalized_card_name
+            or normalized in seen
+            or type(suggestion.print_count) is not int
+            or type(suggestion.available_print_count) is not int
+            or not 0 <= suggestion.available_print_count <= suggestion.print_count
+            or suggestion.print_count < 1
+        ):
+            raise RuntimeApiContractError("suggestion fields are invalid")
+        seen.add(normalized)
+        result.append(
+            {
+                "canonicalCardName": suggestion.canonical_card_name,
+                "matchingProductCount": suggestion.print_count,
+                "availableProductCount": suggestion.available_print_count,
+            }
+        )
+    return result
+
+
+def _suggestions_from_wire(value: Any) -> tuple[SingleCardSuggestion, ...]:
+    if type(value) is not list or len(value) > MAX_PUBLIC_SUGGESTIONS:
+        raise RuntimeApiContractError("suggestions must be a bounded array")
+    suggestions = []
+    for entry in value:
+        if type(entry) is not dict:
+            raise RuntimeApiContractError("suggestion must be an object")
+        _exact_keys(
+            entry, frozenset({"canonicalCardName", "matchingProductCount", "availableProductCount"})
+        )
+        try:
+            normalized = normalize_search_text(entry["canonicalCardName"])
+        except CanonicalSearchError as exc:
+            raise RuntimeApiContractError("suggestion name is invalid") from exc
+        suggestions.append(
+            SingleCardSuggestion(
+                entry["canonicalCardName"],
+                normalized,
+                entry["matchingProductCount"],
+                entry["availableProductCount"],
+            )
+        )
+    return tuple(suggestions)
 
 
 class RuntimeCatalogService:
@@ -1158,11 +1261,12 @@ class RuntimeCatalogService:
             self._require_capabilities(lease, envelope.request, control)
             control.checkpoint()
             try:
-                result = lease.fetch_page(
-                    envelope.request,
-                    envelope.cursor,
-                    control=control,
-                )
+                if envelope.include_suggestions:
+                    result = lease.fetch_page(
+                        envelope.request, envelope.cursor, control=control, include_suggestions=True
+                    )
+                else:
+                    result = lease.fetch_page(envelope.request, envelope.cursor, control=control)
             except CatalogBackendFailure:
                 control.checkpoint()
                 raise
@@ -1176,6 +1280,7 @@ class RuntimeCatalogService:
                 dataset_generation=lease_generation,
                 cursor_char_limit=self._limits.max_cursor_chars,
                 request_body_byte_limit=self._limits.max_request_body_bytes,
+                include_suggestions=envelope.include_suggestions,
             )
             try:
                 body = response.to_json_bytes()
@@ -1817,122 +1922,27 @@ def _fetch_evidence_bound_page(
     cursor: str | None,
     *,
     control: RequestControl,
+    include_suggestions: bool = False,
 ) -> CatalogLeaseResult:
     if not _canonical_request(request):
         raise CatalogBackendFailure(CatalogErrorCode.UNSUPPORTED_CAPABILITY)
     control.checkpoint()
-    if request.query in (None, "") and not request.filters.nonempty:
-        result = generation.paginator.fetch_page(
-            request,
-            cursor=cursor,
-            checkpoint=control.checkpoint,
-        )
-        return CatalogLeaseResult(result.page, result.next_cursor)
-
-    now = generation.clock()
-    if cursor is None:
-        context = CursorContextV1.from_request(
-            request,
-            generation.binding[2],
-            last_product_gid=None,
-            expires_at=generation.cursor_codec.expires_at(now),
-        )
-    else:
-        context = generation.cursor_codec.decode(
-            cursor,
-            expected_request=request,
-            expected_generation=generation.binding[2],
-            now=now,
-        )
-    control.checkpoint()
-    query_product_gids: tuple[str, ...] | None = None
-    if request.query not in (None, ""):
-        search = search_single_cards(
-            generation.search,
-            game=request.game,
-            query=request.query,
-            checkpoint=control.checkpoint,
-        )
-        if search.mode is SearchMode.BROWSE:
-            browse_gids: list[str] = []
-            for item in generation.items:
-                control.checkpoint()
-                if item.game is request.game and item.product_family is ProductFamily.SINGLE:
-                    browse_gids.append(item.product_gid)
-            query_product_gids = tuple(browse_gids)
-        else:
-            hit_gids: list[str] = []
-            for hit in search.hits:
-                control.checkpoint()
-                hit_gids.append(hit.product_gid)
-            query_product_gids = tuple(hit_gids)
-    evaluation = generation.facets.evaluate(
+    result = generation.paginator.fetch_page(
         request,
-        query_product_gids=query_product_gids,
+        cursor=cursor,
         checkpoint=control.checkpoint,
     )
-    return _keyset_tuple_page(
-        generation,
-        request,
-        context,
-        evaluation.items,
-        control=control,
-    )
-
-
-def _keyset_tuple_page(
-    generation: _EvidenceBoundGeneration,
-    request: CatalogRequestV1,
-    context: CursorContextV1,
-    items: tuple[CatalogItemV1, ...],
-    *,
-    control: RequestControl,
-) -> CatalogLeaseResult:
-    control.checkpoint()
-    after_key = (
-        None if context.last_product_gid is None else _product_gid_key(context.last_product_gid)
-    )
-    page_items: list[CatalogItemV1] = []
-    has_next_page = False
-    for item in items:
-        control.checkpoint()
-        item_key = _product_gid_key(item.product_gid)
-        if after_key is not None and item_key <= after_key:
-            continue
-        if len(page_items) == request.page_size:
-            has_next_page = True
-            break
-        page_items.append(item)
-    returned_variant_count = 0
-    for item in page_items:
-        control.checkpoint()
-        returned_variant_count += len(item.variants)
-    immutable_items = tuple(page_items)
-    next_context = (
-        CursorContextV1.from_request(
-            request,
-            generation.binding[2],
-            last_product_gid=immutable_items[-1].product_gid,
-            expires_at=context.expires_at,
+    suggestions = None
+    if (
+        include_suggestions
+        and cursor is None
+        and request.product_family is RequestFamily.SINGLE
+        and normalize_search_text(request.query or "")
+    ):
+        suggestions = generation.projection.suggest(
+            request, limit=MAX_PUBLIC_SUGGESTIONS, checkpoint=control.checkpoint
         )
-        if has_next_page
-        else None
-    )
-    page = CatalogPageV1(
-        dataset_generation=generation.binding[2],
-        request=request,
-        request_context_sha256=context.request_context_sha256,
-        items=immutable_items,
-        returned_product_count=len(immutable_items),
-        returned_variant_count=returned_variant_count,
-        has_next_page=has_next_page,
-        next_cursor_context=next_context,
-    )
-    page.validate_for_context(context)
-    control.checkpoint()
-    next_cursor = None if next_context is None else generation.cursor_codec.encode(next_context)
-    control.checkpoint()
-    return CatalogLeaseResult(page, next_cursor)
+    return CatalogLeaseResult(result.page, result.next_cursor, suggestions)
 
 
 def _catalog_execution_error_code(error: Exception) -> CatalogErrorCode:
@@ -1973,8 +1983,11 @@ def _validated_result(
     dataset_generation: str,
     cursor_char_limit: int,
     request_body_byte_limit: int,
+    include_suggestions: bool = False,
 ) -> CatalogResponseEnvelopeV1:
     if type(value) is not CatalogLeaseResult or type(value.page) is not CatalogPageV1:
+        raise _OutputContractFailure
+    if (value.suggestions is not None) != include_suggestions:
         raise _OutputContractFailure
     try:
         page = CatalogPageV1.from_json_bytes(value.page.to_json_bytes())
@@ -1998,7 +2011,9 @@ def _validated_result(
     if next_request_bytes is not None and len(next_request_bytes) > request_body_byte_limit:
         raise _OutputContractFailure
     try:
-        return CatalogResponseEnvelopeV1(page=page, next_cursor=next_cursor)
+        return CatalogResponseEnvelopeV1(
+            page=page, next_cursor=next_cursor, suggestions=value.suggestions
+        )
     except RuntimeApiContractError as exc:
         raise _OutputContractFailure from exc
 

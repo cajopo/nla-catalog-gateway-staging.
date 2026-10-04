@@ -1,5 +1,11 @@
 # WS-09A — Evidence-bound runtime API v1
 
+## Search v2 follow-up (#60, 2026-09-15)
+
+Search result pages now use SQLite, with optional first-page `suggestions` from the same
+lease and predicate. See `ws-05-name-code-search-v2.md` for wire fields, compatibility,
+tests and remaining source-code/UI work. All activation constraints below remain unchanged.
+
 ## Scope
 
 Issue #33 integrates the accepted, framework-independent runtime components without adding an HTTP

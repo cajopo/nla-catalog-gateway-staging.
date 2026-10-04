@@ -24,6 +24,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Final
 
+from nla_catalog_gateway.canonical_search import CanonicalSearchError, SingleCardSuggestion
 from nla_catalog_gateway.runtime_contract import (
     MAX_CONTRACT_BYTES,
     CatalogItemV1,
@@ -35,9 +36,15 @@ from nla_catalog_gateway.runtime_contract import (
     DatasetManifestV1,
     RuntimeContractError,
 )
+from nla_catalog_gateway.search_sql import (
+    normalized_query,
+    search_facts,
+    search_scope,
+    select_suggestions,
+)
 from nla_catalog_gateway.taxonomy import Game, ProductFamily
 
-PROJECTION_SCHEMA_VERSION: Final = 1
+PROJECTION_SCHEMA_VERSION: Final = 2
 PROJECTION_APPLICATION_ID: Final = 0x4E4C4131
 MIN_CURSOR_SECRET_BYTES: Final = 32
 MAX_CURSOR_SECRET_BYTES: Final = 4096
@@ -125,6 +132,9 @@ CREATE TABLE products (
     product_family TEXT NOT NULL,
     product_subtype TEXT,
     is_public INTEGER NOT NULL CHECK (is_public IN (0, 1)),
+    normalized_card_name TEXT NOT NULL,
+    search_codes_json TEXT NOT NULL,
+    has_positive_inventory INTEGER NOT NULL CHECK (has_positive_inventory IN (0, 1)),
     product_record_json BLOB NOT NULL,
     UNIQUE (product_gid_length, product_gid_digits)
 ) STRICT;
@@ -174,6 +184,9 @@ _EXPECTED_SCHEMA_SQL = {
             product_family TEXT NOT NULL,
             product_subtype TEXT,
             is_public INTEGER NOT NULL CHECK (is_public IN (0, 1)),
+            normalized_card_name TEXT NOT NULL,
+            search_codes_json TEXT NOT NULL,
+            has_positive_inventory INTEGER NOT NULL CHECK (has_positive_inventory IN (0, 1)),
             product_record_json BLOB NOT NULL,
             UNIQUE (product_gid_length, product_gid_digits)
         ) STRICT
@@ -278,10 +291,12 @@ def _validated_request(request: object) -> CatalogRequestV1:
 
 def _validate_proof_request(request: object) -> CatalogRequestV1:
     canonical = _validated_request(request)
-    if canonical.query not in (None, ""):
-        raise UnsupportedPaginationRequestError("non-empty search is outside pagination scope")
-    if canonical.filters.nonempty:
-        raise UnsupportedPaginationRequestError("non-empty filters are outside pagination scope")
+    if canonical.query not in (None, "") and canonical.product_family.value != "single":
+        raise UnsupportedPaginationRequestError("search currently requires the single family")
+    try:
+        normalized_query(canonical)
+    except CanonicalSearchError as exc:
+        raise PaginationContractError("search query is invalid") from exc
     return canonical
 
 
@@ -376,7 +391,8 @@ class CursorCodecV1:
         raw = canonical.to_json_bytes()
         if len(raw) > MAX_CONTRACT_BYTES:
             raise PaginationContractError("cursor context exceeds the byte limit")
-        signature = hmac.new(self.secret, raw, hashlib.sha256).digest()
+        message = (b"nla-search-v2\x00" if canonical.request.query not in (None, "") else b"") + raw
+        signature = hmac.new(self.secret, message, hashlib.sha256).digest()
         return f"{_url_encode(raw)}.{_url_encode(signature)}"
 
     def decode(
@@ -398,7 +414,8 @@ class CursorCodecV1:
         signature = _url_decode(parts[1])
         if len(raw) > MAX_CONTRACT_BYTES or len(signature) != hashlib.sha256().digest_size:
             raise InvalidCursorError("cursor token is invalid")
-        expected_signature = hmac.new(self.secret, raw, hashlib.sha256).digest()
+        message = (b"nla-search-v2\x00" if expected_request.query not in (None, "") else b"") + raw
+        expected_signature = hmac.new(self.secret, message, hashlib.sha256).digest()
         if not hmac.compare_digest(signature, expected_signature):
             raise InvalidCursorError("cursor token is invalid")
         try:
@@ -764,6 +781,17 @@ class CatalogProjection:
         after_digits: str | None,
         limit: int,
     ) -> list[sqlite3.Row]:
+        if request.query not in (None, "") or request.filters.nonempty:
+            where, parameters = search_scope(request)
+            if after_digits is not None:
+                where += " AND (product_gid_length, product_gid_digits) > (?, ?)"
+                parameters += (len(after_digits), after_digits)
+            # Only fixed predicates are assembled; query/filter/cursor values stay bound.
+            sql = f"""SELECT product_gid, handle, commercial_title, canonical_card_name,
+                             game, product_family, product_subtype
+                      FROM products WHERE {where}
+                      ORDER BY product_gid_length, product_gid_digits LIMIT ?"""  # noqa: S608
+            return connection.execute(sql, (*parameters, limit)).fetchall()
         family = request.product_family
         if family.value == "all":
             if after_digits is None:
@@ -790,6 +818,49 @@ class CatalogProjection:
                 limit,
             )
         return connection.execute(sql, parameters).fetchall()
+
+    def suggest(
+        self,
+        request: CatalogRequestV1,
+        *,
+        limit: int = 10,
+        checkpoint: Callable[[], None] | None = None,
+    ) -> tuple[SingleCardSuggestion, ...]:
+        """Bounded same-query groups; sold-out prints remain included by default."""
+        request = _validate_proof_request(request)
+        if request.product_family.value != "single":
+            raise UnsupportedPaginationRequestError("suggestions require the single family")
+        if checkpoint is not None and not callable(checkpoint):
+            raise PaginationContractError("pagination checkpoint is invalid")
+        failure: BaseException | None = None
+
+        def progress() -> int:
+            nonlocal failure
+            try:
+                if checkpoint is not None:
+                    checkpoint()
+            except BaseException as exc:
+                failure = exc
+                return 1
+            return 0
+
+        if progress():
+            assert failure is not None
+            raise failure
+        self._assert_file_unchanged()
+        try:
+            with _readonly_connection(self.path) as connection:
+                connection.set_progress_handler(progress, _SQLITE_PROGRESS_VM_STEPS)
+                result = select_suggestions(connection, request, limit=limit)
+        except sqlite3.Error as exc:
+            if failure is not None:
+                raise failure from None
+            raise DatasetUnavailableError("catalog dataset is unavailable") from exc
+        self._assert_file_unchanged()
+        if progress():
+            assert failure is not None
+            raise failure
+        return result
 
     @staticmethod
     def _variant_rows(
@@ -881,7 +952,8 @@ def _verify_projection_semantics(
     products = connection.execute(
         """SELECT product_gid, product_gid_length, product_gid_digits, handle,
                   commercial_title, canonical_card_name, game, product_family,
-                  product_subtype, is_public, product_record_json
+                  product_subtype, is_public, normalized_card_name, search_codes_json,
+                  has_positive_inventory, product_record_json
            FROM products
            ORDER BY product_gid_length, product_gid_digits"""
     )
@@ -920,6 +992,7 @@ def _verify_projection_semantics(
             record.product_family.value,
             record.product_subtype,
             int(is_public),
+            *search_facts(record),
         )
         actual_product = tuple(row[name] for name in row.keys()[:-1])
         if actual_product != expected_product or len(record.variants) > MAX_VARIANTS_PER_PRODUCT:
@@ -1017,6 +1090,7 @@ def build_catalog_projection(
                 record.product_family.value,
                 record.product_subtype,
                 int(is_public),
+                *search_facts(record),
                 raw_record,
             )
         )
@@ -1068,7 +1142,7 @@ def build_catalog_projection(
         try:
             connection.executescript(_SCHEMA)
             connection.executemany(
-                "INSERT INTO products VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO products VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 product_rows,
             )
             connection.executemany("INSERT INTO variants VALUES (?, ?, ?, ?, ?, ?)", variant_rows)

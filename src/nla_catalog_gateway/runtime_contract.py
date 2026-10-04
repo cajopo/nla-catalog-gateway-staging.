@@ -1213,13 +1213,16 @@ class CatalogRequestV1(_JsonDto):
 def _request_context_dict(dataset_generation: str, request: CatalogRequestV1) -> dict[str, Any]:
     if type(request) is not CatalogRequestV1:
         raise _fail("request context request must be CatalogRequestV1")
-    return {
+    context = {
         "contractVersion": CONTRACT_VERSION,
         "cursorVersion": 1,
         "datasetGeneration": dataset_generation,
         "endpoint": CatalogEndpoint.CATALOG.value,
         "request": request.as_dict(),
     }
+    if request.query not in (None, ""):
+        context["searchSemanticsVersion"] = 2
+    return context
 
 
 @dataclass(frozen=True, slots=True)
