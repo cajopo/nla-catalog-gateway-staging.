@@ -9,6 +9,56 @@ language/condition/finish. Gateway/normal refresh stay read-only.
 
 ## Current increment
 
+### Bounded source-to-draft runner — 2026-09-26
+
+`python -m scripts.import_cardtrader_drafts` now connects the existing components:
+complete fresh source -> current pinned projection -> canonical preparation ->
+reference selection -> live identity guard -> durable create-only primitive.
+No new Shopify operation or product writer is introduced. Default is preview;
+`--apply` is explicit and `--max-attempts` defaults to1 (maximum100 per invocation,
+not a promise of store-wide daily quota). Required arguments: `--refresh-config`,
+`--capture`, `--identities`, `--run`, `--ledger`, `--generator-sha`.
+
+Use the existing private persistent ledger, never a new empty replacement. The
+run must be a new path under the ledger's parent; retain it because its reference
+bundle may become an input for future refreshes. The CLI holds the existing
+whole-pipeline lock, rejects pending/stale refresh or unresolved prior attempts,
+and checks the fresh complete identity export before preparation. On apply it
+backs up the current configuration and changes ONLY the reference path and its
+two pins. New reference files/directories are durable before config selection;
+the original reference is preserved. Do not roll back reference additions after
+creating corresponding drafts: doing so would break later reconciliation.
+
+Every attempted draft uses the existing no-resend ledger and current identity
+callback; source age/config selection are checked again at that boundary. All
+products remain DRAFT/unpublished. No existing product, selling price, quantity,
+PowerTools configuration or theme change is added. Uncertain creation stops the
+batch and blocks subsequent runs pending inspection. A ledger backup and private
+result are retained; interruption cannot produce a false complete receipt.
+
+80 focused runner/importer tests PASS. Runner fixtures exercise actual source
+capture, SQLite comparison, reference generation, config selection and SQLite
+ledger with simulated Shopify responses; current identity API guards were tested
+live separately above. Preview, bounded selection, reference-before-write,
+no-resend, missing prerequisites and interruptions covered. Ruff/help/independent
+review PASS after false-success-on-interrupt correction. No new live product write
+or daily timer by this increment. Full orchestration, real runner verification,
+retention and scheduling remain pending; publication is still separately gated.
+
+Native VPS runner preparation: codebe23a40503e93547af7ae0a031aecb573cd14169
+installed separately at `/opt/nla-staging/importer-be23a40`; archive SHA256
+65dcd4c23a6777ec158fbd264f953aec5c416b3b2765035bf2cd7b91b14ab566.
+CLI help/import smoke passed on native Linux. Actual preview against the current
+projection/ledger/reference rejected the still-running source with
+`incomplete_capture`; hashes prove refresh configuration and ledger unchanged,
+with zero Shopify API calls. Private receipt:
+`/opt/nla-staging/importer-state/runner-negative-preflight-be23a40.json`.
+The preview directory `preflight-incomplete-be23a40` is retained, not reused.
+This is a negative prerequisite test, NOT successful live draft execution.
+
+Documentation rechecked: https://shopify.dev/docs/api/admin-graphql/latest/mutations/productCreate
+(currently2026-07), https://www.cardtrader.com/it/docs/api/full/reference.
+
 ### Repeatable current Shopify identity check — 2026-09-26
 
 `python -m scripts.capture_import_identities` generalizes the successful pilot's
@@ -389,3 +439,181 @@ Browser access attempted to avoid burdening the owner with app setup. The Codex
 browser is at Shopify's saved-account selection screen; handoff requested. No app
 settings or scopes changed. Required-scope updates need a new app version plus
 merchant approval per official manage-access-scopes documentation.
+
+## Repeatable cycle candidate — 2026-09-26
+
+`scripts/refresh_market_catalog.py` coordinates existing source capture, a single
+retained identity export, bounded draft importer and existing refresh operator.
+Default preview; explicit `--apply-drafts`; no timer installed and no publication.
+Errors retain a pending receipt and prevent blind restart. Retain run directories:
+the selected canonical reference may be inside one. Retention/scheduling and live
+positive-cycle evidence remain outstanding; new-market automation remains OFF.
+
+The batch runner now excludes current Shopify IDs and same-shop verified ledger
+CM/blueprint IDs BEFORE selecting the batch. This prevents repeated selection when
+the projection predates a created draft. Live duplicate guards remain required.
+
+Evidence: 24 targeted runner/coordinator tests PASS (14.78s), Ruff check and format
+check PASS. Independent static review by refresh_recovery_review: no Blocker/High.
+No deployment, Shopify mutation, timer or GitHub push for this delta. Existing
+CardTrader capture remains the SAME service/PID184145, last observed1458/2430sets;
+never restart it merely because observation ends. Use its completed output for the
+next positive preview and authorized bounded DRAFT trial.
+
+## Complete-source live trial — 2026-09-26
+
+Installed `bdabf46dffb082a2f1070ca0f5315446d3c502e2` from archive SHA256
+64bedf355e66d4a217a28f6c4bdcb3a0be91d97f752b23a95f1e0c5f013c21ca.
+The retained CardTrader capture completed 2430 sets / 256177 blueprints, 37 source
+anomalies; no second capture. Fresh Shopify identities Bulk12534107799820 completed
+291796 products, started2026-09-26T11:05:10Z. Preview:4065candidates,1existing skipped,
+5preparation exceptions,1selected, no mutations. Its directory is
+/opt/nla-staging/importer-state/preview-complete-source-bdabf46.
+
+One explicit `import_cardtrader_drafts --apply --max-attempts 1` then succeeded:
+CM904085 / blueprint408222, Magic, Dáin Ironfoot - The Duelist Promos [001],
+gid://shopify/Product/16570959921420. Result `batch_complete`, `draft_verified`,
+publishedfalse. Retained run: importer-state/apply-complete-source-bdabf46-one;
+ledger now prevents resend. No pre-existing product changes. Existing canonical
+reference already contained this mapping; configured reference/pins stayed unchanged.
+The normal read-only index refresh was started once afterwards, invocation
+7a1ac08e8ac04759b7ea8bb2a8d62013; completion not yet observed. No recurring market
+timer enabled. Publication remains an unanswered owner gate; full goal not complete.
+
+## Bounded raw-input retention — 2026-09-26
+
+Before a new market cycle's disk-reserve check, under both existing pipeline locks,
+prune only large named inputs of completed `market-*` cycles. Keep the latest two
+cycles, the configured canonical-reference owner, and the direct before-reference
+owners of those retained cycles. Incomplete cycles or pending refreshes stop pruning.
+Targets are blueprint payloads, the identity JSONL, the per-batch ledger backup and
+unused canonical sidecars. Permanent ledger, completion/source manifests, source
+anomalies, preparation/candidate/exception reports and manual pilot directories stay.
+No directory is recursively removed. Canonical paths, file ownership/type, single
+links and unchanged file identity/configuration are checked before unlinking.
+
+Expired raw inputs are not recoverable from these receipts and are not reusable
+captures. The source manifest retains their hashes; ordinary future cycles acquire
+their own current source. An interrupted cleanup can leave only part of the old
+inputs removed; repeat cleanup skips missing files and never recreates products.
+The compact pruning receipt is written after removal, so a crash before that write
+can omit that housekeeping receipt (source manifests and importer ledger remain).
+
+Official Python filesystem documentation consulted before implementation:
+https://docs.python.org/3.12/library/shutil.html#shutil.rmtree . Individual named-file
+unlinking avoids recursive deletion of directories containing operational evidence.
+21 targeted retention/coordinator tests PASS (2.25s), independent static review no
+blocker. No production cleanup, timer activation, Shopify mutation or GitHub push.
+
+Native Linux fixture proof also PASS for executable commit8777eb3: real root/0600
+document reads, both locks, eight named fixture deletions, active/latest retention,
+idempotent repeat and pending-cycle rejection. ProductionDataChanged=false.
+Fixture evidence: /var/tmp/nla-retention-proof-8777eb3-0aoain7k and
+/var/tmp/nla-retention-fixtures-8777eb3-h5g81r68. No dependency installation needed.
+
+## Reuse validated identity baseline within a batch — 2026-09-26
+
+The per-product guard previously rescanned the complete identity JSONL for every
+candidate. `missing_guard` now fully validates it once when a batch guard is built;
+the runner still separately reads it for initial candidate exclusion (two full
+scans per batch, not per product). Before AND after each live check it rechecks
+canonical regular single-link paths and inode/device/mode/owner/size/mtime/ctime of
+all four snapshot files, and the unchanged 30-minute age limit. No global cache.
+Shop, metadata definitions, recent Shopify identity changes and deterministic
+handle remain queried separately for every candidate; remote results are not cached.
+Standalone `verify_missing` remains compatible and builds a fresh one-call guard.
+No API/query/scopes/publication behavior changed.
+
+38 identity/runner tests PASS14.54s, Ruff/formatPASS, independent static review no
+blocker. Regressions cover scan-once/live-delta-not-cached, all four local files,
+expiry before network and mutation during network. Not deployed or run live yet.
+This removes repeated work needed before multi-batch orchestration; the cycle's
+one-batch maximum remains unchanged and does not yet clear the full backlog.
+
+## Bounded multi-batch cycle — 2026-09-26
+
+The market coordinator now accepts `--max-batches` (default1, range1..100) in
+addition to the unchanged per-batch `--max-attempts` (range1..100). It acquires
+CardTrader once, obtains a separate fresh Shopify identity export for each batch,
+and refreshes the Shopify-derived index once at the end if any new draft was
+verified. The existing 30-minute identity and24-hour source limits, live checks,
+no-resend ledger and create-only DRAFT/unpublished/zero-stock rules are unchanged.
+Preview runs only one batch. No API/query/schema, scheduling or publication change.
+
+The first batch retains `batch/` and `identities/`; subsequent batches use
+`batch-0002/`, `identities-0002/`, and so on. Completion receipts retain cumulative
+attempts, per-batch summaries, `remaining`, `eligibleExhausted` and
+`completionReason`. A successfully bounded but unfinished cycle is explicitly
+`draft_cycle_partial`, not complete ingestion; it can close its pending marker
+after the final refresh. The backlog is conservative: live-guard rejections are
+not counted as imported. A batch with no verified progress stops rather than
+repeating the same selection. Source/preparation exceptions remain reported even
+when eligible candidates are exhausted. Uncertainty still leaves pending state
+and requires inspection; no automatic retry or recovery is introduced.
+
+After each successful batch, only the latest two identity JSONL payloads are
+retained within that cycle. Expiry verifies the completed batch and identity
+receipts, exact payload SHA256 and unchanged canonical regular single-link file;
+a durable expiry intent precedes unlink. All directories, receipts, source
+anomalies, preparation reports and the permanent ledger remain. Historical cycle
+retention also understands numbered batch/identity paths and their before-reference
+protection. These expired payloads are deliberately not recoverable from receipts.
+Filesystem reference: https://docs.python.org/3.12/library/pathlib.html#pathlib.Path.unlink
+
+Author validation:71 focused coordinator/retention/runner/identity tests PASS,
+Ruff check and format PASS. Independent main-agent review found no blocking
+findings: checked the full delta against the real runner's candidate/ledger,
+reference selection, empty-batch and freshness contracts, plus identity receipts
+and retention targets. No additional acquisition is needed for this review.
+Not yet deployed or exercised as a live multi-batch cycle; real throughput and
+timer coordination remain operational gates. Publication is not authorized.
+
+## Draft-only recurring unit templates — 2026-09-26
+
+`ops/systemd/nla-market-catalog.{service,timer}.in` are uninstalled templates,
+not an enabled scheduler. Before installation, render `@IMPORTER_PACKAGE@` as the
+absolute verified importer checkout, `@IMPORTER_CODE_SHA@` as its exact 40-hex
+commit, and `@REFRESH_PACKAGE@` as the separately verified refresh checkout
+(currently `/opt/nla-staging/refresh-5176337`). Do not pass an arbitrary branch or
+mutable path as a pin. Verify the installed archives and configuration, render
+the filenames without `.in`, then validate with the VPS's `systemd-analyze verify`
+and `systemd-analyze calendar '*-*-* 02,14:00:00 UTC'` before enabling anything.
+No template rendering or installation is performed by this change.
+
+The fixed existing paths are `/usr/bin/python3`,
+`/opt/nla-staging/operator/catalog-refresh.json`,
+`/opt/nla-staging/importer-state/draft-attempts.sqlite3` and
+`/opt/nla-staging/config/cardtrader-api-credentials.json`. State remains
+`/opt/nla-staging/importer-state`; credentials are read from their private file,
+never embedded in the unit. The explicit budget is 100 attempts per batch and 50 batches;
+this is not a quota or throughput guarantee and does not authorize publication.
+
+The oneshot has a 23h start timeout, no persistent active state and no automatic
+restart. Its pre-start command stops ONLY `nla-catalog-refresh.timer`; its
+post-stop command starts that timer again on success, startup failure or process
+failure. It never stops an existing `nla-catalog-refresh.service`. Existing locks
+and pending markers still reject conflicting/uncertain work; inspect pending
+evidence instead of restarting blindly. The normal timer remains the fallback;
+its already-running service is allowed to finish. The market timer requests
+02:00 and 14:00 UTC, with `Persistent=false` (no missed-run catchup). A running
+market instance is not duplicated by another timer tick. Recovery must be terminal
+and current pending state resolved before initial installation/activation.
+
+Every successful **apply** cycle now performs exactly one final read-only Shopify
+index refresh, even when `run_locked` returns its no-selection `preview` receipt.
+PowerTools price/stock changes must still reach the index without new draft
+creation. An actual preview cycle never refreshes. Uncertain cycles still stop
+before the final refresh and preserve pending evidence.
+
+Official systemd manuals consulted (upstream sources, after rendered manuals
+returned HTTP403):
+
+- https://github.com/systemd/systemd/blob/main/man/systemd.service.xml
+- https://github.com/systemd/systemd/blob/main/man/systemd.timer.xml
+- https://github.com/systemd/systemd/blob/main/man/systemd.time.xml
+
+23 targeted tests PASS; template assertions cover empty apply versus preview,
+the timer-only stop/restore hooks, explicit UTC schedule, no catchup and no restart.
+Independent main-agent review found no blocking findings against the real empty
+batch contract and installed systemd service/timer manuals. Native systemd
+validation remains required before installation; no live timer is enabled by this commit.

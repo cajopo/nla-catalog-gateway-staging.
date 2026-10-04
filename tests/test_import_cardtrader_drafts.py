@@ -1,0 +1,371 @@
+import hashlib
+import json
+import os
+import sqlite3
+from contextlib import closing
+from pathlib import Path
+from types import SimpleNamespace
+
+import pytest
+from scripts import import_cardtrader_drafts as runner
+from scripts.compare_cardtrader_catalog import CATEGORIES
+
+from nla_catalog_gateway import cardtrader_capture
+from nla_catalog_gateway.canonical_names import SIDECAR_FILENAME
+from nla_catalog_gateway.shopify_draft_import import (
+    CREATE_DRAFT,
+    INITIALIZE_VARIANT,
+    create_draft_once,
+)
+from test_canonical_reference_extension import parent
+from test_shopify_draft_import import SHOP, FakeShopify
+
+
+@pytest.fixture
+def setup(tmp_path, monkeypatch):
+    monkeypatch.setattr(runner.activation, "sync_directory", lambda _: None)
+    monkeypatch.setattr(runner.refresh, "document", lambda p: json.loads(p.read_bytes()))
+    monkeypatch.setattr(runner.refresh, "freshness", lambda _: {"status": "fresh"})
+    monkeypatch.setattr(runner.identities, "read_fresh_identities", lambda *_: ({}, set()))
+    monkeypatch.setattr(
+        runner.identities,
+        "missing_guard",
+        lambda work, shop, graphql: (
+            lambda identifier: runner.identities.verify_missing(work, shop, identifier, graphql)
+        ),
+    )
+    monkeypatch.setattr(cardtrader_capture.time, "sleep", lambda _: None)
+    monkeypatch.setattr(
+        cardtrader_capture.shutil, "disk_usage", lambda _: SimpleNamespace(free=8 * 1024**3)
+    )
+    bundle, pin = parent(tmp_path)
+    source = tmp_path / "capture"
+
+    def collection(kind, **kwargs):
+        if kind == "games":
+            return [dict(id=i) for i in (1, 4, 5, 15)]
+        if kind == "categories":
+            return [dict(id=i, game_id=g, name=n) for i, (g, n, _) in CATEGORIES.items()]
+        if kind == "expansions":
+            return [dict(id=i, game_id=i, name="New Set") for i in (1, 4, 5, 15)]
+        if kwargs["expansion_id"] != 1:
+            return []
+        return [
+            dict(
+                id=9 + i,
+                game_id=1,
+                expansion_id=1,
+                category_id=1,
+                card_market_ids=[42 + i],
+                name="New Card" + str(i),
+                image_url="https://cardtrader.com/image.jpg",
+                fixed_properties={"collector_number": str(i), "mtg_rarity": "Common"},
+            )
+            for i in range(2)
+        ]
+
+    cardtrader_capture.capture_catalog(SimpleNamespace(collection=collection), source)
+    # Real immutable SQLite input, not a mocked comparison/preparation result.
+    dbpath = tmp_path / "source.sqlite3"
+    with closing(sqlite3.connect(dbpath)) as db:
+        db.execute("CREATE TABLE projection_metadata(dataset_manifest_json TEXT)")
+        db.execute(
+            "INSERT INTO projection_metadata VALUES (?)",
+            (json.dumps({"generatedAt": "2026-09-26T00:00:00Z"}),),
+        )
+        db.execute("CREATE TABLE products(product_record_json TEXT)")
+        db.commit()
+    raw_manifest = json.dumps(
+        {
+            "artifacts": [
+                {
+                    "filename": "catalog-projection.v1.sqlite3",
+                    "sha256": hashlib.sha256(dbpath.read_bytes()).hexdigest(),
+                }
+            ]
+        }
+    ).encode()
+    manifest_pin = hashlib.sha256(raw_manifest).hexdigest()
+    generation = tmp_path / "store" / "generations" / manifest_pin
+    generation.mkdir(parents=True)
+    (generation / "catalog-projection.v1.sqlite3").write_bytes(dbpath.read_bytes())
+    (generation / "staging-generation-manifest.v1.json").write_bytes(raw_manifest)
+    run_root = tmp_path / "refresh-runs"
+    run_root.mkdir()
+    (run_root / "last-success.json").write_text(json.dumps({"manifestSha256": manifest_pin}))
+    config = {key: "unused" for key in runner.refresh.FIELDS}
+    config.update({key: str(tmp_path / key) for key in runner.refresh.PATHS})
+    config.update(
+        shop=SHOP,
+        run_root=str(run_root),
+        reference=str(bundle),
+        reference_manifest_sha256=pin,
+        reference_data_sha256=hashlib.sha256((bundle / SIDECAR_FILENAME).read_bytes()).hexdigest(),
+    )
+    config_path = tmp_path / "refresh.json"
+    config_path.write_text(json.dumps(config))
+    api = FakeShopify()
+    ledger = tmp_path / "ledger.sqlite3"
+    create_draft_once(
+        ledger,
+        shop=SHOP,
+        blueprint_id=9,
+        cardmarket_id=42,
+        game="magic",
+        title="Initial",
+        image_url="https://cardtrader.com/image.jpg",
+        graphql=api,
+        verify_missing=lambda: False,
+        enabled=True,
+    )
+    ledger.chmod(0o600)
+    native_lstat = Path.lstat
+
+    def root_ledger_facts(path, *args, **kwargs):
+        facts = native_lstat(path, *args, **kwargs)
+        if path == ledger:
+            fields = list(facts)
+            fields[4] = 0  # Simulate the deployment owner only for this ledger.
+            return os.stat_result(fields)
+        return facts
+
+    monkeypatch.setattr(Path, "lstat", root_ledger_facts)
+    api.calls.clear()
+    events = []
+
+    def verify(*args):
+        current = json.loads(config_path.read_bytes())
+        assert current["reference_manifest_sha256"] != pin
+        events.append("live_guard_after_reference_selected")
+        return True
+
+    monkeypatch.setattr(runner.identities, "verify_missing", verify)
+    values = dict(
+        config_path=config_path,
+        capture=source,
+        identity_run=tmp_path / "identities",
+        run=tmp_path / "run-1",
+        ledger=ledger,
+        generator_sha="b" * 40,
+        client=SimpleNamespace(graphql=api),
+    )
+    return values, config, api, events
+
+
+def test_default_preview_uses_real_preparation_but_never_writes_shopify_or_config(setup):
+    args, original, api, events = setup
+    result = runner.run_locked(**args)
+    assert result["status"] == "preview" and result["candidates"] == 2
+    assert result["selected"] == 1 and result["attempts"] == []
+    assert json.loads(args["config_path"].read_bytes()) == original
+    assert not api.calls and not events
+
+
+def test_real_preparation_to_ledger_import_order_and_no_resend(setup, monkeypatch):
+    args, original, api, events = setup
+    result = runner.run_locked(**args, apply=True)
+    assert result["status"] == "batch_complete" and result["selected"] == 1
+    assert result["attempts"][0]["status"] == "draft_verified"
+    assert events == ["live_guard_after_reference_selected"]
+    updated = json.loads(args["config_path"].read_bytes())
+    changed = {k for k in updated if updated[k] != original[k]}
+    assert changed == {"reference", "reference_manifest_sha256", "reference_data_sha256"}
+    assert (args["run"] / "ledger-after.sqlite3").is_file()
+    assert json.loads((args["run"] / "refresh-config.before.json").read_bytes()) == original
+    assert sum(query == CREATE_DRAFT for query, _ in api.calls) == 1
+    with pytest.raises(FileExistsError):
+        runner.run_locked(**args, apply=True)
+    args["run"] = args["run"].with_name("run-2")
+    calls = len(api.calls)
+    selected = []
+
+    def inspect_next(ledger, **kwargs):
+        selected.append(kwargs["cardmarket_id"])
+        return dict(status="not_verified_missing")
+
+    monkeypatch.setattr(runner, "create_draft_once", inspect_next)
+    repeated = runner.run_locked(**args, apply=True)
+    assert repeated["skippedExisting"] == 1 and selected == [43]
+    assert len(api.calls) == calls
+
+
+def test_existing_shopify_drafts_are_skipped_before_batch_limit(setup, monkeypatch):
+    args, _, api, _ = setup
+    monkeypatch.setattr(runner.identities, "read_fresh_identities", lambda *_: ({}, {"42"}))
+    selected = []
+
+    def inspect_next(ledger, **kwargs):
+        selected.append(kwargs["cardmarket_id"])
+        return dict(status="not_verified_missing")
+
+    monkeypatch.setattr(runner, "create_draft_once", inspect_next)
+    result = runner.run_locked(**args, apply=True)
+    assert result["skippedExisting"] == 1 and selected == [43]
+    assert not api.calls
+
+
+def test_uncertain_creation_stops_batch_and_blocks_next_run(setup):
+    args, _, api, _ = setup
+    api.fail_on = CREATE_DRAFT
+    result = runner.run_locked(**args, apply=True, max_attempts=2)
+    assert result["status"] == "needs_reconciliation" and len(result["attempts"]) == 1
+    assert result["published"] is False
+    args["run"] = args["run"].with_name("run-2")
+    with pytest.raises(ValueError, match="previous_import_needs_reconciliation"):
+        runner.run_locked(**args, apply=True)
+    assert sum(query == CREATE_DRAFT for query, _ in api.calls) == 1
+
+
+@pytest.mark.parametrize(
+    ("error", "reason"),
+    [
+        (ValueError("inconsistent_identity_page"), "inconsistent_identity_page"),
+        (ValueError("identity_export_stale"), "identity_export_stale"),
+        (ValueError("secret_remote_payload"), "unexpected_batch_error"),
+        (ValueError(["secret_remote_payload"]), "unexpected_batch_error"),
+        (RuntimeError("secret_remote_payload"), "unexpected_batch_error"),
+        (runner.CaptureHttpError(), "shopify_request_failed"),
+        (sqlite3.OperationalError("secret_remote_payload"), "ledger_database_error"),
+    ],
+)
+def test_guard_failure_records_safe_cause_without_retry_or_creation(
+    setup, monkeypatch, error, reason
+):
+    args, _, api, _ = setup
+
+    def fail(*_):
+        raise error
+
+    monkeypatch.setattr(runner.identities, "verify_missing", fail)
+    result = runner.run_locked(**args, apply=True, max_attempts=2)
+    assert result["status"] == "stopped_inspect_before_retry"
+    assert result["failure"] == dict(reason=reason, cardmarketId=42)
+    assert result["attempts"] == []
+    assert all(query != CREATE_DRAFT for query, _ in api.calls)
+    receipt = (args["run"] / "result.json").read_text()
+    assert "secret_remote_payload" not in receipt
+    assert json.loads(receipt) == result
+    with closing(sqlite3.connect(args["ledger"])) as db:
+        assert db.execute("SELECT COUNT(*) FROM draft_attempts").fetchone()[0] == 0
+
+
+def test_failure_after_verified_attempt_retains_progress_and_next_identity(setup, monkeypatch):
+    args, _, api, _ = setup
+
+    def verify(_work, _shop, identifier, _graphql):
+        if identifier == 43:
+            raise ValueError("inconsistent_identity_page")
+        return True
+
+    monkeypatch.setattr(runner.identities, "verify_missing", verify)
+    result = runner.run_locked(**args, apply=True, max_attempts=2)
+    assert result["failure"] == dict(reason="inconsistent_identity_page", cardmarketId=43)
+    assert len(result["attempts"]) == 1
+    assert result["attempts"][0]["status"] == "draft_verified"
+    assert sum(query == CREATE_DRAFT for query, _ in api.calls) == 1
+    with closing(sqlite3.connect(args["run"] / "ledger-after.sqlite3")) as db:
+        assert db.execute("SELECT cardmarket_id,state FROM draft_attempts").fetchall() == [
+            (42, "draft_verified")
+        ]
+
+
+@pytest.mark.parametrize("invalid_id", [False, True])
+def test_preparation_error_never_reuses_previous_candidate_id(setup, monkeypatch, invalid_id):
+    args, _, api, _ = setup
+    original = runner.prepare
+
+    def prepare(*a, **kw):
+        result = original(*a, **kw)
+        candidate = result["candidates"][1]
+        candidate["creationApproved"] = True
+        if invalid_id:
+            candidate["cardmarketId"] = "secret_remote_payload"
+        return result
+
+    monkeypatch.setattr(runner, "prepare", prepare)
+    result = runner.run_locked(**args, apply=True, max_attempts=2)
+    assert len(result["attempts"]) == 1
+    assert result["failure"] == dict(
+        reason="unexpected_batch_error" if invalid_id else "unexpected_preparation_approval",
+        cardmarketId=None if invalid_id else 43,
+    )
+    assert "secret_remote_payload" not in (args["run"] / "result.json").read_text()
+    assert sum(query == CREATE_DRAFT for query, _ in api.calls) == 1
+
+
+@pytest.mark.parametrize("interrupted_operation", [CREATE_DRAFT, INITIALIZE_VARIANT])
+def test_interrupt_cannot_publish_false_success_or_allow_retry(setup, interrupted_operation):
+    args, _, api, _ = setup
+
+    def interrupted(query, variables):
+        if query == interrupted_operation:
+            raise KeyboardInterrupt
+        return api(query, variables)
+
+    args["client"] = SimpleNamespace(graphql=interrupted)
+    with pytest.raises(KeyboardInterrupt):
+        runner.run_locked(**args, apply=True)
+    receipt = json.loads((args["run"] / "result.json").read_bytes())
+    assert receipt["status"] == "stopped_inspect_before_retry"
+    assert (args["run"] / "ledger-after.sqlite3").exists()
+    args["run"] = args["run"].with_name("run-2")
+    with pytest.raises(ValueError, match="previous_import_needs_reconciliation"):
+        runner.run_locked(**args, apply=True)
+
+
+@pytest.mark.parametrize(
+    "case", ["pending", "stale_identities", "changed_manifest", "bad_limit", "wrong_run"]
+)
+def test_failed_prerequisites_never_change_reference_or_create(setup, monkeypatch, case):
+    args, original, api, _ = setup
+    if case == "pending":
+        (args["run"].parent / "refresh-runs" / "pending-run.json").write_text("{}")
+    elif case == "stale_identities":
+
+        def fail(*_):
+            raise ValueError("stale")
+
+        monkeypatch.setattr(runner.identities, "read_fresh_identities", fail)
+    elif case == "changed_manifest":
+        next(
+            (args["run"].parent / "store").rglob("staging-generation-manifest.v1.json")
+        ).write_text("{}")
+    elif case == "bad_limit":
+        args["max_attempts"] = 101
+    else:
+        args["run"] = args["ledger"].parent.parent / "outside"
+    with pytest.raises(ValueError):
+        runner.run_locked(**args, apply=True)
+    assert json.loads(args["config_path"].read_bytes()) == original
+    assert not api.calls
+
+
+def test_fixture_simulates_only_ledger_owner_preserving_native_metadata(setup):
+    args, _, _, _ = setup
+    ledger = args["ledger"]
+    simulated, native = ledger.lstat(), ledger.stat()
+    assert simulated.st_uid == 0
+    assert (simulated.st_mode, simulated.st_nlink, simulated.st_ino) == (
+        native.st_mode,
+        native.st_nlink,
+        native.st_ino,
+    )
+    other = args["config_path"]
+    assert other.lstat().st_uid == other.stat().st_uid
+
+
+@pytest.mark.parametrize("case", ["permissions", "hardlink"])
+def test_root_ledger_fixture_preserves_real_permission_and_link_refusals(setup, monkeypatch, case):
+    args, original, api, _ = setup
+    if case == "permissions":
+        args["ledger"].chmod(0o644)
+        monkeypatch.setattr(runner, "os", SimpleNamespace(name="posix"))
+        reason = "private_existing_ledger_required"
+    else:
+        os.link(args["ledger"], args["ledger"].with_name("other-owner.sqlite3"))
+        reason = "existing_regular_ledger_required"
+    with pytest.raises(ValueError, match=reason):
+        runner.run_locked(**args, apply=True)
+    assert not api.calls
+    assert json.loads(args["config_path"].read_bytes()) == original
+    assert not args["run"].exists()

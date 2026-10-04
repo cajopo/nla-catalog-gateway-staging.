@@ -11,6 +11,7 @@ import os
 import re
 import stat
 import sys
+import time
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -109,15 +110,76 @@ def read_fresh_identities(work, shop):
     return receipt, identities
 
 
+def missing_guard(work, shop, graphql):
+    """Validate immutable baseline once per batch; keep all per-product live guards."""
+    paths = [
+        work / name
+        for name in ("completed.json", "intent.json", "operation.json", "identities.jsonl")
+    ]
+
+    def stamps():
+        values = []
+        for path in paths:
+            facts = path.lstat()
+            if path.resolve() != path or not stat.S_ISREG(facts.st_mode) or facts.st_nlink != 1:
+                raise ValueError("identity_snapshot_changed")
+            values.append(
+                (
+                    facts.st_dev,
+                    facts.st_ino,
+                    facts.st_mode,
+                    facts.st_uid,
+                    facts.st_size,
+                    facts.st_mtime_ns,
+                    facts.st_ctime_ns,
+                )
+            )
+        return values
+
+    before = stamps()
+    receipt, known = read_fresh_identities(work, shop)
+    if stamps() != before:
+        raise ValueError("identity_snapshot_changed")
+    started = timestamp(receipt["startedAt"])
+
+    def check():
+        if stamps() != before:
+            raise ValueError("identity_snapshot_changed")
+        if not 0 <= (datetime.now(UTC) - started).total_seconds() <= 1800:
+            raise ValueError("identity_export_stale")
+
+    def verify(cardmarket_id):
+        for attempt in range(3):  # pragma: no branch -- always returns or raises by attempt 3
+            check()
+            try:
+                result = _live_missing(receipt, known, shop, cardmarket_id, graphql)
+            except ValueError as error:
+                if error.args != ("inconsistent_identity_page",) or attempt == 2:
+                    raise
+                # Re-read from page one; never accept partial pages or retry a write.
+                time.sleep(2)
+            else:
+                check()
+                return result
+
+    return verify
+
+
 def verify_missing(work, shop, cardmarket_id, graphql):
-    """Full fresh snapshot + live guards for create_draft_once's callback.
+    """Standalone compatibility entry point; batching uses missing_guard once."""
+    if type(cardmarket_id) is not int or not 0 < cardmarket_id < 2**63:
+        raise ValueError("invalid_cardmarket_id")
+    return missing_guard(work, shop, graphql)(cardmarket_id)
+
+
+def _live_missing(receipt, identities, shop, cardmarket_id, graphql):
+    """Verified baseline + live guards for create_draft_once's callback.
 
     Returns False on an existing identity/handle. Errors fail closed. This cannot
     lock PowerTools or make Shopify's eventual-consistency interfaces atomic.
     """
     if type(cardmarket_id) is not int or not 0 < cardmarket_id < 2**63:
         raise ValueError("invalid_cardmarket_id")
-    receipt, identities = read_fresh_identities(work, shop)
     wanted = str(cardmarket_id)
     if wanted in identities:
         return False
