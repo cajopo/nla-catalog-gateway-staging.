@@ -140,11 +140,153 @@ def test_absolute_new_directory_required():
         capture.capture_catalog(Source(), Path("relative"))
 
 
-def test_capture_to_comparison_accounts_all_rows_and_preserves_provenance(tmp_path):
+class DeferredSource(Source):
+    def __init__(self, unavailable):
+        super().__init__()
+        self.unavailable = unavailable
+
+    def collection(self, kind, **kwargs):
+        rows = super().collection(kind, **kwargs)
+        if kind == "blueprints" and kwargs["expansion_id"] in self.unavailable:
+            raise CardTraderCatalogError("private upstream message", 404)
+        return rows
+
+
+def test_final_export_404_cannot_bypass_capture_deadline(tmp_path, monkeypatch):
+    api = DeferredSource({15})
+    monkeypatch.setattr(
+        capture.time,
+        "monotonic",
+        lambda: capture.MAX_SECONDS if len(api.calls) == 7 else 0,
+    )
+    with pytest.raises(RuntimeError, match="catalog_capture_failed"):
+        capture.capture_catalog(api, tmp_path / "run")
+    result = json.loads((tmp_path / "run/progress.json").read_bytes())
+    assert result["status"] == "failed" and result["errorType"] == "ValueError"
+    assert result["completedExpansions"] == 3 and result["deferredExpansions"] == []
+
+
+@pytest.mark.parametrize("unavailable", [{4}, {1, 4, 5, 15}])
+def test_export_404_accounted_without_empty_files_and_retried_next_cycle(tmp_path, unavailable):
+    api = DeferredSource(unavailable)
+    root = tmp_path / "first"
+    result = capture.capture_catalog(api, root)
+    assert result["status"] == "partial_with_deferred_expansions"
+    assert result["completedExpansions"] == 4 - len(unavailable)
+    assert result["totalExpansions"] == 4
+    assert result["blueprints"] == 4 - len(unavailable)
+    expected = [
+        dict(expansionId=i, httpStatus=404, reason="export_http_404") for i in sorted(unavailable)
+    ]
+    assert result["deferredExpansions"] == expected
+    assert all(not (root / f"blueprints-{i}.json").exists() for i in unavailable)
+    assert "private upstream message" not in (root / "progress.json").read_text()
+    assert [kw["expansion_id"] for kind, kw in api.calls if kind == "blueprints"] == [1, 4, 5, 15]
+    mapping = {i: (i, f"Game{i}", "single") for i in (1, 4, 5, 15)}
+    report = capture.compare_captured_catalog(root, [], mapping)
+    assert report["sourceComplete"] is False and report["deferredExpansions"] == expected
+    assert report["sourceRows"] == 4 - len(unavailable)
+    assert {r["sourceExpansionId"] for r in report["details"]} == {1, 4, 5, 15} - unavailable
+    api.unavailable = set()
+    api.calls.clear()
+    again = capture.capture_catalog(api, tmp_path / "next")
+    assert again["status"] == "complete" and again["completedExpansions"] == 4
+    assert [kw["expansion_id"] for kind, kw in api.calls if kind == "blueprints"] == [1, 4, 5, 15]
+
+
+def test_deferred_export_preserves_anomaly_quarantine(tmp_path):
+    api = DeferredSource({4})
+    api.rows[5][0]["game_id"] = 1
+    root = tmp_path / "run"
+    result = capture.capture_catalog(api, root)
+    assert result["sourceAnomalyCount"] == 1
+    report = capture.compare_captured_catalog(
+        root, [], {i: (i, f"Game{i}", "single") for i in (1, 4, 5, 15)}
+    )
+    assert report["sourceAnomalyCount"] == 1 and report["sourceComplete"] is False
+    assert report["details"][1]["decision"] == "source_export_conflict"
+
+
+@pytest.mark.parametrize(
+    "kind,status",
+    [(k, 404) for k in ["games", "categories", "expansions"]]
+    + [("blueprints", s) for s in [None, 401, 403, 429, 500]],
+)
+def test_only_listed_expansion_export_404_is_deferred(tmp_path, kind, status):
+    api = Source()
+    original = api.collection
+
+    def get(request, **kwargs):
+        if request == kind:
+            raise CardTraderCatalogError("secret", status)
+        return original(request, **kwargs)
+
+    api.collection = get
+    with pytest.raises(RuntimeError, match="catalog_capture_failed"):
+        capture.capture_catalog(api, tmp_path / "run")
+    result = json.loads((tmp_path / "run/progress.json").read_text())
+    assert result["status"] == "failed" and result["deferredExpansions"] == []
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        "not_list",
+        "not_dict",
+        "extra_key",
+        "bool_id",
+        "unknown_id",
+        "wrong_status",
+        "wrong_reason",
+        "duplicate",
+        "counts",
+        "fake_complete",
+        "fake_file",
+    ],
+)
+def test_deferred_receipt_must_account_exactly_for_missing_export(tmp_path, case):
+    root = tmp_path / "run"
+    result = capture.capture_catalog(DeferredSource({4}), root)
+    row = result["deferredExpansions"][0]
+    if case == "not_list":
+        result["deferredExpansions"] = {}
+    elif case == "not_dict":
+        result["deferredExpansions"] = [4]
+    elif case == "extra_key":
+        row["extra"] = True
+    elif case == "bool_id":
+        row["expansionId"] = True
+    elif case == "unknown_id":
+        row["expansionId"] = 100
+    elif case == "wrong_status":
+        row["httpStatus"] = 403
+    elif case == "wrong_reason":
+        row["reason"] = "guessed_not_released"
+    elif case == "duplicate":
+        result["deferredExpansions"].append(row)
+    elif case == "counts":
+        result["completedExpansions"] = 4
+    elif case == "fake_complete":
+        result["status"] = "complete"
+    else:
+        (root / "blueprints-4.json").write_text("[]")
+    (root / "progress.json").write_text(json.dumps(result))
+    with pytest.raises(ValueError):
+        capture.compare_captured_catalog(
+            root, [], {i: (i, f"Game{i}", "single") for i in (1, 4, 5, 15)}
+        )
+
+
+@pytest.mark.parametrize("legacy", [False, True])
+def test_capture_to_comparison_accounts_all_rows_and_preserves_provenance(tmp_path, legacy):
     api = Source()
     root = tmp_path / "run"
     api.rows[4][0]["game_id"] = 5
     capture.capture_catalog(api, root)
+    if legacy:
+        progress = json.loads((root / "progress.json").read_bytes())
+        del progress["deferredExpansions"]
+        (root / "progress.json").write_text(json.dumps(progress))
     mapping = {i: (i, f"Game{i}", "single") for i in (1, 4, 5, 15)}
     products = [
         dict(

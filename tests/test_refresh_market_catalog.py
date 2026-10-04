@@ -1,5 +1,6 @@
 import json
-from contextlib import nullcontext
+import sqlite3
+from contextlib import closing, nullcontext
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -99,6 +100,50 @@ def test_stage_order_and_explicit_draft_apply(setup, apply):
     assert json.loads((run / "completed.json").read_bytes()) == result
 
 
+@pytest.mark.parametrize("apply", [False, True])
+def test_deferred_source_does_not_block_available_imports_or_next_cycle(setup, monkeypatch, apply):
+    args, events, _ = setup
+    args["shopify"] = SimpleNamespace(graphql=lambda *args, **kwargs: None)
+    original = market.capture_catalog
+    deferred = [dict(expansionId=4, httpStatus=404, reason="export_http_404")]
+
+    def source(client, path):
+        return {**original(client, path), "deferredExpansions": deferred}
+
+    def batch(*inputs, **kwargs):
+        events.append("batch")
+        return dict(
+            status="batch_complete" if apply else "preview",
+            candidates=1,
+            skippedExisting=0,
+            selected=1,
+            exceptions=0,
+            attempts=[dict(status="draft_verified")] if apply else [],
+        )
+
+    def publish(*inputs, **kwargs):
+        events.append("publication")
+        return dict(status="publication_complete", published=1, remaining=0, results=[])
+
+    monkeypatch.setattr(market, "capture_catalog", source)
+    monkeypatch.setattr(market.drafts, "run_locked", batch)
+    monkeypatch.setattr(market, "publish_verified_drafts", publish)
+    result = market.cycle(
+        **args,
+        apply_drafts=apply,
+        publish_online_store="gid://shopify/Publication/1" if apply else None,
+    )
+    assert result["status"] == ("draft_cycle_partial" if apply else "preview_cycle_partial")
+    assert result["sourceComplete"] is False and result["sourceDeferredExpansions"] == deferred
+    assert result["indexRefreshed"] is apply
+    assert events == ["source", "identity", "pause30", "identity", "batch"] + (
+        ["publication", "refresh"] if apply else []
+    )
+    assert not (args["state"] / "pending-market-run.json").exists()
+    market.cycle(**args, apply_drafts=apply)
+    assert events.count("source") == 2
+
+
 @pytest.mark.parametrize("failure", ["source", "identity", "interrupt", "refresh", "batch"])
 def test_uncertainty_retains_pending_and_prevents_next_execution(setup, failure):
     args, events, behavior = setup
@@ -146,6 +191,92 @@ def test_batch_failure_reason_reaches_cycle_receipt(setup, monkeypatch):
     marker = json.loads((args["state"] / "pending-market-run.json").read_bytes())
     receipt = json.loads((args["state"] / marker["run"] / "stopped.json").read_bytes())
     assert receipt["batchFailure"] == dict(reason="inconsistent_identity_page", cardmarketId=43)
+
+
+@pytest.mark.parametrize("verified", [0, 1])
+@pytest.mark.parametrize("failure", [None, "ledger", "publication", "refresh"])
+def test_readonly_deferral_finalizes_partial_only_with_a_verified_ledger(
+    setup, monkeypatch, verified, failure
+):
+    args, events, behavior = setup
+    args["shopify"] = SimpleNamespace(graphql=object())
+    with closing(sqlite3.connect(args["ledger"])) as db:
+        db.execute("CREATE TABLE draft_attempts(state TEXT NOT NULL)")
+        db.execute("INSERT INTO draft_attempts VALUES ('draft_verified')")
+        db.commit()
+    deferred = [dict(cardmarketId=43, blueprintId=10, reason="inconsistent_identity_page")]
+
+    def batch(*inputs, **kwargs):
+        events.append("batch")
+        assert kwargs == dict(apply=True, max_attempts=3)
+        with closing(sqlite3.connect(args["ledger"])) as db:
+            if failure == "ledger":
+                db.execute("UPDATE draft_attempts SET state='needs_reconciliation'")
+            elif verified:
+                db.execute("INSERT INTO draft_attempts VALUES ('draft_verified')")
+            db.commit()
+        return dict(
+            status="batch_deferred",
+            candidates=5,
+            skippedExisting=1,
+            selected=3,
+            exceptions=2,
+            attempts=[dict(status="draft_verified", cardmarketId=42)] * verified
+            + [dict(status="not_verified_missing", cardmarketId=43)],
+            deferred=deferred,
+        )
+
+    def publish(ledger, **kwargs):
+        events.append("publication")
+        assert ledger == args["ledger"] and kwargs["enabled"] is True
+        return dict(
+            status="publication_stopped_inspect"
+            if failure == "publication"
+            else "publication_complete",
+            published=1,
+            remaining=1 if failure == "publication" else 0,
+            results=[],
+        )
+
+    monkeypatch.setattr(market.drafts, "run_locked", batch)
+    monkeypatch.setattr(market, "publish_verified_drafts", publish)
+    if failure == "refresh":
+        behavior["fail"] = "refresh"
+    options = dict(
+        apply_drafts=True,
+        max_attempts=3,
+        max_batches=10,
+        publish_online_store="gid://shopify/Publication/12",
+    )
+    if failure is None:
+        result = market.cycle(**args, **options)
+        run = args["state"] / result["run"]
+        assert result["status"] == "draft_cycle_partial"
+        assert result["indexRefreshed"] is True and result["published"] is True
+        assert result["eligibleExhausted"] is False
+        assert events[-2:] == ["publication", "refresh"]
+        assert not (args["state"] / "pending-market-run.json").exists()
+        assert json.loads((run / "completed.json").read_bytes()) == result
+    else:
+        reason = {
+            "ledger": "previous_import_needs_reconciliation",
+            "publication": "publication_requires_inspection",
+            "refresh": "refresh failed",
+        }[failure]
+        with pytest.raises(ValueError, match=reason):
+            market.cycle(**args, **options)
+        marker = json.loads((args["state"] / "pending-market-run.json").read_bytes())
+        run = args["state"] / marker["run"]
+        result = json.loads((run / "stopped.json").read_bytes())
+        assert not (run / "completed.json").exists()
+        assert not (args["state"] / "last-market-success.json").exists()
+        assert ("publication" in events) is (failure != "ledger")
+        assert ("refresh" in events) is (failure == "refresh")
+    assert events.count("source") == events.count("batch") == 1
+    assert result["remaining"] == 4 - verified
+    assert result["deferred"] == deferred
+    assert result["completionReason"] == "precreate_identity_deferred"
+    assert len(result["batches"]) == 1 and result["exceptions"] == 2
 
 
 @pytest.mark.parametrize("invalid", ["space", "budget", "batch_budget", "ledger", "sha"])
@@ -255,8 +386,19 @@ def test_preview_does_not_repeat_same_selection(setup):
 
 
 @pytest.mark.parametrize("apply", [False, True])
-def test_empty_batch_refreshes_only_for_apply_cycle(setup, monkeypatch, apply):
+@pytest.mark.parametrize("source_complete", [False, True])
+def test_empty_batch_reuses_fresh_index_without_claiming_refresh(
+    setup, monkeypatch, apply, source_complete
+):
     args, events, _ = setup
+    original_source = market.capture_catalog
+
+    def source(*inputs):
+        result = original_source(*inputs)
+        result["deferredExpansions"] = (
+            [] if source_complete else [dict(expansionId=4, httpStatus=404)]
+        )
+        return result
 
     def empty_batch(*inputs, **kwargs):
         events.append("batch")
@@ -266,13 +408,81 @@ def test_empty_batch_refreshes_only_for_apply_cycle(setup, monkeypatch, apply):
         )
 
     monkeypatch.setattr(market.drafts, "run_locked", empty_batch)
+    monkeypatch.setattr(market, "capture_catalog", source)
     result = market.cycle(**args, apply_drafts=apply, max_batches=50)
     assert events.count("batch") == 1
-    assert events.count("refresh") == int(apply)
-    assert result["indexRefreshed"] is apply
+    assert "refresh" not in events
+    assert result["indexRefreshed"] is False
+    if apply:
+        assert result["indexRefreshSkippedReason"] == "no_importer_changes_index_fresh"
+        assert result["indexFreshness"] == {"status": "fresh"}
+    else:
+        assert "indexRefreshSkippedReason" not in result
     assert result["remaining"] == 0 and result["attempts"] == []
-    assert result["status"] == ("draft_cycle_complete" if apply else "preview_cycle_complete")
+    prefix = "draft" if apply else "preview"
+    assert result["status"] == prefix + ("_cycle_complete" if source_complete else "_cycle_partial")
+    assert result["sourceComplete"] is source_complete
     assert not (args["state"] / "pending-market-run.json").exists()
+
+
+@pytest.mark.parametrize(
+    "case",
+    ["empty", "stale", "pending", "invalid_runtime", "published", "reconciled", "attempted"],
+)
+def test_empty_cycle_refresh_decision_preserves_freshness_and_write_guards(
+    setup, monkeypatch, case
+):
+    args, events, _ = setup
+    args["shopify"] = SimpleNamespace(graphql=object())
+
+    def batch(*inputs, **kwargs):
+        events.append("batch")
+        return dict(
+            status="preview",
+            candidates=0,
+            skippedExisting=0,
+            selected=0,
+            exceptions=0,
+            attempts=[dict(status="not_verified_missing")] if case == "attempted" else [],
+        )
+
+    def publish(*inputs, **kwargs):
+        events.append("publication")
+        if case == "pending":
+            (args["state"] / "refresh-runs" / "pending-run.json").touch()
+        return dict(
+            status="publication_complete",
+            published=int(case == "published"),
+            alreadyPublished=int(case == "reconciled"),
+            remaining=0,
+            results=[],
+        )
+
+    def freshness(config):
+        events.append("freshness")
+        if case == "invalid_runtime":
+            raise ValueError("freshness receipt does not describe current runtime")
+        return {"status": "stale" if case == "stale" and "refresh" not in events else "fresh"}
+
+    monkeypatch.setattr(market.drafts, "run_locked", batch)
+    monkeypatch.setattr(market, "publish_verified_drafts", publish)
+    monkeypatch.setattr(market.refresh, "freshness", freshness)
+    options = dict(apply_drafts=True, publish_online_store="gid://shopify/Publication/12")
+    if case in ("pending", "invalid_runtime"):
+        reason = "catalog_refresh_pending" if case == "pending" else "freshness receipt"
+        with pytest.raises(ValueError, match=reason):
+            market.cycle(**args, **options)
+        assert "refresh" not in events
+        assert (args["state"] / "pending-market-run.json").exists()
+        assert not (args["state"] / "last-market-success.json").exists()
+    else:
+        result = market.cycle(**args, **options)
+        assert result["indexRefreshed"] is (case != "empty")
+        assert events.count("refresh") == int(case != "empty")
+        assert ("indexRefreshSkippedReason" in result) is (case == "empty")
+        assert result["status"] == "draft_cycle_complete"
+        assert not (args["state"] / "pending-market-run.json").exists()
+    assert events.count("source") == events.count("batch") == events.count("publication") == 1
 
 
 def test_refresh_subprocess_uses_existing_operator_and_propagates_failure(tmp_path, monkeypatch):
@@ -295,3 +505,61 @@ def test_refresh_subprocess_uses_existing_operator_and_propagates_failure(tmp_pa
     monkeypatch.setattr(market.subprocess, "run", fail)
     with pytest.raises(market.subprocess.CalledProcessError):
         market.refresh_index(tmp_path, tmp_path / "config.json")
+
+
+@pytest.mark.parametrize(
+    "apply,channel", [(False, "gid://shopify/Publication/12"), (True, "bad"), (True, True)]
+)
+def test_publication_gate_before_any_network_work(setup, apply, channel):
+    args, events, _ = setup
+    with pytest.raises(ValueError, match="publication_requires_apply"):
+        market.cycle(**args, apply_drafts=apply, publish_online_store=channel)
+    assert events == []
+    assert not (args["state"] / "pending-market-run.json").exists()
+
+
+@pytest.mark.parametrize("failed", [False, True])
+def test_authorized_publication_precedes_only_refresh_and_records_partial_writes(
+    setup, monkeypatch, failed
+):
+    args, events, _ = setup
+    args["shopify"] = SimpleNamespace(graphql=object())
+
+    def publish(ledger, **kwargs):
+        events.append("publication")
+        assert ledger == args["ledger"]
+        assert kwargs == dict(
+            shop="test.myshopify.com",
+            publication_id="gid://shopify/Publication/12",
+            graphql=args["shopify"].graphql,
+            enabled=True,
+            max_products=10000,
+        )
+        return dict(
+            status="publication_stopped_inspect" if failed else "publication_complete",
+            published=2,
+            alreadyPublished=5,
+            remaining=1 if failed else 0,
+            results=[],
+        )
+
+    monkeypatch.setattr(market, "publish_verified_drafts", publish)
+    if failed:
+        with pytest.raises(ValueError, match="publication_requires_inspection"):
+            market.cycle(
+                **args, apply_drafts=True, publish_online_store="gid://shopify/Publication/12"
+            )
+        marker = json.loads((args["state"] / "pending-market-run.json").read_bytes())
+        run = args["state"] / marker["run"]
+        result = json.loads((run / "stopped.json").read_bytes())
+        assert "refresh" not in events and not (run / "completed.json").exists()
+    else:
+        result = market.cycle(
+            **args, apply_drafts=True, publish_online_store="gid://shopify/Publication/12"
+        )
+        run = args["state"] / result["run"]
+        assert events[-2:] == ["publication", "refresh"]
+        assert events.count("source") == events.count("refresh") == 1
+    assert result["published"] is True and result["publication"]["published"] == 2
+    receipt = json.loads((run / "publication.json").read_bytes())
+    assert receipt["published"] == 2 and result["publicationState"] == receipt["status"]

@@ -1,4 +1,4 @@
-"""Repeatable GET-only catalog capture; partial runs never become usable snapshots."""
+"""GET-only capture with explicit unavailable exports; interrupted runs are unusable."""
 
 import hashlib
 import json
@@ -12,6 +12,7 @@ from nla_catalog_gateway.cardtrader_candidates import compare_catalog
 from nla_catalog_gateway.cardtrader_catalog import (
     MAX_RESPONSE_BYTES,
     CardTraderCatalogClient,
+    CardTraderCatalogError,
     catalog_rows,
 )
 
@@ -21,8 +22,14 @@ MIN_FREE_BYTES = 4 * 1024**3
 MAX_SECONDS = 10800
 
 
+def _capture_status(anomalies, deferred):
+    if deferred:
+        return "partial_with_deferred_expansions"
+    return "complete_with_source_anomalies" if anomalies else "complete"
+
+
 def compare_captured_catalog(destination: Path, products, categories: dict, *, now=None) -> dict:
-    """Join a verified complete capture to a supplied Shopify snapshot, read-only.
+    """Join verified available exports to a supplied Shopify snapshot, read-only.
 
     categories maps IDs to (game ID, verified source category name, family).
     The existing comparison accounts for every row and all cross-expansion ID
@@ -43,7 +50,8 @@ def compare_captured_catalog(destination: Path, products, categories: dict, *, n
         "bytes",
     )
     if (
-        status["status"] not in ("complete", "complete_with_source_anomalies")
+        status["status"]
+        not in ("complete", "complete_with_source_anomalies", "partial_with_deferred_expansions")
         or any(type(status[k]) is not int or status[k] < 0 for k in count_keys)
         or status["automaticImportEnabled"] is not False
         or status["shopifyChanged"] is not False
@@ -97,11 +105,32 @@ def compare_captured_catalog(destination: Path, products, categories: dict, *, n
         or len({r["id"] for r in selected}) != len(selected)
         or {r["game_id"] for r in selected} != GAME_IDS
         or len(selected) != status["totalExpansions"]
-        or len(selected) != status["completedExpansions"]
+    ):
+        raise ValueError("invalid_capture_expansions")
+    deferred = status.get("deferredExpansions", [])
+    selected_ids = {r["id"] for r in selected}
+    if not isinstance(deferred, list) or any(
+        not isinstance(row, dict)
+        or set(row) != {"expansionId", "httpStatus", "reason"}
+        or type(row["expansionId"]) is not int
+        or row["expansionId"] not in selected_ids
+        or type(row["httpStatus"]) is not int
+        or row["httpStatus"] != 404
+        or row["reason"] != "export_http_404"
+        for row in deferred
+    ):
+        raise ValueError("invalid_deferred_expansions")
+    deferred_ids = {row["expansionId"] for row in deferred}
+    if (
+        len(deferred_ids) != len(deferred)
+        or status["completedExpansions"] + len(deferred) != len(selected)
+        or any((destination / f"blueprints-{i}.json").exists() for i in deferred_ids)
     ):
         raise ValueError("invalid_capture_expansions")
     rows, provenance, quarantined = [], [], set()
     for expansion in sorted(selected, key=lambda r: r["id"]):
+        if expansion["id"] in deferred_ids:
+            continue
         batch = read(f"blueprints-{expansion['id']}.json")
         anomalies = []
         for index, row in enumerate(batch):
@@ -133,7 +162,7 @@ def compare_captured_catalog(destination: Path, products, categories: dict, *, n
         or total_bytes != status["bytes"]
         or len(rows) != status["blueprints"]
         or len(quarantined) != status["sourceAnomalyCount"]
-        or status["status"] != ("complete_with_source_anomalies" if quarantined else "complete")
+        or status["status"] != _capture_status(quarantined, deferred)
         or progress.read_bytes() != encoded
     ):
         raise ValueError("capture_counts_mismatch")
@@ -151,6 +180,8 @@ def compare_captured_catalog(destination: Path, products, categories: dict, *, n
         status="read_only_comparison_complete",
         sourceRows=len(rows),
         sourceAnomalyCount=len(quarantined),
+        sourceComplete=not deferred,
+        deferredExpansions=deferred,
         sourceStartedAt=status["startedAt"],
         captureSha256=hashlib.sha256(encoded).hexdigest(),
         details=report,
@@ -165,8 +196,9 @@ def capture_catalog(client: CardTraderCatalogClient, destination: Path) -> dict:
     Query every expansion of the four approved games, including old expansions:
     source IDs are not release dates, and old sets can receive new blueprints.
     Preserve all source rows and explicit per-export anomaly indices. Consumers
-    must require a complete status, all files/hashes/counts and current identities
-    before considering import candidates. Completion does not authorize writes.
+    require accounted-for coverage, all files/hashes/counts and current identities.
+    A listed expansion's HTTP404 is deferred, never represented as an empty export.
+    Each new cycle tries it again. Other errors still stop the capture.
     """
     if not isinstance(destination, Path) or not destination.is_absolute():
         raise ValueError("absolute_capture_directory_required")
@@ -179,6 +211,7 @@ def capture_catalog(client: CardTraderCatalogClient, destination: Path) -> dict:
         "blueprints": 0,
         "bytes": 0,
         "sourceAnomalyCount": 0,
+        "deferredExpansions": [],
         "automaticImportEnabled": False,
         "shopifyChanged": False,
         "files": {},
@@ -241,7 +274,18 @@ def capture_catalog(client: CardTraderCatalogClient, destination: Path) -> dict:
         status["totalExpansions"] = len(selected)
         checkpoint()
         for expansion in sorted(selected, key=lambda r: r["id"]):
-            rows = get("blueprints", expansion_id=expansion["id"])
+            try:
+                rows = get("blueprints", expansion_id=expansion["id"])
+            except CardTraderCatalogError as error:
+                if error.http_status != 404:
+                    raise
+                if time.monotonic() - started >= MAX_SECONDS:
+                    raise ValueError("capture_deadline") from None
+                status["deferredExpansions"].append(
+                    dict(expansionId=expansion["id"], httpStatus=404, reason="export_http_404")
+                )
+                checkpoint()
+                continue
             anomalies = [
                 {
                     "rowIndex": index,
@@ -261,8 +305,8 @@ def capture_catalog(client: CardTraderCatalogClient, destination: Path) -> dict:
             status["blueprints"] += len(rows)
             status["completedExpansions"] += 1
             checkpoint()
-        status["status"] = (
-            "complete_with_source_anomalies" if status["sourceAnomalyCount"] else "complete"
+        status["status"] = _capture_status(
+            status["sourceAnomalyCount"], status["deferredExpansions"]
         )
         status["finishedAt"] = datetime.now(UTC).isoformat()
         checkpoint()

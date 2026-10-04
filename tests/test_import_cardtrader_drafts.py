@@ -21,6 +21,10 @@ from test_canonical_reference_extension import parent
 from test_shopify_draft_import import SHOP, FakeShopify
 
 
+class GuardValueError(ValueError):
+    pass
+
+
 @pytest.fixture
 def setup(tmp_path, monkeypatch):
     monkeypatch.setattr(runner.activation, "sync_directory", lambda _: None)
@@ -219,7 +223,8 @@ def test_uncertain_creation_stops_batch_and_blocks_next_run(setup):
 @pytest.mark.parametrize(
     ("error", "reason"),
     [
-        (ValueError("inconsistent_identity_page"), "inconsistent_identity_page"),
+        (GuardValueError("inconsistent_identity_page"), "unexpected_batch_error"),
+        (RuntimeError("inconsistent_identity_page"), "unexpected_batch_error"),
         (ValueError("identity_export_stale"), "identity_export_stale"),
         (ValueError("secret_remote_payload"), "unexpected_batch_error"),
         (ValueError(["secret_remote_payload"]), "unexpected_batch_error"),
@@ -249,7 +254,39 @@ def test_guard_failure_records_safe_cause_without_retry_or_creation(
         assert db.execute("SELECT COUNT(*) FROM draft_attempts").fetchone()[0] == 0
 
 
-def test_failure_after_verified_attempt_retains_progress_and_next_identity(setup, monkeypatch):
+def test_deferred_guard_stops_before_reservation_and_is_not_permanently_excluded(
+    setup, monkeypatch
+):
+    args, _, api, _ = setup
+    checked = []
+
+    def verify(_work, _shop, identifier, _graphql):
+        checked.append(identifier)
+        raise ValueError("inconsistent_identity_page")
+
+    monkeypatch.setattr(runner.identities, "verify_missing", verify)
+    result = runner.run_locked(**args, apply=True, max_attempts=2)
+    assert result["status"] == "batch_deferred"
+    assert result["deferred"] == [
+        dict(cardmarketId=42, blueprintId=9, reason="inconsistent_identity_page")
+    ]
+    assert result["attempts"] == [dict(cardmarketId=42, status="not_verified_missing")]
+    assert checked == [42] and all(
+        not query.lstrip().startswith("mutation") for query, _ in api.calls
+    )
+    with closing(sqlite3.connect(args["ledger"])) as db:
+        assert db.execute("SELECT COUNT(*) FROM draft_attempts").fetchone()[0] == 0
+    assert json.loads((args["run"] / "result.json").read_bytes()) == result
+
+    monkeypatch.setattr(runner.identities, "verify_missing", lambda *_: True)
+    args["run"] = args["run"].with_name("run-2")
+    resumed = runner.run_locked(**args, apply=True)
+    assert resumed["status"] == "batch_complete" and resumed["skippedExisting"] == 0
+    assert resumed["attempts"][0]["cardmarketId"] == 42
+    assert resumed["attempts"][0]["status"] == "draft_verified"
+
+
+def test_deferral_after_verified_attempt_retains_progress_and_next_identity(setup, monkeypatch):
     args, _, api, _ = setup
 
     def verify(_work, _shop, identifier, _graphql):
@@ -259,10 +296,15 @@ def test_failure_after_verified_attempt_retains_progress_and_next_identity(setup
 
     monkeypatch.setattr(runner.identities, "verify_missing", verify)
     result = runner.run_locked(**args, apply=True, max_attempts=2)
-    assert result["failure"] == dict(reason="inconsistent_identity_page", cardmarketId=43)
-    assert len(result["attempts"]) == 1
+    assert result["status"] == "batch_deferred" and "failure" not in result
+    assert result["deferred"] == [
+        dict(cardmarketId=43, blueprintId=10, reason="inconsistent_identity_page")
+    ]
+    assert len(result["attempts"]) == 2
     assert result["attempts"][0]["status"] == "draft_verified"
+    assert result["attempts"][1] == dict(cardmarketId=43, status="not_verified_missing")
     assert sum(query == CREATE_DRAFT for query, _ in api.calls) == 1
+    assert json.loads((args["run"] / "result.json").read_bytes()) == result
     with closing(sqlite3.connect(args["run"] / "ledger-after.sqlite3")) as db:
         assert db.execute("SELECT cardmarket_id,state FROM draft_attempts").fetchall() == [
             (42, "draft_verified")

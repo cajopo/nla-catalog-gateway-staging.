@@ -1,4 +1,4 @@
-"""Coordinate one market-source -> draft -> Shopify-index cycle. No publication.
+"""Coordinate market-source -> drafts -> optional approved publication -> index.
 
 No timer is installed by this command. A pending cycle is never restarted blindly.
 Retain cycle directories: an applied batch can own the active canonical reference.
@@ -9,16 +9,19 @@ import json
 import os
 import re
 import shutil
+import sqlite3
 import stat
 import subprocess
 import sys
 import time
 import uuid
+from contextlib import closing
 from pathlib import Path
 
 from nla_catalog_gateway.cardtrader_capture import capture_catalog
 from nla_catalog_gateway.cardtrader_catalog import CardTraderCatalogClient
 from nla_catalog_gateway.shopify_capture_http import ShopifyCaptureHttp
+from nla_catalog_gateway.shopify_draft_publication import publish_verified_drafts
 from scripts import activate_staging_refresh as activation
 from scripts import capture_import_identities as identities
 from scripts import import_cardtrader_drafts as drafts
@@ -143,6 +146,7 @@ def prune_completed_inputs(state, config_path):
             "draft_cycle_complete",
             "draft_cycle_partial",
             "preview_cycle_complete",
+            "preview_cycle_partial",
         ):
             raise ValueError("invalid_completed_market_run")
         runs.append(run)
@@ -237,6 +241,7 @@ def cycle(
     apply_drafts=False,
     max_attempts=1,
     max_batches=1,
+    publish_online_store=None,
     pause=time.sleep,
 ):
     """Caller holds state's pipeline lock; individual stages use refresh's lock.
@@ -252,6 +257,12 @@ def cycle(
         or not 1 <= max_batches <= 100
     ):
         raise ValueError("invalid_cycle_controls")
+    if publish_online_store is not None and (
+        not apply_drafts
+        or not isinstance(publish_online_store, str)
+        or re.fullmatch(r"gid://shopify/Publication/[1-9][0-9]*", publish_online_store) is None
+    ):
+        raise ValueError("publication_requires_apply_and_explicit_channel")
     if re.fullmatch(r"[0-9a-f]{40}", generator_sha) is None:
         raise ValueError("invalid_generator_sha")
     for path in (state, refresh_config, refresh_package, ledger):
@@ -286,15 +297,19 @@ def cycle(
         indexRefreshed=False,
         batches=[],
         attempts=[],
+        deferred=[],
         selected=0,
         maxBatches=max_batches,
         remaining=None,
         eligibleExhausted=False,
+        publicationEnabled=publish_online_store is not None,
     )
     try:
         source = capture_catalog(cardtrader, run / "source")
         result["sourceExpansions"] = source["completedExpansions"]
         result["sourceBlueprints"] = source["blueprints"]
+        result["sourceDeferredExpansions"] = source.get("deferredExpansions", [])
+        result["sourceComplete"] = not result["sourceDeferredExpansions"]
         refresh.publish(
             run / "source-summary.json", {k: v for k, v in source.items() if k != "files"}
         )
@@ -331,10 +346,14 @@ def cycle(
             result["candidates"] = batch["candidates"]
             result["selected"] += batch["selected"]
             result["exceptions"] = batch["exceptions"]
-            if batch["status"] not in ("preview", "batch_complete"):
+            if batch["status"] not in ("preview", "batch_complete", "batch_deferred") or (
+                batch["status"] == "batch_deferred"
+                and (not apply_drafts or not batch.get("deferred"))
+            ):
                 if "failure" in batch:
                     result["batchFailure"] = batch["failure"]
                 raise ValueError("draft_batch_requires_inspection")
+            result["deferred"].extend(batch.get("deferred", []))
             verified = sum(
                 a["status"] == "draft_verified"
                 or (a["status"] == "already_reserved" and a.get("state") == "draft_verified")
@@ -353,6 +372,10 @@ def cycle(
                     remaining=result["remaining"],
                 )
             )
+            if batch["status"] == "batch_deferred":
+                result["eligibleExhausted"] = False
+                result["completionReason"] = "precreate_identity_deferred"
+                break
             if apply_drafts:
                 prune_batch_identities(run, number)
             if not apply_drafts:
@@ -366,17 +389,72 @@ def cycle(
                 break
         else:
             result["completionReason"] = "batch_budget_exhausted"
-        # Refresh even an empty apply cycle: PowerTools stock/price changes remain
-        # authoritative and must reach the index independently of new printings.
         if apply_drafts:
-            refresh_index(refresh_package, refresh_config)
+            if result["deferred"]:
+                # A read-only deferral may not hide any earlier uncertain write.
+                _, config = drafts.config_values(refresh_config)
+                with (
+                    refresh.pipeline_lock(config["run_root"]),
+                    closing(sqlite3.connect(ledger.as_uri() + "?mode=ro", uri=True)) as db,
+                ):
+                    if db.execute(
+                        "SELECT 1 FROM draft_attempts WHERE state != 'draft_verified' LIMIT 1"
+                    ).fetchone():
+                        raise ValueError("previous_import_needs_reconciliation")
+            if publish_online_store is not None:
+                _, config = drafts.config_values(refresh_config)
+                with refresh.pipeline_lock(config["run_root"]):
+                    if (config["run_root"] / "pending-run.json").exists():
+                        raise ValueError("catalog_refresh_pending")
+                    # A pending publication receipt makes any lost response
+                    # inspectable. Only importer-owned verified rows are eligible.
+                    result["publicationState"] = "started_inspect_ledger_if_interrupted"
+                    result["published"] = None  # Unknown until the durable result, not False.
+                    publication = publish_verified_drafts(
+                        ledger,
+                        shop=config["shop"],
+                        publication_id=publish_online_store,
+                        graphql=shopify.graphql,
+                        enabled=True,
+                        max_products=10000,
+                    )
+                refresh.publish(run / "publication.json", publication)
+                result["publicationState"] = publication["status"]
+                result["published"] = publication["published"] > 0
+                result["publication"] = {k: v for k, v in publication.items() if k != "results"}
+                if publication["status"] != "publication_complete":
+                    raise ValueError("publication_requires_inspection")
             _, config = drafts.config_values(refresh_config)
-            if refresh.freshness(config)["status"] != "fresh":
-                raise ValueError("post_import_index_not_fresh")
-            result["indexRefreshed"] = True
+            reuse_index = False
+            if (
+                result["selected"] == 0
+                and not result["attempts"]
+                and result["published"] is False
+                and result.get("publication", {}).get("alreadyPublished", 0) == 0
+            ):
+                # No importer changes: the independent ordinary refresh handles
+                # PowerTools updates. Reuse only its verified, still-fresh runtime.
+                with refresh.pipeline_lock(config["run_root"]):
+                    if (config["run_root"] / "pending-run.json").exists():
+                        raise ValueError("catalog_refresh_pending")
+                    index_freshness = refresh.freshness(config)
+                reuse_index = index_freshness["status"] == "fresh"
+                if reuse_index:
+                    result["indexRefreshSkippedReason"] = "no_importer_changes_index_fresh"
+                    result["indexFreshness"] = index_freshness
+            if not reuse_index:
+                refresh_index(refresh_package, refresh_config)
+                if refresh.freshness(config)["status"] != "fresh":
+                    raise ValueError("post_import_index_not_fresh")
+                result["indexRefreshed"] = True
         result["status"] = "draft_cycle_complete" if apply_drafts else "preview_cycle_complete"
-        if apply_drafts and not result["eligibleExhausted"]:
+        if apply_drafts and (
+            not result["eligibleExhausted"]
+            or result.get("publication", {}).get("remaining", 0) != 0
+        ):
             result["status"] = "draft_cycle_partial"
+        if not result["sourceComplete"]:
+            result["status"] = "draft_cycle_partial" if apply_drafts else "preview_cycle_partial"
         result["finishedAt"] = refresh.timestamp()
         refresh.publish(run / "completed.json", result)
         refresh.publish(state / "last-market-success.json", result, replace=True)
@@ -397,6 +475,7 @@ def main():
     parser.add_argument("--max-attempts", type=int, default=1)
     parser.add_argument("--max-batches", type=int, default=1)
     parser.add_argument("--apply-drafts", action="store_true")
+    parser.add_argument("--publish-online-store", default=None)
     args = parser.parse_args()
     try:
         if not __debug__ or sys.platform != "linux" or os.geteuid() != 0:
@@ -424,11 +503,21 @@ def main():
                 apply_drafts=args.apply_drafts,
                 max_attempts=args.max_attempts,
                 max_batches=args.max_batches,
+                publish_online_store=args.publish_online_store,
             )
         print(json.dumps(result))
         return 0
     except (Exception, KeyboardInterrupt):
-        print(json.dumps(dict(status="market_cycle_stopped_inspect_pending", published=False)))
+        print(
+            json.dumps(
+                dict(
+                    status="market_cycle_stopped_inspect_pending",
+                    publicationState="inspect_receipts"
+                    if args.publish_online_store
+                    else "disabled",
+                )
+            )
+        )
         return 1
 
 

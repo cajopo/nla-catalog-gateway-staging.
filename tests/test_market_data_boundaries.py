@@ -1,4 +1,4 @@
-"""Recovered source safety boundaries from the original importer review tests."""
+"""Adversarial local inputs for the importer scripts; no remote requests."""
 
 import json
 import stat
@@ -9,6 +9,7 @@ from types import SimpleNamespace
 import pytest
 from scripts import capture_import_identities as identities
 from scripts import import_cardtrader_drafts as importer
+from scripts import publish_imported_drafts as publication
 from scripts import refresh_market_catalog as market
 
 import test_capture_import_identities as identity_tests
@@ -26,6 +27,41 @@ market_case = market_tests.setup
 
 def write_json(path, value):
     path.write_text(json.dumps(value))
+
+
+@pytest.mark.parametrize("success_at", [1, 2, 3, None, "non_retryable"])
+def test_identity_retry_always_returns_or_raises_within_three_reads(
+    identity_case, monkeypatch, success_at
+):
+    client, work = identity_case
+    complete(client, work)
+    calls, pauses = [], []
+
+    def read(*args):
+        calls.append(1)
+        if len(calls) == success_at:
+            return True
+        raise ValueError(
+            "identity_definition_changed"
+            if success_at == "non_retryable"
+            else "inconsistent_identity_page"
+        )
+
+    monkeypatch.setattr(identities, "_live_missing", read)
+    monkeypatch.setattr(identities.time, "sleep", pauses.append)
+    if isinstance(success_at, int):
+        assert identities.verify_missing(work, SHOP, 42, client.graphql) is True
+        attempts = success_at
+    else:
+        reason = (
+            "identity_definition_changed"
+            if success_at == "non_retryable"
+            else "inconsistent_identity_page"
+        )
+        with pytest.raises(ValueError, match=reason):
+            identities.verify_missing(work, SHOP, 42, client.graphql)
+        attempts = 1 if success_at == "non_retryable" else 3
+    assert len(calls) == attempts and pauses == [2] * (attempts - 1)
 
 
 @pytest.mark.parametrize("case", ["timezone", "count", "hash", "capture_times"])
@@ -51,17 +87,44 @@ def test_identity_inputs_reject_unverifiable_receipts(identity_case, case):
             )
 
 
-def test_invalid_identity_never_reaches_graphql(identity_case):
+@pytest.mark.parametrize("case", ["linked", "changed_during_scan"])
+def test_identity_guard_does_not_accept_changed_baseline(identity_case, monkeypatch, case):
+    client, work = identity_case
+    complete(client, work)
+    if case == "linked":
+        original = Path.lstat
+
+        def facts(path, *args, **kwargs):
+            found = original(path, *args, **kwargs)
+            if path == work / "completed.json":
+                return SimpleNamespace(st_mode=found.st_mode, st_nlink=2)
+            return found
+
+        monkeypatch.setattr(Path, "lstat", facts)
+    else:
+        original = identities.read_fresh_identities
+
+        def changed(*args):
+            result = original(*args)
+            path = work / "completed.json"
+            path.write_bytes(path.read_bytes() + b" ")
+            return result
+
+        monkeypatch.setattr(identities, "read_fresh_identities", changed)
+    before = len(client.calls)
+    with pytest.raises(ValueError, match="identity_snapshot_changed"):
+        identities.missing_guard(work, SHOP, client.graphql)
+    assert len(client.calls) == before
+
+
+@pytest.mark.parametrize("entry", ["standalone", "live"])
+def test_invalid_identity_never_reaches_graphql(identity_case, entry):
     client, work = identity_case
     with pytest.raises(ValueError, match="invalid_cardmarket_id"):
-        identities.verify_missing(work, SHOP, True, client.graphql)
-    assert client.calls == []
-
-
-def test_invalid_live_identity_never_reaches_graphql(identity_case):
-    client, _ = identity_case
-    with pytest.raises(ValueError, match="invalid_cardmarket_id"):
-        identities._live_missing({}, set(), SHOP, 0, client.graphql)
+        if entry == "standalone":
+            identities.verify_missing(work, SHOP, True, client.graphql)
+        else:
+            identities._live_missing({}, set(), SHOP, 0, client.graphql)
     assert client.calls == []
 
 
@@ -144,71 +207,6 @@ def test_capture_refuses_invalid_paths_or_operation_evidence(identity_case, monk
     assert client.calls.count(identities.CONTROLS["start"]) <= 1
 
 
-@pytest.mark.parametrize("success_at", [1, 2, 3, None, "non_retryable"])
-def test_identity_retry_always_returns_or_raises_within_three_reads(
-    identity_case, monkeypatch, success_at
-):
-    client, work = identity_case
-    complete(client, work)
-    calls, pauses = [], []
-
-    def read(*args):
-        calls.append(1)
-        if len(calls) == success_at:
-            return True
-        raise ValueError(
-            "identity_definition_changed"
-            if success_at == "non_retryable"
-            else "inconsistent_identity_page"
-        )
-
-    monkeypatch.setattr(identities, "_live_missing", read)
-    monkeypatch.setattr(identities.time, "sleep", pauses.append)
-    if isinstance(success_at, int):
-        assert identities.verify_missing(work, SHOP, 42, client.graphql) is True
-        attempts = success_at
-    else:
-        reason = (
-            "identity_definition_changed"
-            if success_at == "non_retryable"
-            else "inconsistent_identity_page"
-        )
-        with pytest.raises(ValueError, match=reason):
-            identities.verify_missing(work, SHOP, 42, client.graphql)
-        attempts = 1 if success_at == "non_retryable" else 3
-    assert len(calls) == attempts and pauses == [2] * (attempts - 1)
-
-
-@pytest.mark.parametrize("case", ["linked", "changed_during_scan"])
-def test_identity_guard_does_not_accept_changed_baseline(identity_case, monkeypatch, case):
-    client, work = identity_case
-    complete(client, work)
-    if case == "linked":
-        original = Path.lstat
-
-        def facts(path, *args, **kwargs):
-            found = original(path, *args, **kwargs)
-            if path == work / "completed.json":
-                return SimpleNamespace(st_mode=found.st_mode, st_nlink=2)
-            return found
-
-        monkeypatch.setattr(Path, "lstat", facts)
-    else:
-        original = identities.read_fresh_identities
-
-        def changed(*args):
-            result = original(*args)
-            path = work / "completed.json"
-            path.write_bytes(path.read_bytes() + b" ")
-            return result
-
-        monkeypatch.setattr(identities, "read_fresh_identities", changed)
-    before = len(client.calls)
-    with pytest.raises(ValueError, match="identity_snapshot_changed"):
-        identities.missing_guard(work, SHOP, client.graphql)
-    assert len(client.calls) == before
-
-
 @pytest.mark.parametrize("case", ["fields", "relative"])
 def test_import_configuration_is_exact_and_canonical(import_case, case):
     args, original, _, _ = import_case
@@ -245,6 +243,7 @@ def test_durable_reference_refuses_symlink(import_case, monkeypatch):
         "generation",
         "config_changed",
         "stale_source",
+        "deferred_outcome",
     ],
 )
 def test_import_boundary_failures_never_allow_creation(import_case, monkeypatch, case):
@@ -297,6 +296,17 @@ def test_import_boundary_failures_never_allow_creation(import_case, monkeypatch,
         monkeypatch.setattr(
             importer.identities, "timestamp", lambda _: datetime.now(UTC) - timedelta(hours=25)
         )
+    else:
+
+        def fail(*args):
+            raise ValueError("inconsistent_identity_page")
+
+        def inconsistent_outcome(*args, **kwargs):
+            assert kwargs["verify_missing"]() is False
+            return dict(status="draft_verified")
+
+        monkeypatch.setattr(importer.identities, "verify_missing", fail)
+        monkeypatch.setattr(importer, "create_draft_once", inconsistent_outcome)
     if case in expected:
         with pytest.raises(ValueError, match=expected[case]):
             importer.run_locked(**args, apply=True)
@@ -309,6 +319,15 @@ def test_import_boundary_failures_never_allow_creation(import_case, monkeypatch,
             else "unexpected_batch_error"
         )
     assert all(not query.lstrip().startswith("mutation") for query, _ in api.calls)
+
+
+def test_publication_requires_distinct_locks(tmp_path, monkeypatch):
+    monkeypatch.setattr(publication, "validate_ledger", lambda _: None)
+    monkeypatch.setattr(
+        publication.drafts, "config_values", lambda _: ({}, dict(run_root=tmp_path))
+    )
+    with pytest.raises(ValueError, match="importer_and_refresh_locks_must_be_separate"):
+        publication.run(tmp_path / "config", tmp_path / "ledger", "unused", apply=True)
 
 
 def test_retention_requires_existing_canonical_run(tmp_path):
@@ -372,7 +391,7 @@ def test_refresh_requires_canonical_package(tmp_path):
 
 @pytest.mark.parametrize(
     "case",
-    ["relative", "pending_before_identity", "stale_after_refresh"],
+    ["relative", "pending_before_identity", "pending_before_publication", "stale_after_refresh"],
 )
 def test_cycle_boundaries_keep_pending_and_block_unsafe_next_stage(market_case, monkeypatch, case):
     args, events, _ = market_case
@@ -389,6 +408,17 @@ def test_cycle_boundaries_keep_pending_and_block_unsafe_next_stage(market_case, 
             return result
 
         monkeypatch.setattr(market, "capture_catalog", source)
+        reason = "catalog_refresh_pending"
+    elif case == "pending_before_publication":
+        original = market.drafts.run_locked
+
+        def batch(*a, **kw):
+            result = original(*a, **kw)
+            pending.touch()
+            return result
+
+        monkeypatch.setattr(market.drafts, "run_locked", batch)
+        args["publish_online_store"] = "gid://shopify/Publication/12"
         reason = "catalog_refresh_pending"
     else:
         monkeypatch.setattr(market.refresh, "freshness", lambda _: dict(status="stale"))

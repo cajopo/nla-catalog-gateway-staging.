@@ -27,6 +27,7 @@ from nla_catalog_gateway.canonical_names import (
         "bad_image",
         "bad_metadata",
         "name_conflict",
+        "cross_game",
         "no_candidates",
         "ambiguous_parent",
         "malformed_expansion",
@@ -43,6 +44,18 @@ from nla_catalog_gateway.canonical_names import (
     ],
 )
 def test_capture_projection_to_reference_preparation(tmp_path, monkeypatch, case):
+    boundary_cases = {
+        "progress",
+        "symlink",
+        "source_hash",
+        "row_index",
+        "identity",
+        "properties",
+        "long_title",
+        "empty_metadata",
+        "progress_race",
+        "existing_decision",
+    }
     sources = {}
     for index, game in enumerate(CANONICAL_GAME_ORDER):
         path = tmp_path / f"{game.value}.csv"
@@ -60,6 +73,8 @@ def test_capture_projection_to_reference_preparation(tmp_path, monkeypatch, case
     gids = (1, 4, 5, 15)
     cats = {1: 1, 4: 44, 5: 73, 15: 192}
     source_id = 1 if case in ("preserve", "name_conflict", "ambiguous_parent") else 100
+    if case == "cross_game":
+        source_id = 2  # A unique identity belonging to another baseline game.
 
     def collection(kind, **kwargs):
         if kind == "games":
@@ -74,7 +89,7 @@ def test_capture_projection_to_reference_preparation(tmp_path, monkeypatch, case
         i = kwargs["expansion_id"]
         if i != 1 or case == "no_candidates":
             return []
-        return [
+        rows = [
             dict(
                 id=10,
                 game_id=1,
@@ -92,6 +107,9 @@ def test_capture_projection_to_reference_preparation(tmp_path, monkeypatch, case
                 editable_properties=[{"name": "condition", "default_value": "Near Mint"}],
             )
         ]
+        if case in boundary_cases:
+            rows.append({**rows[0], "id": 20, "card_market_ids": [101], "name": "Other Card"})
+        return rows
 
     monkeypatch.setattr(cardtrader_capture.time, "sleep", lambda _: None)
     monkeypatch.setattr(
@@ -111,18 +129,6 @@ def test_capture_projection_to_reference_preparation(tmp_path, monkeypatch, case
     pin = hashlib.sha256(projection.read_bytes()).hexdigest()
     output = tmp_path / "prepared"
     # Recover the source-boundary cases from 0356d3a without its later importer fixture.
-    boundary_cases = {
-        "progress",
-        "symlink",
-        "source_hash",
-        "row_index",
-        "identity",
-        "properties",
-        "long_title",
-        "empty_metadata",
-        "progress_race",
-        "existing_decision",
-    }
     if case in boundary_cases:
         report = prepare.compare_projection(capture, projection, pin)
         monkeypatch.setattr(prepare, "compare_projection", lambda *_: report)
@@ -151,7 +157,8 @@ def test_capture_projection_to_reference_preparation(tmp_path, monkeypatch, case
             elif case == "long_title":
                 rows[0]["name"] = "N" * 249
             else:
-                rows[0]["fixed_properties"] = {"collector_number": "", "mtg_rarity": ""}
+                for row in rows:
+                    row["fixed_properties"] = {"collector_number": "", "mtg_rarity": ""}
                 expansions_path = capture / "expansions.json"
                 expansions = json.loads(expansions_path.read_bytes())
                 for row in expansions:
@@ -206,8 +213,8 @@ def test_capture_projection_to_reference_preparation(tmp_path, monkeypatch, case
     if case in boundary_cases:
         rejected = case != "existing_decision"
         assert len(result["exceptions"]) == int(rejected)
-        assert len(result["candidates"]) == int(not rejected)
-        assert result["referenceEvidence"]["addedRecords"] == int(not rejected)
+        assert len(result["candidates"]) == 1 + int(not rejected)
+        assert result["referenceEvidence"]["addedRecords"] == 1 + int(not rejected)
         if rejected:
             assert result["exceptions"][0]["reason"] == "source_or_canonical_details_require_review"
         return
@@ -215,20 +222,25 @@ def test_capture_projection_to_reference_preparation(tmp_path, monkeypatch, case
         1 if case in ("extend", "malformed_expansion") else 0
     )
     assert len(result["exceptions"]) == (
-        1 if case in ("bad_image", "bad_metadata", "name_conflict", "ambiguous_parent") else 0
+        1 if case in ("bad_image", "bad_metadata", "cross_game", "ambiguous_parent") else 0
     )
     assert len(result["candidates"]) == (
-        1 if case in ("extend", "preserve", "malformed_expansion") else 0
+        1 if case in ("extend", "preserve", "name_conflict", "malformed_expansion") else 0
     )
     if result["candidates"]:
         item = result["candidates"][0]
         assert item["creationApproved"] is False and item["canonicalMappingPreserved"] == (
-            case == "preserve"
+            case in ("preserve", "name_conflict")
         )
         assert item["sourceRowIndex"] == 0 and item["sourceFile"] == "blueprints-1.json"
         assert item["title"] == (
-            "Original - Old Set [007]" if case == "preserve" else "New Card - New Set [012]"
+            "Original - Old Set [007]"
+            if case in ("preserve", "name_conflict")
+            else "New Card - New Set [012]"
         )
+        assert item["sourceNameDiffers"] is (case == "name_conflict")
+        if case in ("preserve", "name_conflict"):
+            assert result["reference"] == str(parent)
         assert not {"price", "quantity", "language", "condition", "finish"} & set(item)
     with pytest.raises(FileExistsError):
         prepare.prepare(

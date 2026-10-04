@@ -172,6 +172,7 @@ def run_locked(
         selected=len(selected),
         exceptions=len(prepared["exceptions"]),
         attempts=[],
+        deferred=[],
         published=False,
         automaticImportEnabled=False,
         referenceSelected=False,
@@ -204,13 +205,26 @@ def run_locked(
     result["referenceSelected"] = True
     result["status"] = "stopped_inspect_before_retry"
 
-    def guard(cardmarket_id):
+    def guard(cardmarket_id, blueprint_id):
         age = (
             datetime.now(UTC) - identities.timestamp(prepared["sourceStartedAt"])
         ).total_seconds()
         if not 0 <= age <= 86400 or refresh.document(config_path) != updated:
             raise ValueError("source_stale_or_reference_not_selected")
-        return verify_identity(cardmarket_id)
+        try:
+            return verify_identity(cardmarket_id)
+        except ValueError as error:
+            if type(error) is not ValueError or error.args != ("inconsistent_identity_page",):
+                raise
+            # This callback runs before create_draft_once reserves or writes anything.
+            result["deferred"].append(
+                dict(
+                    cardmarketId=cardmarket_id,
+                    blueprintId=blueprint_id,
+                    reason="inconsistent_identity_page",
+                )
+            )
+            return False
 
     identifier = None
     try:
@@ -228,7 +242,9 @@ def run_locked(
                 title=candidate["title"],
                 image_url=candidate["imageUrl"],
                 graphql=client.graphql,
-                verify_missing=lambda identifier=identifier: guard(identifier),
+                verify_missing=lambda identifier=identifier, blueprint=candidate["blueprintId"]: (
+                    guard(identifier, blueprint)
+                ),
                 enabled=True,
             )
             result["attempts"].append(dict(cardmarketId=identifier, **attempt))
@@ -236,6 +252,11 @@ def run_locked(
                 attempt["status"] == "already_reserved" and attempt.get("state") != "draft_verified"
             ):
                 result["status"] = "needs_reconciliation"
+                break
+            if result["deferred"]:
+                if attempt["status"] != "not_verified_missing":
+                    raise ValueError("unexpected_deferred_attempt_outcome")
+                result["status"] = "batch_deferred"
                 break
         else:
             result["status"] = "batch_complete"

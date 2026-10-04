@@ -617,3 +617,312 @@ the timer-only stop/restore hooks, explicit UTC schedule, no catchup and no rest
 Independent main-agent review found no blocking findings against the real empty
 batch contract and installed systemd service/timer manuals. Native systemd
 validation remains required before installation; no live timer is enabled by this commit.
+
+## Owner-approved publication stage — 2026-09-28
+
+The owner's reply authorizes automatic Online Store publication of verified
+importer-created SOLD OUT cards. This supersedes the historical draft-only
+publication gate above, not the gateway's read-only boundary or PowerTools ownership.
+
+`shopify_draft_publication` selects only `draft_verified` creation-ledger rows,
+verifies saved request digest/identities against live Shopify, and requires the
+unchanged zero-price/default variant, tracked zero stock at every location, DENY,
+one ready image and no other app publication. It identifies the target as Shopify's
+Online Store app, not by a display name. Only product status ACTIVE and that single
+publication are written. Readback after each write verifies unchanged commercial
+fields. A pending snapshot is committed first; lost responses stop and are resolved
+by live reads on a later invocation, not blind mutation retries. Terminal published
+receipts are excluded forever: subsequent merchant/PowerTools edits are not reset.
+Already published importer pilots are recorded without mutations.
+
+The cycle accepts an explicit `--publish-online-store gid://shopify/Publication/…`
+only together with `--apply-drafts`, before its one final read-only index refresh.
+The unmodified unit template is still draft-only; deployment must append this
+owner-approved option to ExecStart. Standalone `scripts.publish_imported_drafts`
+can publish existing verified rows without acquiring any catalog source, using
+`--refresh-config`, `--ledger`, `--publication`, `--max-products` and explicit
+`--apply`. Both paths use importer→refresh lock order and private durable receipts.
+There is no write to price, inventory, variants, metadata, existing products,
+themes or PowerTools configuration. Failure retains evidence for inspection.
+
+Official 2026-07 contract consulted and four operations schema-validated:
+https://shopify.dev/docs/apps/build/sales-channels/product-publishing
+https://shopify.dev/docs/api/admin-graphql/2026-07/mutations/productUpdate
+Independent product_presentation_review APPROVE: no blocking findings in module,
+CLI or cycle ordering.150 focused publisher/CLI/coordinator/retention/unit-template
+tests PASS8.57s; Ruff check/format PASS. All tests use synthetic data; deployment
+and real publication evidence are separate operational steps.
+
+### VPS evidence — 2026-09-28 CEST
+
+Code bd693e68b71bf2f215d6fd0d8065afb73d2fd9bd installed at
+`/opt/nla-staging/importer-bd693e6` from full git archive SHA256
+`a089c5582191146ef8e2ed3f63993db85bd5cc81250ffef7dae277e18fe43035`.
+Native disabled-default invocation PASS. Two applied batches completed:
+5 newly published +5 already published without writes, then296 newly published,
+zero remaining. Thus306 importer-owned products have terminal publication receipts
+(301 new publications this turn). All new products were individually read back
+ACTIVE, Online Store published, tracked0/DENY, ready image and unchanged commercial
+data. Existing5 pilot publications were not mutated. No catalog reacquisition.
+Private receipts retained in importer-state: publication-2867b18f667f46b284ab1732371e7ddb.json
+and publication-9bfd78df5dfb4078a02322e16e3a9899.json. Sessions52752/6138 terminal exit0.
+
+Service now pins bd693e6 and explicit Online Store162078753036 before its single
+final index refresh. Native systemd validation/readback PASS, no early cycle
+started; next market04:00CEST Sep28. Complete unattended cycle/index visibility
+is still unproven. The existing first-cycle heartbeat remains; no duplicate monitor.
+Rollback unit retained as `/opt/nla-staging/nla-market-catalog.before-bd693e6.service`:
+restoring it removes future automatic publication, not already-published products.
+No MAIN, PowerTools, commercial-data, pre-existing-product or GitHub changes.
+
+### Preserve verified identities across provider naming differences — 2026-09-28
+
+Read-only inspection of the existing Sep27 capture and checksum-pinned canonical
+reference identified all five preparation exceptions: CardTrader names the five
+sticker sheets identically, while the reference distinguishes Sheet1–5 (CM818500–4,
+blueprints326966–70). IDs are one-to-one and game agrees; exact name equality was
+an extra, incorrect identity gate. It is removed, not replaced by title matching.
+The complete existing canonical record stays authoritative and unchanged;
+`sourceNameDiffers` exposes the discrepancy in each candidate's existing provenance.
+Cross-game, duplicate/shared/multiple IDs, invalid metadata/image and fresh Shopify
+absence checks remain. No product is created merely by passing preparation.
+Official blueprint ID contract rechecked:
+https://www.cardtrader.com/it/docs/api/full/reference#blueprints
+106 focused preparation/candidate/capture/reference/runner tests PASS48.82s;
+Ruff PASS, independent product_presentation_review APPROVE. No new acquisition
+or product mutation for this fix; next scheduled cycle will reevaluate current data.
+
+Deployed code8adf76c8e12bd2de512d9bac73322f6e5cd42063 in isolated
+`/opt/nla-staging/importer-8adf76c`; archive SHA256
+09affaf240d19dabfff887d52282b1300850d2b28c927607acc5e1bc7dfaa8a9 verified.
+Native import/help and systemd validation/readback PASS; service pin updated,
+publication flag and04:00CEST schedule preserved. Previous unit backup:
+`/opt/nla-staging/nla-market-catalog.before-8adf76c.service`.
+Read-only ledger check:306 terminal published receipts, no pending publications.
+No early run, source acquisition or additional Shopify mutation.
+
+### Local delivery validation and preflight false positives — 2026-09-28
+
+Baseline HEAD6f951f1200a547a1c1c593c19226c325d5e87065 received one full local
+Windows validation. Ruff and formatting PASS (153 files), package build with
+`python -m build --no-isolation` PASS. The single complete pytest run reported
+3565 passed,1 failed,0 skipped in1522.62s. Its failing repository-entrypoint test
+matched the standalone preflight failure: four runtime credential lookups were
+misidentified as literal credential assignments, plus one synthetic test sentinel.
+
+Normalize the four client constructors to the same positional signature already
+used by capture_shopify_bulk and refresh_staging_catalog. Use the explicitly
+synthetic `test-only-secret` sentinel and assert all four constructor arguments
+in the publication CLI test. No secret-detector rules, exclusions, API behavior,
+credentials, product data or runtime guards changed. Independent delivery_validation
+review found no findings in the six-file staged diff.
+
+Post-fix validation: preflight PASS over183 staged files; Ruff and format checks
+PASS for the six changed files; `git diff --cached --check` PASS. Focused command:
+`python -m pytest -p no:cacheprovider tests/test_capture_import_identities.py tests/test_import_cardtrader_drafts.py tests/test_publish_imported_drafts.py tests/test_refresh_market_catalog.py tests/test_capture_cardtrader_cli.py tests/test_preflight_repo.py::test_module_entrypoint_executes_repository_preflight`
+reported88 passed,0 failed,0 skipped in70.58s, without rerunning the full suite.
+
+Coverage remains explicitly NOT a full release pass: the earlier full run produced
+99.41%, below the100% gate. generation_bundle's native Linux backend accounts for
+57 uncovered statements and one partial branch; its Linux tests return early on
+Windows, so0 skipped does not establish Linux coverage. Every other reported module,
+including importer and publisher, reached100%. Linux/exact-head CI remains required;
+no threshold waiver, GitHub push, remote CI claim or deployment is authorized by this
+local diff review. The pre-existing coverage file was preserved; the new private
+coverage output and build artifacts are not committed.
+
+Separately, the already-running VPS package remains8adf76c, PID237423, same run
+market-20260928t000647z-1b1a8344. At05:50:01UTC it had34 completed100-product batches,
+3706 verified creations in the permanent ledger and306 prior publications.
+This cycle's3400 creations still await terminal publication/index receipts; do not
+restart or reacquire the source. Five former name-difference cases (CM818500–4)
+are now ledger-verified creations, not merely prepared candidates. No MAIN or
+PowerTools changes, and no assertion of final search visibility yet.
+
+### Defer an inconsistent pre-create read without hiding uncertain writes — 2026-09-28
+
+The same real run stopped at06:13:02UTC in batch0037, after36 complete batches
+and66 more verified creations. CM910695 failed the existing three bounded identity
+reads with inconsistent_identity_page. Readonly ledger inspection confirmed3972
+draft_verified total, zero other creation states, no row forCM910695 and306 prior
+publications. Thus3666 new verified creations awaited publication; the historical
+stop receipt and pending marker remain intact. A later bounded diagnostic of the
+same query returned2 pages/73 rows without duplicate IDs or timestamp regression.
+This establishes no uncertain creation, not permission to bypass identity checks.
+
+Official products documentation and schema were consulted before diagnosis:
+https://shopify.dev/docs/api/admin-graphql/2026-07/queries/products
+Existing NlaRecentProductIdentities query validated against Shopify schema, requiring
+read_products. The first validator invocation lost quotes in PowerShell argument
+passing; the unchanged query passed after transport quoting was corrected.
+
+Only this exact ValueError inside the pre-create identity callback is now deferred:
+the callback returns False, so create_draft_once neither reserves nor writes that
+candidate. The durable batch receipt identifies CM, blueprint and reason, then stops
+further candidates. cycle retains conservative backlog, rechecks that the entire
+ledger has no unverified attempts and runs the existing publisher/final refresh.
+It reports draft_cycle_partial, never complete. Deferred identities are not excluded
+from future cycles. Other errors, altered/stale inputs, wrong shop, changed identity
+definitions and uncertain writes retain their previous stop behavior. Query, retry
+count, freshness thresholds and publication-readiness checks are unchanged.
+
+Independent root review of delivery_validation's four-file implementation: no
+findings.58 focused importer/coordinator tests PASS35.52s; after a purely nominal
+lambda parameter shortening, the two affected deferral tests PASS22.06s. Ruff,
+format and diff checks PASS. Full latest-head Linux/CI verification still pending;
+no repeat full Windows suite, coverage waiver, push or MAIN/PowerTools modification.
+Operational recovery is separate, limited to the existing source/run and fresh
+Shopify identity data; no new CardTrader capture is needed or authorized by this fix.
+
+### Close operator-script coverage on native Linux — 2026-09-28
+
+One full native Linux run on dfb9b12:3576 tests passed,0 failures/skips,
+1474.54s. Install/Ruff/format/preflight/build passed. Including scripts as CI does
+exposed159 uncovered statements/89 branches in seven operator scripts; all gateway
+modules were100%. This was not the earlier platform-specific generation gap.
+
+Add88 offline boundary/entrypoint cases in two test files, reusing existing fixtures.
+Independent root review found no findings. Targeted Windows proof:223+3 tests passed,
+seven scripts100% (882 statements/372 branches). The only script edit is an inline
+`no branch` annotation for the bounded retry loop's impossible natural exit; explicit
+tests prove success on attempts1/2/3, failure on3 and nonretryable failure on1.
+Executable AST and line positions are unchanged. This follows Coverage7.16's
+documented structurally-partial-branch handling, not a threshold reduction:
+https://coverage.readthedocs.io/en/7.16.0/branch.html#structurally-partial-branches
+
+Native new-case run initially had65 passes, one incorrect test expectation and22
+MemoryErrors caused by the test runner's virtual-address-space limit. The publisher
+entrypoint test now explicitly selects --apply before testing missing inputs; no
+runtime behavior changed. Repeat ONLY those23 cases using the established native
+MemoryMax512M/CPUQuota50% isolation:23 passed in15.34s, exit0. All88 new cases now
+pass natively. Append measurements to copies of the original data, never overwrite
+the full-run evidence: aggregate15315/15315 statements and5316/5316 branches=100%.
+The3576 baseline cases plus88 new cases establish3664 distinct passing cases without
+another full run. Private reproducible receipts/JUnit/coverage remain under
+`/opt/nla-staging/validation-dfb9b12` (full-*, tail-result.json, boundaries-native-*,
+boundaries-native-r2-*); original .coverage-full hash verified unchanged.
+No product mutation, source recapture, service restart, MAIN or PowerTools change
+for this test-only correction. GitHub CI/CodeQL and final storefront QA remain
+separate gates; local evidence does not authorize a merge or live cutover.
+
+### Recovery complete; automatic next cycle confirmed — 2026-09-28
+
+The same recovery run `market-20260928t000647z-1b1a8344` completed at11:50:17UTC:
+3764 new products published/indexed, remaining0, eligibleExhausted=true,
+published=true, indexRefreshed=true. All4070 importer-owned publications are terminal
+and present/public/SOLD OUT in the active index; zero uncertain ledger entries.
+37 source conflicts remain quarantined; they were not guessed or silently imported.
+Completed receipt SHA256
+`22dfeb4ab20063d26b08d8b225bbb241880325beb196e5b5ffa87e03772cb693`.
+
+Final refresh `20260928t100300z-274ebd98` activated manifest
+`fc3c75e0b1dbb4e70a5d2f5acda3d38feaf0d43d038ffc3f1ac348dd9394b9db`.
+Its direct signed backend HTTP/immutable SQL check passed:295865 products,
+295861 public items; one new verified GID per game found beyond catalog position25k;
+eight prefix cases each returned10 distinct names without cross-game results.
+Lightning Bolt returned74 unique products; Pokemon Lightning Bolt returned0.
+Private proof: Temp/nla-aruba-staging-20260918/market-20260928-final-search.json.
+This is backend proof, not final storefront browser QA. Previous observer is closed.
+
+At14:46UTC, systemd confirmed the next scheduled unit `nla-market-catalog.service`
+started autonomously at14:00:14UTC, MainPID257913, activating/start. `/proc/257913`
+confirmed a live python3 process for run `market-20260928t140015z-217fbba9`, in
+source acquisition. This new scheduled cycle is NOT yet claimed complete.
+Market timer active/running; ordinary refresh timer temporarily inactive by the
+documented coordination hooks. No manual acquisition, restart or duplicate worker.
+
+### Scheduled cycle stopped on new source exports — 2026-09-28
+
+Later inspection supersedes the running observation above: market service exited1,
+MainPID0. Run `market-20260928t140015z-217fbba9/stopped.json` reports selected0,
+attempts/batches empty, published=false, indexRefreshed=false. Source progress is
+FAILED:2430/2433 expansions,256177 blueprints,37 source anomalies, HTTP404.
+This new scheduled cycle did NOT complete; previous successful cycle remains valid.
+
+Official CardTrader v2 reference was consulted again. It documents404 for an
+absent/invalid expansion_id. Minimal authenticated GET diagnostics found the first
+failing ID4887 still in /expansions; /blueprints/export returned404 again. Two more
+bounded GETs confirmed404 for both other pending new expansion IDs:
+- 4887: Championship Prize Cards2026 (Yu-Gi-Oh!).
+- 4888: Secret Lair Commander Deck: Odds and Ends (Magic).
+- 4890: Winner's Pack2026-2027 (Yu-Gi-Oh!).
+
+This source-list/export discrepancy does not authorize treating404 as an empty
+success or dropping the missing sets. Existing capture/stop receipts are preserved;
+no repeated full capture, importer restart or Shopify write. Ordinary refresh
+timer was restored and its17:00CEST service was independently live (PID258579).
+Pending market marker blocks another blind run: source recovery/inspection is
+still required once exports are available. Do not claim the next timer alone
+will clear it, or that the full new-release automation is now finally verified.
+
+### Explicit deferred exports — 2026-09-28
+
+Issue97 correction: only HTTP404 from a listed expansion's blueprint export is
+recorded as `deferredExpansions`, with no invented empty file. Other errors and
+the capture deadline remain fatal. Comparison verifies every available file,
+digest, row/count and anomaly, and reports `sourceComplete=false`. The coordinator
+can import/publish verified available candidates, refresh and close an explicitly
+partial cycle. The next scheduled cycle retries every expansion, including the
+deferred ones. Existing Shopify/PowerTools products and MAIN are untouched.
+
+Official source: https://www.cardtrader.com/it/docs/api/full/reference . The
+observed list/export mismatch does NOT establish a release date or prerelease
+status. Missing IDs remain explicit, never represented as full coverage.
+
+Verification:91 capture/coordinator tests and100 comparison/reference/importer/
+retention/CLI consumer tests passed locally; Ruff and diff checks passed. Legacy
+captures are covered. Independent `deferred_export_review` found no remaining
+findings after its deadline-boundary correction. No full suite or GitHub CI rerun.
+Deployment and inspected recovery are separate subsequent steps; the failed
+source receipt is not rewritten as a success.
+
+Deployment: code66c82ee67737666114b2d66dd8fde349fdf857a5 installed at
+`/opt/nla-staging/importer-66c82ee`; archive SHA256
+900fdc672366e9230ebc17dac4d6c5bcf9f9a7b58c545e05d85c72b7e9fb0d91.
+Native Linux100 focused tests passed. Existing recurring unit now points to this
+package/SHA ONLY; schedule, limits and channel unchanged. Original unit backed up
+at `/opt/nla-staging/nla-market-catalog-before-66c82ee.service`.
+
+One-run source recovery independently reviewed and read-only inspection PASS:
+all2430 cached exports hash-valid, zero prior attempts, three missing IDs. It
+preserves original failed evidence/source age, retries only the three unavailable
+exports and explicitly accounts for404s, then delegates to the existing guarded
+import/publication/refresh coordinator. No complete source reacquisition. Helper
+SHA256 c61b9c8ed825f8b78776d4e9f645558fd39e9511032878039d59e3c50fd6bbec.
+Explicit non-optimized execution guard tested; systemd unit validation PASS.
+
+Activation output confirms job440600 `nla-source-recovery-66c82ee.service` WAITING
+after existing job435697 `nla-catalog-refresh.service` RUNNING. This is queued,
+NOT proof of recovery completion. No restart/interruption of ordinary refresh.
+Follow these existing jobs/receipts, do not launch another recovery or full capture.
+GitHub remains owner-held; no push or CI rerun. Goal active, not complete.
+
+### Avoid redundant index rebuilds in empty cycles — 2026-09-28
+
+Recovery `market-20260928t164759z-16735a08` reused2430 exports/256177 blueprints,
+deferred4887/4888/4890 explicitly, and found zero candidates/attempts/publications.
+It nevertheless started refresh20260928t164953z-e53698bc immediately after the
+successful15:00UTC refresh. That existing process is not interrupted or modified.
+
+Future apply cycles now reuse the current index only with zero selections/attempts,
+zero new or reconciled publications, and the ordinary freshness check verifying
+the actual active manifest/container and source age under24h under the refresh lock.
+Pending work or mismatched runtime stops; stale data or any possible changes still
+require refresh. The independent ordinary timer continues handling PowerTools.
+Receipts explicitly record `indexRefreshed=false`, the reuse reason and freshness;
+unavailable source sets still yield partial completion, never false full coverage.
+
+Verification:162 focused coordinator/retention/systemd/CLI/data-boundary tests pass;
+Ruff and diff checks pass. Independent deferred_export_review APPROVED. No full
+suite, source reacquisition, Shopify write or GitHub CI run for this correction.
+
+Installed code d7e6fc991e36618da994bb511e8b0a37688a0255 for future starts at
+`/opt/nla-staging/importer-d7e6fc9`; archive SHA256
+5fa4212311ce18ca47057b1feeea4d5f0a1a5739d15f8a17ea897b331d588db6.
+Native162 tests PASS with service UMask0077 (first runner omitted it:5 permission
+fixture failures,157pass; corrected runner, no weakened tests/guards).
+Unit SHA2569d0bbf64324cfbfc2b735a3a651573a19e866c525494d1005cd9869cbf04e9fb;
+backup `/opt/nla-staging/nla-market-catalog-before-d7e6fc9.service`.
+Only package/SHA changed; no starts/restarts/schedule changes. At17:04:32UTC,
+separate recovery PID263793 still uses66c82ee, unit hash unchanged; its existing
+refresh20260928t164953z-e53698bc continues. No final recovery receipt yet.
