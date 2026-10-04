@@ -249,7 +249,7 @@ def test_manifest_valid_digest_mismatch_reaches_artifact_cross_check(
     [
         lambda value: value.update({"unknown": True}),
         lambda value: value.update(schemaVersion=True),
-        lambda value: value.update(schemaVersion=2),
+        lambda value: value.update(schemaVersion=1),
         lambda value: value.update(result="REJECTED"),
         lambda value: value["bindings"].update({"unknown": "x"}),
         lambda value: value["bindings"].update(shopDomain="bad"),

@@ -372,8 +372,9 @@ def test_portable_staging_generation_reaches_the_evidence_gate_without_reconcili
     lease = backend.acquire(control=control)
 
     assert type(lease._generation.verified) is staging_generation.VerifiedStagingGenerationV1
-    assert type(lease._generation.search) is runtime_api.SingleCardSearchIndex
-    assert type(lease._generation.facets) is runtime_api.PreparedFacetCatalog
+    assert not hasattr(lease._generation, "search")
+    assert not hasattr(lease._generation, "facets")
+    assert not hasattr(lease._generation, "items")
     assert gate.ready(lease, control=control) is True
     request = _request(family=RequestFamily.SEALED, page_size=1)
     gate.require_catalog(lease, request, control=control)
@@ -573,8 +574,6 @@ def test_current_evidence_binding_rejects_malformed_and_unreadable_state(
     active = case.backend._active
     assert runtime_api._evidence_binding_is_current(object()) is False
     assert runtime_api._evidence_binding_is_current(replace(active, cursor_codec=object())) is False
-    assert runtime_api._evidence_binding_is_current(replace(active, search=object())) is False
-    assert runtime_api._evidence_binding_is_current(replace(active, facets=object())) is False
 
     generation = active.verified.generation
     source = replace(generation.source_manifest, parts=(generation.source_manifest.parts[0],))
@@ -600,9 +599,6 @@ def test_runtime_private_validators_and_execution_error_mapping_are_total(
     monkeypatch.setattr(runtime_api, "normalize_search_text", invalid_normalization)
     with pytest.raises(RuntimeApiContractError):
         runtime_api._validate_query_bound("query")
-    for gid in (object(), "gid://shopify/Product/0"):
-        with pytest.raises(RuntimeApiContractError):
-            runtime_api._product_gid_key(gid)  # type: ignore[arg-type]
 
     assert runtime_api._canonical_request(object()) is False
     malformed_request = _request()
@@ -738,9 +734,8 @@ def test_gate_rejects_foreign_lease_and_binding_mismatch_is_value_free(
 @pytest.mark.no_cover
 def test_service_traverses_over_30000_and_keeps_search_and_filter_under_two_seconds(
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Close #33 at the real service boundary without promoting shipped gates."""
+    """Exercise the production service gates and signed search over 30,001 records."""
 
     record_count = 30_001
     target_id = record_count
@@ -822,13 +817,6 @@ def test_service_traverses_over_30000_and_keeps_search_and_filter_under_two_seco
     ]
     raw_query = proxy_helpers._signed_query(signed_pairs)
 
-    monkeypatch.setattr(CatalogRequestV1, "require_executable", lambda _self: None)
-    monkeypatch.setattr(
-        runtime_api.CatalogPageV1,
-        "require_output_capability",
-        lambda _self: None,
-    )
-    monkeypatch.setattr(runtime_api, "_contract_output_is_verified", lambda: True)
     assert runtime_api._runtime_composition_is_evidence_bound(authorizer, backend, gate)
 
     def call(
@@ -1055,7 +1043,6 @@ def test_runtime_composition_and_frozen_capability_defenses(
     assert runtime_api._runtime_composition_is_evidence_bound(authorizer, backend, gate) is False
 
     monkeypatch.setattr(runtime_api, "_runtime_composition_is_evidence_bound", lambda *_: True)
-    monkeypatch.setattr(runtime_api, "_contract_output_is_verified", lambda: False)
     service = RuntimeCatalogService(
         expected_shop_domain=bundle_helpers.SHOP,
         backend=object(),  # type: ignore[arg-type]
@@ -1070,16 +1057,12 @@ def test_runtime_composition_and_frozen_capability_defenses(
             _request(family=RequestFamily.SINGLE, query="card"),
             _control(),
         )
-    assert unsupported.value.code is CatalogErrorCode.UNSUPPORTED_CAPABILITY
+    assert unsupported.value.code is CatalogErrorCode.TEMPORARILY_UNAVAILABLE
 
 
 def test_runtime_private_validators_reject_malformed_values(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    with pytest.raises(RuntimeApiContractError):
-        runtime_api._product_gid_key(object())  # type: ignore[arg-type]
-    with pytest.raises(RuntimeApiContractError):
-        runtime_api._product_gid_key("gid://shopify/Product/0")
     assert runtime_api._canonical_request(object()) is False
 
     request = _request()

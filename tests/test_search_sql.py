@@ -24,7 +24,7 @@ from nla_catalog_gateway.pagination import (
     UnsupportedPaginationRequestError,
 )
 from nla_catalog_gateway.runtime_contract import CatalogFiltersV1, ProductStatus, RequestFamily
-from nla_catalog_gateway.search_sql import search_scope
+from nla_catalog_gateway.search_sql import search_facts, search_scope
 from nla_catalog_gateway.taxonomy import Game, ProductFamily
 from test_pagination import HMAC_KEY, NOW, _paginator, _projection, _record, _request
 
@@ -94,6 +94,35 @@ def test_nul_source_code_rejects_candidate_instead_of_silently_truncating(tmp_pa
     with pytest.raises(CanonicalSearchError, match="unsupported NUL"):
         _projection(tmp_path, (record,))
     assert not list(tmp_path.glob("*.sqlite3"))
+
+
+@pytest.mark.parametrize("name", ["x" * 1025, "\ufb03" * 342])
+def test_public_single_name_bounds_survive_removal_of_legacy_runtime_index(tmp_path, name):
+    with pytest.raises(CanonicalSearchError, match="canonical name"):
+        _projection(tmp_path, (card(1, name),))
+
+
+def test_search_facts_reject_missing_public_name():
+    record = card(1, "Name")
+    object.__setattr__(record, "canonical_card_name", None)
+    with pytest.raises(CanonicalSearchError, match="canonical name"):
+        search_facts(record)
+
+
+def test_all_family_stock_filter_keeps_singles_and_sealed_without_game_leakage(tmp_path):
+    projection = _projection(
+        tmp_path,
+        (
+            _record("1"),
+            _record("2", family=ProductFamily.SEALED),
+            _record("3", family=ProductFamily.SEALED, game=Game.POKEMON),
+        ),
+    )
+    page = _paginator(projection).fetch_page(_request(family=RequestFamily.ALL, in_stock=True))
+    assert [item.product_gid for item in page.page.items] == [
+        "gid://shopify/Product/1",
+        "gid://shopify/Product/2",
+    ]
 
 
 @pytest.mark.parametrize("query", ["%", "_", "'", "/", "[", "]", "%_'/[]"])

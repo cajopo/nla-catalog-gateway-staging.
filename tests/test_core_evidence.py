@@ -169,6 +169,7 @@ def test_real_core_gate_returns_bound_opaque_evidence_and_cleans_projection(
         "catalog_content_sha256",
         "projection_fingerprint",
         "code_sha",
+        "verification_version",
     ]
     with pytest.raises(FrozenInstanceError):
         evidence.code_sha = "e" * 40  # type: ignore[misc]
@@ -452,99 +453,103 @@ def test_search_rejects_duplicate_input_and_accounting_mismatch(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     record = _records()[0]
-    _assert_fixed_error(lambda: core_evidence._verify_search((record, record)))
+    _assert_fixed_error(lambda: core_evidence._verify_search((record, record), None, None))
 
     monkeypatch.setattr(
         core_evidence,
         "report_missing_canonical_names",
         lambda *_args, **_kwargs: SimpleNamespace(single_record_count=-1, missing=()),
     )
-    _assert_fixed_error(lambda: core_evidence._verify_search(_records()))
+    _assert_fixed_error(lambda: core_evidence._verify_search(_records(), None, None))
 
 
-def test_search_rejects_missing_selected_hit_and_cross_game_hit(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    records = _records()
-    monkeypatch.setattr(
-        core_evidence,
-        "search_single_cards",
-        lambda *_args, **_kwargs: SimpleNamespace(
-            match_tier=core_evidence.MatchTier.EXACT, hits=()
-        ),
+def _search_case(tmp_path, records):
+    projection = core_evidence.build_catalog_projection(
+        tmp_path / "search.sqlite3",
+        manifest=_verified(records).generation.dataset_manifest,
+        records=records,
     )
-    _assert_fixed_error(lambda: core_evidence._verify_search(records))
-
-    monkeypatch.undo()
-
-    def cross_game_hits(
-        source: tuple[CatalogProductRecordV1, ...],
-        *,
-        game: Game,
-        query: str,
-    ) -> SimpleNamespace:
-        selected = next(
-            record
-            for record in source
-            if record.game is game and record.canonical_card_name == query
-        )
-        other = next(record for record in source if record.game is not game and record.game)
-        return SimpleNamespace(
-            match_tier=core_evidence.MatchTier.EXACT,
-            hits=(
-                SimpleNamespace(
-                    product_gid=selected.product_gid,
-                    match_tier=core_evidence.MatchTier.EXACT,
-                ),
-                SimpleNamespace(
-                    product_gid=other.product_gid,
-                    match_tier=core_evidence.MatchTier.EXACT,
-                ),
-            ),
-        )
-
-    monkeypatch.setattr(core_evidence, "search_single_cards", cross_game_hits)
-    _assert_fixed_error(lambda: core_evidence._verify_search(records))
+    paginator = core_evidence.CatalogPaginator(
+        core_evidence.AtomicCatalogActivation(projection), core_evidence.CursorCodecV1(b"k" * 32)
+    )
+    return paginator, projection
 
 
-def test_search_rejects_partial_multi_print_omission(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+@pytest.mark.parametrize(
+    "fault", ["missing", "cross_game", "duplicate", "partial", "loop", "suggest"]
+)
+def test_search_rejects_wrong_sql_results(tmp_path, monkeypatch, fault):
     records = _records()
+    paginator, projection = _search_case(tmp_path, records)
+    original = core_evidence.CatalogPaginator.fetch_page
 
-    def one_print_only(
-        source: tuple[CatalogProductRecordV1, ...],
-        *,
-        game: Game,
-        query: str,
-    ) -> SimpleNamespace:
-        selected = next(
-            record
-            for record in source
-            if record.game is game and record.canonical_card_name == query and record.publishable
-        )
-        return SimpleNamespace(
-            match_tier=core_evidence.MatchTier.EXACT,
-            hits=(
-                SimpleNamespace(
-                    product_gid=selected.product_gid,
-                    match_tier=core_evidence.MatchTier.EXACT,
-                ),
-            ),
-        )
+    def corrupt(self, request, **kwargs):
+        result = original(self, request, **kwargs)
+        items = result.page.items
+        cursor = result.next_cursor
+        if fault == "missing":
+            items = ()
+        elif fault == "cross_game":
+            items = (SimpleNamespace(product_gid="gid://shopify/Product/8"),)
+        elif fault == "duplicate":
+            items = items + items
+        elif fault == "partial":
+            items = items[:1]
+        else:
+            cursor = "repeated-cursor"
+        return SimpleNamespace(page=SimpleNamespace(items=items), next_cursor=cursor)
 
-    monkeypatch.setattr(core_evidence, "search_single_cards", one_print_only)
-    _assert_fixed_error(lambda: core_evidence._verify_search(records))
+    if fault == "suggest":
+        monkeypatch.setattr(core_evidence.CatalogProjection, "suggest", lambda *_a, **_kw: ())
+    else:
+        monkeypatch.setattr(core_evidence.CatalogPaginator, "fetch_page", corrupt)
+    _assert_fixed_error(lambda: core_evidence._verify_search(records, paginator, projection))
 
 
-def test_search_samples_unique_names_when_no_multi_print_exists() -> None:
+def test_search_samples_unique_names_when_no_multi_print_exists(tmp_path) -> None:
     records = tuple(
         replace(record, canonical_card_name=f"Unique {record.product_gid}")
         if record.product_family is ProductFamily.SINGLE and record.canonical_card_name is not None
         else record
         for record in _records()
     )
-    assert core_evidence._verify_search(records) == 12
+    paginator, projection = _search_case(tmp_path, records)
+    assert core_evidence._verify_search(records, paginator, projection) > 12
+
+
+def test_sql_proof_covers_substrings_codes_stock_and_paginated_suggestions(tmp_path, monkeypatch):
+    records = tuple(
+        replace(record, canonical_card_name="Shared magic adept")
+        if record.product_gid == "gid://shopify/Product/3"
+        else record
+        for record in _records()
+    )
+    monkeypatch.setattr(core_evidence, "_PAGE_SIZE", 1)
+    paginator, projection = _search_case(tmp_path, records)
+    assert core_evidence._verify_search(records, paginator, projection) > 12
+
+
+def test_sql_proof_normalizes_sample_fragments_and_ignores_blank_codes(tmp_path):
+    records = list(_records())
+    records[0] = replace(records[0], canonical_card_name="Duelist Ace")
+    records[1] = replace(records[1], canonical_card_name="Ace")
+    records[2] = replace(records[2], variants=(replace(records[2].variants[0], sku="   "),))
+    records = tuple(records)
+    paginator, projection = _search_case(tmp_path, records)
+    assert core_evidence._verify_search(records, paginator, projection) > 0
+
+
+@pytest.mark.parametrize("version", [1, 2.0, True])
+def test_cannot_serialize_legacy_or_malformed_proof_as_current(version):
+    result = _verification_result()
+    object.__setattr__(result.evidence, "verification_version", version)
+    with pytest.raises(ValueError):
+        core_evidence._report_bytes(result)
+
+
+def test_report_requires_current_evidence_type():
+    with pytest.raises(ValueError):
+        core_evidence._report_bytes(replace(_verification_result(), evidence=object()))
 
 
 def test_facet_helpers_reject_missing_dimension_and_wrong_complete_maps(
@@ -671,7 +676,7 @@ def test_runner_enters_verified_context_and_passes_all_inputs(
             "syncBootstraps": 1,
         },
         "result": "ACCEPTED",
-        "schemaVersion": 1,
+        "schemaVersion": 2,
     }
     assert str(tmp_path) not in report.read_text(encoding="utf-8")
 

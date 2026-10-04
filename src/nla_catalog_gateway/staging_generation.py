@@ -208,7 +208,7 @@ def _parse_evidence_report(raw: bytes) -> _EvidenceBindings:
     )
     if (
         type(value["schemaVersion"]) is not int
-        or value["schemaVersion"] != 1
+        or value["schemaVersion"] != core_evidence.CORE_VERIFICATION_VERSION
         or value["result"] != "ACCEPTED"
     ):
         raise _fail()

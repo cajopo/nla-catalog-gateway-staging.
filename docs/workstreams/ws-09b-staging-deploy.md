@@ -2,6 +2,14 @@
 
 ## Current status
 
+2026-09-15 runtime candidate (#62): verified-generation HTTP/readiness can now succeed
+without static-gate overrides. The package must contain a current schema-v2 core proof
+and a schema-v2 SQLite projection. Existing artifact filenames/outer package format are
+unchanged; schema-v1 proof contents are rejected. Rebuild from verified source inputs,
+never edit a historical report to relabel it. Keep the prior app, package and host pins
+together for rollback. This implementation change does not deploy a service or certify
+the recovered historical package. Printed-code data and representative latency remain open.
+
 This issue #13 candidate is local only. It has not created a Render service, attached a paid
 disk, provisioned a secret, changed Shopify, changed either theme, or exposed a public URL.
 Those facts must remain explicit: a green local package is not evidence of a deployed staging
