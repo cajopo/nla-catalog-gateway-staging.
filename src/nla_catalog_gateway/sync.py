@@ -287,13 +287,21 @@ def _validate_record_set(records: tuple[CatalogProductRecordV1, ...]) -> None:
 
 
 def _catalog_content_sha256(records: tuple[CatalogProductRecordV1, ...]) -> str:
-    ordered = sorted(records, key=lambda record: _product_gid_key(record.product_gid))
-    material = {
-        "contractVersion": CONTRACT_VERSION,
-        "domain": "nla-catalog-product-records-v1",
-        "records": [record.as_dict() for record in ordered],
-    }
-    return hashlib.sha256(_canonical_json_bytes(material)).hexdigest()
+    # Preserve the canonical document bytes without retaining every record's
+    # dictionary and the complete encoded catalog at the same time.
+    digest = hashlib.sha256()
+    digest.update(
+        b'{"contractVersion":'
+        + str(CONTRACT_VERSION).encode("ascii")
+        + b',"domain":"nla-catalog-product-records-v1","records":['
+    )
+    separator = b""
+    for record in sorted(records, key=lambda record: _product_gid_key(record.product_gid)):
+        digest.update(separator)
+        digest.update(_canonical_json_bytes(record.as_dict()))
+        separator = b","
+    digest.update(b"]}")
+    return digest.hexdigest()
 
 
 def _record_counts(

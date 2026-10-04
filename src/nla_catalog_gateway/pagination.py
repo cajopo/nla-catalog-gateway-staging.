@@ -1132,7 +1132,7 @@ def build_catalog_projection(
 
     product_rows.sort(key=lambda row: (row[1], row[2]))
     product_order = {row[0]: (row[1], row[2]) for row in product_rows}
-    variant_rows.sort(key=lambda row: (*product_order[row[1]], row[2], row[3]))
+    variant_rows.sort(key=lambda row, order=product_order: (*order[row[1]], row[2], row[3]))
     try:
         descriptor = tempfile.mkstemp(prefix=".nla-catalog-", suffix=".tmp", dir=resolved.parent)
         os.close(descriptor[0])
@@ -1183,6 +1183,11 @@ def build_catalog_projection(
                         "immutable projection cleanup and rollback failed"
                     ) from rollback_exc
             raise ProjectionBuildError("immutable projection cleanup failed") from exc
+    # Reopening verifies every stored record again. Do not overlap that new
+    # object graph with the build-only copies and serialized SQL rows.
+    del product_rows, variant_rows, canonical_records, product_order
+    del seen_products, seen_handles, seen_variants, seen_inventory_items
+    del record, raw_record
     try:
         resolved.chmod(_READ_ONLY_MODE)
         return CatalogProjection.open(resolved, expected_generation=generation)

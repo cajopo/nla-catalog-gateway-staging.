@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import hashlib
+import json
+import weakref
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import fields, replace
@@ -122,6 +125,93 @@ def _records() -> tuple[CatalogProductRecordV1, ...]:
             inventory=7,
         ),
     )
+
+
+@pytest.mark.parametrize("ids", [(), ("1",), ("10", "2", "1", "9" * 80)])
+def test_catalog_hash_stream_is_byte_identical_to_whole_canonical_document(
+    ids: tuple[str, ...], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    records = tuple(_product(gid, title='Pokémon 雪 🃏 "quoted" \\ slash\nline') for gid in ids)
+    expected = json.dumps(
+        {
+            "contractVersion": sync.CONTRACT_VERSION,
+            "domain": "nla-catalog-product-records-v1",
+            "records": [
+                record.as_dict()
+                for record in sorted(
+                    records, key=lambda record: sync._product_gid_key(record.product_gid)
+                )
+            ],
+        },
+        ensure_ascii=False,
+        allow_nan=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+    expected_hash = hashlib.sha256(expected).hexdigest()
+    chunks: list[bytes] = []
+    original_sha256 = hashlib.sha256
+
+    class CapturedDigest:
+        def __init__(self) -> None:
+            self.digest = original_sha256()
+
+        def update(self, raw: bytes) -> None:
+            chunks.append(raw)
+            self.digest.update(raw)
+
+        def hexdigest(self) -> str:
+            return self.digest.hexdigest()
+
+    monkeypatch.setattr(sync.hashlib, "sha256", CapturedDigest)
+    assert sync._catalog_content_sha256(records) == expected_hash
+    assert b"".join(chunks) == expected
+    assert len(chunks) == 2 + 2 * len(records)
+
+
+def test_catalog_hash_releases_each_record_dictionary_before_the_next(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    records = tuple(_product(str(index)) for index in range(1, 5))
+    expected = sync._catalog_content_sha256(records)
+    original_as_dict = CatalogProductRecordV1.as_dict
+    original_encode = sync._canonical_json_bytes
+    references = []
+    serialized = []
+
+    class TrackedDict(dict):
+        pass
+
+    def tracked_as_dict(record: CatalogProductRecordV1) -> dict:
+        assert all(reference() is None for reference in references)
+        value = TrackedDict(original_as_dict(record))
+        references.append(weakref.ref(value))
+        return value
+
+    def checked_encode(value: Any) -> bytes:
+        assert isinstance(value, TrackedDict)
+        assert "records" not in value
+        serialized.append(value["productGid"])
+        return original_encode(value)
+
+    monkeypatch.setattr(CatalogProductRecordV1, "as_dict", tracked_as_dict)
+    monkeypatch.setattr(sync, "_canonical_json_bytes", checked_encode)
+    assert sync._catalog_content_sha256(records) == expected
+    assert len(serialized) == len(records)
+    assert len(references) == len(records)
+    assert all(reference() is None for reference in references)
+
+
+@pytest.mark.parametrize("invalid", [{1}, float("nan")])
+def test_catalog_hash_keeps_canonical_serialization_failures_value_free(
+    invalid: object, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    records = (_product("1"),)
+    monkeypatch.setattr(CatalogProductRecordV1, "as_dict", lambda _record: {"invalid": invalid})
+    with pytest.raises(
+        SyncContractError, match="synchronization material is not canonically serializable"
+    ):
+        sync._catalog_content_sha256(records)
 
 
 def _manifest(
