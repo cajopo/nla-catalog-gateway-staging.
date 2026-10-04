@@ -9,6 +9,126 @@ language/condition/finish. Gateway/normal refresh stay read-only.
 
 ## Current increment
 
+### Repeatable current Shopify identity check — 2026-09-26
+
+`python -m scripts.capture_import_identities` generalizes the successful pilot's
+complete all-status, both-identity-field Bulk export. Required: `--shop`,
+`--credential-file`, `--run-root` (the existing refresh pipeline lock directory),
+`--output` (new private run directory). Run on Linux from the installed package root.
+Each call starts or polls the same saved operation; unknown submission outcomes
+retain intent and cannot resend. Failed/partial downloads require inspection, not
+automatic resubmission. No signed URL is saved in receipts or printed.
+
+Exact independent counts before/after, query/operation identity, all row types,
+unique product GIDs and SHA256 are checked. `read_fresh_identities` rechecks the
+receipt and complete file and rejects exports older than30minutes from capture
+start. `verify_missing` is reusable as the existing draft primitive's callback:
+checks both identifiers, actual shop and existing definitions, recent changes,
+and the deterministic handle. Absence is not atomic against PowerTools; it does
+not authorize publication or bypass source/reference gates. No metafield search
+filter, definition mutation or modification of an existing product is introduced.
+
+46 targeted export/preflight/recent-identity tests PASS; Ruff and CLI smoke PASS.
+Both actual GraphQL queries passed official schema validation, revision1:
+`nla-repeatable-identities-snapshot-20260926` and
+`nla-repeatable-identities-definition-20260926`. Independent review required syncing
+the new run's parent directory before API calls; fixed and regression-tested.
+Live check recorded below when performed. Source-to-draft orchestration and
+scheduling are still unfinished.
+
+Official documentation consulted before implementation:
+https://shopify.dev/docs/apps/build/apis/graphql-admin/bulk-operations/queries
+
+Real read-only verification completed using code038f5292fc730882797d7a652d96140468ed5f64
+in `/opt/nla-staging/importer-038f529` (separate package; normal refresh unchanged).
+Archive SHA25677fe1efeea62fc883e86f8910ea4c5ddd2670016dcdbaea52ca1c7f1ce187e71.
+Bulk12533904965900 completed2026-09-26T10:11:39Z, started10:11:08Z:
+291796 unique products, both identity fields; full counts and file verification PASS.
+File SHA2565c395698ad3ba36922df6a57b02bcf24cca7585612de79e1cc4593178321ca2e.
+Private run `/var/tmp/nla-current-identities-038f529` retains intent, operation,
+completed receipt, identities.jsonl and live-guards.json. Do NOT resubmit this run;
+future use must respect its30minute freshness limit, not pretend it stays current.
+
+Actual guard rejected pilot Cardmarket80236 as already present BEFORE further API
+calls. A different real source candidate904085 passed full snapshot + live shop,
+definition, delta and handle checks. No creation was attempted or approved by this
+probe; old CardTrader source data was used only to select a real test identifier,
+not as current import authorization. All calls/readbacks were read-only.
+
+### Comparison-to-reference preparation — 2026-09-26
+
+`python -m scripts.prepare_cardtrader_reference` connects the verified capture and
+checksum-pinned projection comparison to the existing canonical-reference builder.
+Run from the repository root. Required arguments: `--capture`, `--projection`,
+`--projection-sha256`, `--parent`, `--parent-sha256`, `--output`, `--generator-sha`.
+All paths must be absolute; output must be new and private, outside Git.
+
+Each candidate retains its exact source file/row, blueprint and Cardmarket IDs.
+Only observed fixed properties supply collector number/rarity; editable-property
+defaults never become variant attributes. The public CardTrader reference documents
+image URLs and Cardmarket IDs but not these fixed-property names; their presence
+and string types are checked against the observed real export contract used by the
+successful Sep25 reference build. Missing/invalid/conflicting details are reported,
+not guessed. Existing canonical records remain unchanged; cross-game ID ambiguity
+is quarantined. No invented selling price, condition, language or finish.
+
+The new bundle is NOT activated. `preparation.json` explicitly retains
+`creationApproved:false` and `shopifyChanged:false`. Current Shopify identity
+verification and controlled reference activation must still precede any creation.
+No source file, output artifact or credential is committed.
+
+16 focused preparation/reference-builder tests PASS, including synthetic complete
+capture -> SQLite comparison -> reference roundtrip, existing mapping preservation,
+ambiguous parent IDs, malformed expansion duplicates, rejected metadata/images and
+output no-overwrite. Ruff and CLI help smoke PASS. Independent review identified
+an expansion-map filtering mismatch, corrected with its regression test. No live
+run, deployment, timer, Shopify writes or GitHub push.
+Official source reference: https://www.cardtrader.com/it/docs/api/full/reference
+
+### Capture-to-comparison integration — 2026-09-26
+
+`compare_captured_catalog` verifies completion,24h source age, every source file
+hash/size, expansion/row/anomaly counts and exact anomaly sidecars before invoking
+the existing global identity comparison. It retains source expansion/row provenance
+and quarantines export conflicts. Unknown categories remain reportable. Only the
+five identity fields are retained across expansions to avoid retaining all media
+and property descriptions in memory.
+
+`scripts/compare_cardtrader_catalog.py` reads a checksum-pinned SQLite projection
+using mode=ro/query_only, rejects journal/WAL/SHM inputs, checks the checksum again,
+and writes a new private report without overwriting prior evidence. It explicitly
+reports the projection timestamp and scope; absence is NOT a current Shopify check
+or creation approval. New and ambiguous rows do not cause any Shopify writes.
+
+78 focused capture/comparison/CLI tests PASS, including capture -> real SQLite ->
+comparison-report integration on synthetic fixtures; capture module100% statement
+and branch coverage. Ruff and independent review PASS. Not deployed; no live
+network run or source-to-store automation was enabled. Official SQLite URI
+reference: https://docs.python.org/3/library/sqlite3.html#how-to-work-with-sqlite-uris
+
+### Repeatable read-only source capture — 2026-09-26
+
+`scripts/capture_cardtrader_catalog.py` invokes the GET-only transport through
+`cardtrader_capture.py`, extracting the already exercised one-shot capture logic.
+Read credentials from a private file, not a command-line token. Each execution
+requires a new absolute output directory; no old run is overwritten or deleted.
+It reads every expansion of the four approved games, not just larger IDs/new sets,
+so additions to old sets can be discovered. Source anomalies remain in raw files
+and per-expansion sidecars; file hashes, byte counts and progress are recorded.
+Failures, disk/size/deadline limits yield failed status, never a complete snapshot.
+Consumers must verify all files/hashes/counts before using a completed run.
+
+18 focused capture/CLI tests PASS; capture module alone has100% statement/branch
+coverage. Ruff and independent component/CLI review PASS (no Blocker/High).
+CLI --help smoke PASS. The CLI has no Shopify client or mutation path. No live acquisition or
+timer was started by this increment; it is the reusable acquisition entry point,
+not a claim that scheduled source-to-store ingestion is active. Caller supplies
+the existing private credential path and a fresh run directory outside Git.
+
+Official source contract: https://www.cardtrader.com/it/docs/api/full/reference
+The documented shared limit is200 requests/10seconds; this uses at most1 request
+per second. Export is per expansion; no documented new-release cursor is assumed.
+
 ### Safe initial default variant — 2026-09-26
 
 The real single-draft pilot exposed a Shopify default: quantity zero and DENY,
