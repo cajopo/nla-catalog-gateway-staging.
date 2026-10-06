@@ -9,7 +9,7 @@ description = "Read-only catalog gateway foundation for Next Level Arena"
 readme = "README.md"
 requires-python = ">=3.12"
 authors = [{ name = "Next Level Arena" }]
-dependencies = ["uvicorn>=0.52.4,<0.53"]
+dependencies = ["uvicorn>=0.52.4,<0.55"]
 
 [project.optional-dependencies]
 dev = [
