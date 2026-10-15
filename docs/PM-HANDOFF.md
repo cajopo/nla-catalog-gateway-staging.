@@ -33,16 +33,26 @@ stati PR/runtime descrivono il 3 ottobre e non attestano lo stato corrente.
 
 La correzione della cattura CardTrader è stata applicata il 15 ottobre alle
 10:17:47 UTC e verificata alle 10:18:11 UTC. Il servizio market è sbloccato e
-inattivo in attesa del timer; non è stato avviato un nuovo ciclo. Il refresh
-read-only era già terminato alle 04:38:51 UTC e resta intatto. Nessun ciclo
-market completo successivo è attestato. Dettagli e limiti in
+inattivo in attesa del timer; non è stato avviato un nuovo ciclo al momento del
+fix. Il refresh read-only era già terminato alle 04:38:51 UTC e resta intatto.
+Il primo ciclo market post-fix `market-20261015t140020z-69980f6a` è terminato
+alle 14:49:19 UTC con `draft_cycle_complete`: 2.438 espansioni completate,
+257.154 blueprint, zero differiti e zero tentativi di creazione; nessuna nuova
+stampa idonea selezionata. Indice non aggiornato: nessuna modifica importer e indice
+ancora fresco. Alle 14:50:42 entrambi i servizi erano inattivi, il refresh delle
+15 UTC pronto, e lo spazio libero era 10.244.165.632 byte; generazioni corrente
+e precedente invariate. Ricevuta e limiti in
 [evidenza market](evidence/MARKET-SOURCE-2026-10-15.md).
+Alle 15:17:12 UTC il refresh risultava attivo (`activating/start`, senza exit
+timestamp); spazio libero 8.988.151.808 byte, pointer e ultima ricevuta del
+refresh invariati. Quarantena e restore aspettano che entrambe le unità siano
+idle; nessun job è stato riavviato.
 
 La PR #112 è in bozza e non fusa. CI è verde con 4.108 test passati per ciascuna
 versione Python indicata nell'evidenza; ciò documenta il codice della PR e non
-una nuova esecuzione completa operativa. I run CI, i conteggi di test e gli
-stati di review riportati sotto sono una fotografia storica del 3 ottobre;
-l'head PR #101 precedente a questa revisione è registrato più avanti.
+una nuova esecuzione completa operativa. Per il nuovo stato GitHub delle PR
+#101, #113 e #114 vedere la sezione aggiornata sotto; le prove operative sulla
+VPS restano distinte dai candidati di codice.
 
 La consegna documentale del 3 ottobre usava un checkout pulito separato (stato storico):
 `C:\Users\umbri\.codex\worktrees\nla-pm-incident-docs\nla-catalog-gateway-staging`,
@@ -78,23 +88,47 @@ Prima di questa revisione documentale, PR #101 era aperta, non draft e non fusa:
 `agent/refresh-interruption-recovery` (`7ab94d345511ddd53c362206f041bf4942f1a61a`).
 Il vecchio head #101 `6913748dc1513b29c084db522865386067db241a` e i relativi
 controlli sono storici. PR #112 resta draft e non fusa secondo l'evidenza market.
-Questa lettura riguarda metadati PR: non attesta CI nuova. Il commit della
-revisione documentale e i suoi controlli sono identificati nella PR #101;
-non attribuirgli i controlli del precedente head. I residui #100, #101, #112 e
-#113 non sono fusi; non confonderli con la consegna principale #108.
+La PR #101 documentale è aperta e non fusa. Il commit verificato
+`f116c1f49e320166297257a1c400f6e7248763a4` ha CI `38748061728` e CodeQL
+`38748061458` passati: 3.885 test per Python 3.12 e 3.13, coverage 100%;
+container smoke, dependency audit, Ruff, preflight e build passati. La presente
+revisione deve ricevere i controlli esatti sul nuovo head dopo il push.
+PR #113 è aperta in bozza al head `929c7b0849bc66258effa89e6aac5d78d1444c84`;
+CI `38754689301` e CodeQL `38754689777` sono passati. CI: 4.211 test per
+Python 3.12 e 3.13, copertura 100% (16.476 statement, 5.752 branch); container,
+dependency audit, Ruff, preflight e build passati. Python 3.13 riporta un
+`ResourceWarning` nel test esistente dei facet; nessun test fallito o saltato.
+Review indipendente: 125 test mirati, copertura statement/branch 100%, 18
+verifiche, Ruff/preflight/build passati. PR #114, health operativa #13, è aperta
+in bozza al head `59a74e60edd967dc27e65fd95ac2a390eb619961`; CI `38754640052`
+e CodeQL `38754639981` sono passati. CI: 4.154 test per Python 3.12 e 3.13,
+copertura 100% (15.994 statement, 5.614 branch); container, dependency audit,
+Ruff, preflight e build passati. Un `ResourceWarning` appare in Python 3.13 nel
+test dei facet, senza test falliti o saltati. Review indipendente: 10 casi e
+68 test mirati con copertura statement/branch 100%, lint, format, preflight e
+build passati. Nessuna delle due PR operative è stata installata o attivata. Un collector
+read-only sul modulo #114 ha ottenuto `collect=healthy` senza scrivere file,
+toccare unità o lock; il risultato convalida il contratto osservato sull'host,
+non unità, sandbox, Caddy o deployment dell'endpoint pubblico. I residui #100,
+#101, #112, #113 e #114 non sono fusi; non confonderli con la consegna
+principale #108.
 
 ## Regole per il prossimo intervento
 
-Il codice del backup automatico è consegnato nella PR #113 in bozza, commit
-`079a242c2129b346d58e170e6f954995364a8716`. CI e CodeQL passati, 4.191 test per
-versione Python e copertura 100%; review indipendente e prova Linux sintetica
-passate. Jacopo ha autorizzato il trasferimento delle credenziali (D-021), ora
-installate con configurazione e unità verificate. Primo backup corrente concluso
-alle 13:30:23 UTC con integrità `read-data` passata e staging proprio rimosso.
-Il timer è disabilitato: prima di abilitarlo verificare recupero applicativo e
-spazio in caso di upload lungo/fallito, che conserva lo staging oltre la cattura.
-Usare [evidenza e pin](evidence/BACKUP-AUTOMATION-2026-10-15.md),
-senza ripetere il pilota sul checkpoint storico del 3 ottobre.
+Jacopo ha autorizzato il trasferimento delle
+credenziali (D-021), ora installate con configurazione e unità verificate.
+Il servizio installato resta alla versione precedente, il timer è disabilitato
+e la prima copia è verificata. Il primo backup completo corrente era concluso alle
+13:30:23 UTC con `read-data` passato e staging rimosso. Prima dell'attivazione
+restano recupero applicativo, prova di capacità e verifica della pulizia dopo
+errore; usare [evidenza e pin](evidence/BACKUP-AUTOMATION-2026-10-15.md), senza
+ripetere il pilota sul checkpoint storico del 3 ottobre.
+La prova mirata della PR #113 ha coperto l'I/O pipe Linux e i limiti di
+ammissione del comando; non sostituisce una nuova cattura o la prova completa
+di timeout, unità e backup, né autorizza ad attivare il timer.
+
+La PR #114 resta un candidato di codice, non una modifica al monitor o un
+deployment; lo stato dei gate e la prova read-only sono riportati sopra.
 
 - Considerare concluse le prove e le unità terminali del 29 settembre; non
   riavviarle e non ripetere il conteggio delle nuove carte come aggiornamento.
@@ -166,6 +200,11 @@ Ha poi confermato di essere il referente iniziale e autorizzato l'email di
 attivazione UptimeRobot (D-022), richiesta alle 13:49:32 UTC con HTTP 200.
 Il recapito non è ancora collaudato e il monitor richiede la conferma di Jacopo
 nell'email. Il runbook descrive eventi, copertura e limiti del monitor esterno.
+Quando Jacopo conferma l'email e il monitor viene configurato, scegliere
+esplicitamente GET: [la guida ufficiale UptimeRobot](https://help.uptimerobot.com/en/articles/11358466-how-to-debug-a-monitor-showing-as-down-in-uptimerobot)
+indica HEAD come default e GET al retry. La sonda pubblica read-only del 15
+ottobre ha mostrato `/readyz` GET 200 e HEAD 404. Non reinviare l'email già
+inviata; l'attivazione con metodo GET rientra nell'autorizzazione già data.
 Nessun altro messaggio di prova inviato. Il primo tentativo Docker
 locale fallì al socket e resta conservato come evento storico; non furono
 resettati né cancellati dati. Nella prova del 1 ottobre Docker Desktop era attivo e l'immagine del

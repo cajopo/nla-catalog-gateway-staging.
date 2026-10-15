@@ -122,6 +122,10 @@ effettiva e prova concordata senza guasti sul live. Il link scade dopo 24 ore:
 Jacopo apre l'email e preme Activate nella pagina di conferma. Non reinviare
 automaticamente una richiesta dall'esito non verificato.
 Ricevuta privata in `output/nla-recovery/20260930/alert-activation-20261015T134927Z-f53333c3/receipt.json`.
+Quando Jacopo conferma l'email, configurare e verificare il monitor con metodo
+GET esplicito: [UptimeRobot usa HEAD di default e GET al retry](https://help.uptimerobot.com/en/articles/11358466-how-to-debug-a-monitor-showing-as-down-in-uptimerobot),
+mentre `/readyz` ha risposto GET 200 e HEAD 404 alla sonda read-only del 15
+ottobre. Non reinviare l'email.
 L'indirizzo è modificabile dalle impostazioni dell'account; il
 [cambio email](https://help.uptimerobot.com/en/articles/11582766-how-to-change-your-uptimerobot-account-email-or-username)
 richiede conferma tramite il vecchio indirizzo. Non è una modifica del codice NLA.

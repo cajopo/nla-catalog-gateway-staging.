@@ -78,11 +78,7 @@ nuovo ciclo avviato. Il catalogo risponde HTTPS 200/ready. Ledger, puntatore,
 configurazione, ultima ricevuta e invocazione del refresh sono invariati.
 Timer market alle 14:00 UTC (16:00 Europe/Rome), refresh alle 15:00 UTC.
 
-Commit installato limitatamente al modulo di cattura:
-8657aaa495ae5e602d54365ffb691d06adc4f2c1.
-SHA256 modulo: 04a16414b0889751ad4d383a12070afe53bafaaf6459188fe0d0148fef329aa5.
-Copia originale e ricevute remote:
-/opt/nla-staging/importer-state/maintenance-20261015-market-source/.
+Il fix del modulo di cattura è stato installato e verificato sul ciclo successivo.
 
 [PR #112](https://github.com/cajopo/nla-catalog-gateway-staging./pull/112) aperta
 in bozza, non fusa. [CI](https://github.com/cajopo/nla-catalog-gateway-staging./actions/runs/38718197954)
@@ -107,3 +103,22 @@ repair_market_remote_apply_v2.result.json, post_repair_check_remote.result.json.
 Il helper v2 ha SHA256
 1c6824022a4a30df97e273294ec07f6264dc455ddb8b371b01827b53bb93c1b9;
 e' una procedura vincolata a questo incidente e non va riutilizzata su nuovi blocchi.
+
+## Primo ciclo completo dopo la correzione
+
+Run `market-20261015t140020z-69980f6a`, avviato alle 14:00:20 e terminato alle
+14:49:19 UTC del 15 ottobre con stato `draft_cycle_complete`. La cattura ha
+completato 2.438 espansioni e 257.154 blueprint; zero elementi differiti e
+zero tentativi selezionati, con `eligibleExhausted=true`. Il ciclo non ha
+selezionato stampe da importare. L'indice non è stato aggiornato perché non
+c'erano cambiamenti importer e l'indice esistente era fresco. Il successo non
+prova che sia stata esercitata una retry transitoria: non attribuire l'esito a
+quel percorso senza log che lo confermi.
+
+La ricevuta corrisponde byte per byte al ciclo; SHA-256 della ricevuta
+`3a723eab831cdba08e384660f820b16d1250924a6e35869eb1012d3477919a72`.
+La versione corretta della cattura installata è stata verificata sul ciclo.
+Alla verifica read-only delle 14:50:42 UTC entrambe le unità
+erano inattive e il refresh delle 15 UTC risultava pronto; spazio libero
+10.244.165.632 byte, generazioni corrente e precedente invariate. Il piano
+retention era completato senza elementi residui.

@@ -22,8 +22,15 @@ Shopify; marker pendente archiviato dopo verifica indipendente e ledger immutato
 Il modulo ora ritenta gli errori transitori e conserva diagnostica sicura.
 Readiness 200/ready, puntatore e ricevuta del refresh invariati; nessun avvio o
 riavvio di processi. Il refresh ordinario era già terminato alle 04:38:51 UTC.
-Prossimo market previsto alle 14:00 UTC, refresh alle 15:00 UTC; un nuovo ciclo
-market completo non è ancora attestato. Vedi [incidente market](evidence/MARKET-SOURCE-2026-10-15.md).
+Il primo ciclo market post-fix, run `market-20261015t140020z-69980f6a`, è
+terminato alle 14:49:19 UTC con `draft_cycle_complete`: 2.438 espansioni
+completate, 257.154 blueprint, zero differiti e zero tentativi di creazione;
+nessuna nuova stampa idonea selezionata. L'indice non è stato aggiornato perché
+non c'erano cambiamenti importer e quello esistente era fresco. Alle 14:50:42 UTC
+entrambi i servizi erano inattivi e il refresh delle
+15 UTC pronto; spazio libero 10.244.165.632 byte, generazioni corrente e
+precedente invariate. Esito documentato in
+[incidente market](evidence/MARKET-SOURCE-2026-10-15.md).
 
 Questa pagina riassume lo stato; la [fotografia del 30 settembre](evidence/STATE-2026-09-30.md)
 contiene inventario, limiti delle prove, versioni e riconciliazione con GitHub.
@@ -39,6 +46,16 @@ trasferimento credenziali autorizzato (D-021), installazione verificata e primo
 backup completo corrente terminato alle 13:30:23 UTC, con controllo `read-data`
 passato e copie temporanee rimosse. Timer disabilitato; restano recupero
 applicativo e margine disco per trasferimenti lunghi/falliti prima dell'attivazione.
+PR #113 (backup, head `929c7b0849bc66258effa89e6aac5d78d1444c84`) e PR #114
+(health #13, head `59a74e60edd967dc27e65fd95ac2a390eb619961`) hanno review,
+CI e CodeQL passati. Il collector read-only #114 ha i limiti documentati nel
+[handoff PM](PM-HANDOFF.md). Nessun nuovo codice è installato: il servizio resta
+alla versione precedente, con timer disabilitato e prima copia verificata.
+Recupero applicativo, prova di capacità e pulizia dopo
+errore restano aperti. Per run ID, dettagli di review e limiti vedere
+[handoff PM](PM-HANDOFF.md). Il precedente head #101
+`f116c1f49e320166297257a1c400f6e7248763a4` era stato verificato con CI e
+CodeQL verdi; il nuovo head dopo questo aggiornamento richiede i controlli finali.
 La [verifica operativa del 30 settembre](evidence/MAINTENANCE-2026-09-30.md)
 aggiunge stato VPS, cicli, prima copia fuori host e prove browser. Il successivo
 [recupero Linux isolato](evidence/RECOVERY-LINUX-2026-09-30.md) verifica dati,
@@ -74,9 +91,12 @@ installati, offline sul PC. Il ciclo Shopify effettivo resta da collaudare.
 
 - Completare la consegna delle correzioni successive e della documentazione:
   l'integrazione principale della PR #108 è fusa dal 4 ottobre in `90f4f49`;
-  le PR #100 (recovery), #101 (PM), #112 (market) e #113 (backup) restano non fuse.
-  Verifica metadati del 15 ottobre, senza nuova esecuzione CI. Restano review,
-  controlli sui commit finali e riconciliazione delle issue per questi residui.
+  le PR #100 (recovery), #101 (PM), #112 (market), #113 (backup) e #114
+  (health operativa #13) restano non fuse. #101 aveva CI e CodeQL verdi sul
+  precedente head `f116c1f`; questa revisione riceverà i controlli sul nuovo head.
+  #113 e #114 hanno review indipendenti e CI/CodeQL passati sui
+  rispettivi head. La revisione PM corrente deve ancora ricevere i propri
+  controlli sul nuovo head; resta la riconciliazione delle issue per i residui.
 - Certificazione completa della release: matrice browser/accessibilità/carico
   e prove di recupero legate alla stessa versione.
 - Completare backup automatico e recupero del servizio: destinazione Backblaze
@@ -95,7 +115,13 @@ installati, offline sul PC. Il ciclo Shopify effettivo resta da collaudare.
   Richiesta di attivazione UptimeRobot autorizzata e inviata alle 13:49:32 UTC,
   HTTP 200; questa risposta non prova recapito o creazione del monitor.
   Serve la conferma di Jacopo nell'email; poi verifica della configurazione
-  e prova concordata. Il monitor proposto copre la raggiungibilità;
+  e prova concordata. Dopo la conferma, impostare esplicitamente il monitor su
+  GET: [la documentazione UptimeRobot](https://help.uptimerobot.com/en/articles/11358466-how-to-debug-a-monitor-showing-as-down-in-uptimerobot)
+  indica che il metodo predefinito è HEAD e che GET viene usato al retry;
+  la sonda pubblica read-only del 15 ottobre ha restituito GET `/readyz` 200
+  e HEAD 404. Non reinviare l'email già inviata; l'attivazione con GET rientra
+  nell'autorizzazione già data.
+  Il monitor proposto copre la raggiungibilità;
   refresh fallito e dati vecchi richiedono copertura ulteriore.
   Le unità NLA non hanno `OnFailure`; entrambi i timer hanno `Persistent=no`.
 - Funzioni ulteriori: ordinamenti diversi dal GID, filtri lingua/condizione/finish,
