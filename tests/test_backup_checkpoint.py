@@ -38,7 +38,7 @@ def setup(tmp_path, monkeypatch):
         monkeypatch.setattr(checkpoint.os, flag, 0, raising=False)
     monkeypatch.setattr(checkpoint, "_directory", lambda *a, **k: None)
     monkeypatch.setattr(checkpoint, "_regular", lambda *a, **k: None)
-    monkeypatch.setattr(checkpoint, "_Budget", lambda *a: Budget())
+    monkeypatch.setattr(checkpoint, "_Budget", lambda *a, **k: Budget())
     monkeypatch.setattr(checkpoint.os, "fsync", lambda _: None)
     monkeypatch.setattr(checkpoint, "_signature", lambda facts: (facts.st_size,))
     original_open = checkpoint.os.open
@@ -448,6 +448,10 @@ def test_budget_deadline_space_and_next_schedule(tmp_path, monkeypatch):
     config = dict(max_seconds=600, schedule_guard_seconds=300)
     budget = checkpoint._Budget(config, tmp_path / "job")
     assert budget.remaining() == 600
+    inherited = checkpoint._Budget(config, tmp_path / "job", deadline=120)
+    assert inherited.remaining() == 20
+    assert inherited.expires == Clock.moment.replace(second=20)
+    assert checkpoint._Budget(config, tmp_path / "job", deadline=900).remaining() == 600
     budget.check(100)
     with pytest.raises(checkpoint.CheckpointError):
         budget.check(101)
@@ -511,7 +515,7 @@ def test_image_export_stream_success_timeout_and_failure(tmp_path, monkeypatch):
     monkeypatch.setattr(checkpoint, "_run", lambda *a: json.dumps([dict(Id=image, Size=20)]))
     monkeypatch.setattr(checkpoint.os, "fsync", lambda _: None)
     process = None
-    state = dict(status=0, fail=False, polls=0)
+    state = dict(status=0, fail=False, polls=0, waits=[])
 
     class Process:
         def __init__(self, args, **kwargs):
@@ -531,6 +535,7 @@ def test_image_export_stream_success_timeout_and_failure(tmp_path, monkeypatch):
             self.stdout.close()
 
         def wait(self, **kwargs):
+            state["waits"].append(kwargs["timeout"])
             return state["status"]
 
         def kill(self):
@@ -547,14 +552,17 @@ def test_image_export_stream_success_timeout_and_failure(tmp_path, monkeypatch):
     result = checkpoint._image(image, tmp_path / "one.tar", Budget())
     assert result["sha256"] == digest(b"docker-archive")
     assert not process.killed
+    assert process.stdout.closed and state["waits"] == [20]
     state["status"] = 1
     with pytest.raises(checkpoint.CheckpointError):
         checkpoint._image(image, tmp_path / "two.tar", Budget())
     assert process.killed
+    assert process.stdout.closed and state["waits"][-1] == 10
     state["fail"] = True
     with pytest.raises(TimeoutError):
         checkpoint._image(image, tmp_path / "three.tar", Budget())
     assert process.killed
+    assert process.stdout.closed and state["waits"][-1] == 10
 
 
 def test_only_regular_bytecode_cache_is_excluded(setup):

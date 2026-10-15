@@ -157,7 +157,7 @@ def _config(value):
 
 
 class _Budget:
-    def __init__(self, config, destination):
+    def __init__(self, config, destination, *, deadline=None):
         now = datetime.now(UTC)
         future = [
             now.replace(hour=hour, minute=0, second=0, microsecond=0) + timedelta(days=day)
@@ -169,7 +169,9 @@ class _Budget:
         if available < config["max_seconds"]:
             raise CheckpointBusy("checkpoint busy")
         self.deadline = time.monotonic() + config["max_seconds"]
-        self.expires = now + timedelta(seconds=config["max_seconds"])
+        if deadline is not None:
+            self.deadline = min(self.deadline, deadline)
+        self.expires = now + timedelta(seconds=max(0, self.deadline - time.monotonic()))
         self.destination = destination
 
     def check(self, reserve=0):
@@ -336,15 +338,13 @@ def _image(image, target, budget):
     _require(len(inspected) == 1 and inspected[0]["Id"] == image)
     _require(type(inspected[0]["Size"]) is int and inspected[0]["Size"] > 0)
     budget.check(inspected[0]["Size"] * 2)
-    with (
-        _new_file(target) as output,
-        subprocess.Popen(  # noqa: S603
+    with _new_file(target) as output:
+        process = subprocess.Popen(  # noqa: S603 -- fixed executable and pinned image ID.
             ["/usr/bin/docker", "image", "save", image],
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
             env={"PATH": "/usr/bin:/bin", "LC_ALL": "C"},
-        ) as process,
-    ):
+        )
         digest, size = hashlib.sha256(), 0
         try:
             while True:
@@ -363,8 +363,10 @@ def _image(image, target, budget):
             os.fsync(output.fileno())
         except BaseException:
             process.kill()
-            process.wait()
+            process.wait(timeout=10)
             raise
+        finally:
+            process.stdout.close()
     return {"id": image, "filename": target.name, "sha256": digest.hexdigest(), "bytes": size}
 
 
@@ -490,7 +492,7 @@ def _capture(config, destination, budget, launches):
     }
 
 
-def capture(config, destination):
+def capture(config, destination, *, deadline=None):
     """Capture into a new private directory; return its private completion manifest.
 
     ``CheckpointBusy`` means no safe idle window. All other failures raise
@@ -512,7 +514,7 @@ def capture(config, destination):
                 for path in sources
             )
         )
-        budget = _Budget(config, destination)
+        budget = _Budget(config, destination, deadline=deadline)
         budget.check()
         with _lock(config["market_lock"]), _lock(config["refresh_lock"]):
             launches = _idle(config, budget)

@@ -78,6 +78,34 @@ guard interval before the known 02/03/14/15 UTC schedule. Changes to those unit
 definitions require review of the backup configuration and schedule guard.
 Locks are released before any cloud transfer or repository check.
 
+The hardened runner requires explicit `job_timeout_seconds` (1..2700) and
+`schedule_guard_seconds` (300..3600). It rejects the older
+`command_timeout_seconds` configuration; deployment must render and independently
+review a new configuration and source/unit pins rather than reusing the installed
+`079a242` configuration. No automatic migration or deployment is performed.
+
+One monotonic deadline starts at job admission and covers capture, all restic
+commands, binding checks, hashing and successful-staging cleanup. The complete
+configured allowance plus guard must fit before the next 02/03/14/15 UTC pipeline
+start; otherwise the job skips without creating staging. Capture also keeps its
+stricter local ceiling. Each child uses the remaining shared allowance; restic
+stdout is capped at 4 MiB while reading, and provider stderr is discarded.
+Exceptional termination kills/reaps only owned children, with a bounded reap wait.
+Systemd's 47-minute start timeout and 30-second stop timeout surround the maximum
+45-minute job budget, allowing fixed diagnostic receipt publication after expiry.
+The job does not start a destructive cleanup step once its deadline has expired.
+
+Capture and transfer failures preserve existing staging and never advance the
+last-success receipt. Expiry or failure during cleanup may leave a partially removed
+verified checkpoint; its cloud snapshot and integrity binding remain recorded,
+and the retained remainder requires inspection without automatic retry. The local
+config/binary validation precedes admission and creates no job staging or child.
+A fixed `failureCode`, when available, distinguishes deadline,
+termination and transport failures without exposing child output. This duration
+bound does not establish safe disk overlap: retained failed staging can still
+consume pipeline reserve after the backup exits or crashes. Capacity budgeting,
+legacy-data cleanup and native verification remain separate timer-activation gates.
+
 Capture preserves a 6 GiB free-space reserve, including copy/export requirements.
 The systemd template restricts CPU, memory, I/O priority and execution time.
 It grants write access to the private backup state and existing lock files;

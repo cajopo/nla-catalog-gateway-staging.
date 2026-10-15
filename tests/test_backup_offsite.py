@@ -4,6 +4,7 @@ import json
 import stat
 import subprocess
 from contextlib import nullcontext
+from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -12,7 +13,21 @@ from scripts import backup_offsite as backup
 
 
 @pytest.fixture
-def config(tmp_path, monkeypatch):
+def clock(monkeypatch):
+    state = SimpleNamespace(seconds=100, moment=datetime(2026, 10, 15, 1, tzinfo=UTC))
+
+    class Clock(datetime):
+        @classmethod
+        def now(cls, timezone):
+            return state.moment
+
+    monkeypatch.setattr(backup, "datetime", Clock)
+    monkeypatch.setattr(backup, "time", SimpleNamespace(monotonic=lambda: state.seconds))
+    return state
+
+
+@pytest.fixture
+def config(tmp_path, monkeypatch, clock):
     monkeypatch.setattr(backup, "protected", lambda path, **kwargs: Path(path))
     (tmp_path / "manifest.json").write_text("{}")
     passphrase_path, credentials = tmp_path / "password", tmp_path / "credentials.json"
@@ -27,11 +42,18 @@ def config(tmp_path, monkeypatch):
         "restic_binary": "/verified/restic",
         "checkpoint": {},
         "integrity_mode": "metadata",
-        "command_timeout_seconds": 30,
+        "job_timeout_seconds": 30,
+        "schedule_guard_seconds": 300,
     }
 
 
-def capture(config, destination):
+@pytest.fixture
+def budget(config):
+    return backup.JobBudget(config)
+
+
+def capture(config, destination, *, deadline):
+    assert deadline == 130
     destination.mkdir()
     data = destination / "files" / "0000"
     data.parent.mkdir()
@@ -46,9 +68,9 @@ def capture(config, destination):
 
 
 def runner(commands, *, mutate=None):
-    def invoke(binary, arguments, env, timeout):
+    def invoke(binary, arguments, env, deadline):
         commands.append(arguments)
-        assert binary == "/verified/restic" and timeout == 30
+        assert binary == "/verified/restic" and deadline == 130
         if arguments[0] == "backup":
             if mutate:
                 mutate(Path(arguments[-1]))
@@ -140,17 +162,99 @@ def test_empty_password(config, tmp_path):
         backup.environment(config, tmp_path)
 
 
-def test_failed_job_retained_and_never_replaces_success(config, publications):
+@pytest.mark.parametrize(
+    "reason", ["restic_failed", "restic_output_limit", "restic_timeout", "restic_reap_failed"]
+)
+def test_failed_job_retained_and_never_replaces_success(config, publications, reason):
     def fail(*args):
-        raise backup.BackupError("restic_failed")
+        raise backup.BackupError(reason)
 
     result = backup.run(config, capture=capture, run_command=fail, lock=lambda _: nullcontext())
     assert result["status"] == "failed"
+    assert result["failureCode"] == reason
     root = Path(config["state_root"])
     assert (root / "jobs" / result["jobId"] / "checkpoint" / "manifest.json").exists()
     assert root / "last-success.json" not in publications
     with pytest.raises(backup.BackupError, match="retained_job"):
         backup.run(config, lock=lambda _: nullcontext())
+
+
+def test_whole_job_deadline_spans_capture_and_multiple_commands(config, publications, clock):
+    received = []
+    base = runner([])
+
+    def advancing(*args):
+        received.append(args[-1])
+        output = base(*args)
+        clock.seconds += 10
+        return output
+
+    result = backup.run(
+        config, capture=capture, run_command=advancing, lock=lambda _: nullcontext()
+    )
+    assert received == [130, 130, 130]
+    assert result["status"] == "failed" and result["failureCode"] == "job_timeout"
+    assert result["snapshotId"] == "a" * 64 and "integrityStatus" not in result
+    assert (Path(config["state_root"]) / "jobs" / result["jobId"] / "checkpoint").is_dir()
+    assert Path(config["state_root"]) / "last-success.json" not in publications
+
+
+def test_capture_timeout_keeps_checkpoint_and_never_starts_restic(config, publications, clock):
+    calls = []
+
+    def late_capture(*args, **kwargs):
+        value = capture(*args, **kwargs)
+        clock.seconds = kwargs["deadline"]
+        return value
+
+    result = backup.run(
+        config, capture=late_capture, run_command=runner(calls), lock=lambda _: nullcontext()
+    )
+    assert result["status"] == "failed" and result["reason"] == "checkpoint_failed"
+    assert result["failureCode"] == "job_timeout" and not calls
+    assert (
+        Path(config["state_root"]) / "jobs" / result["jobId"] / "checkpoint" / "manifest.json"
+    ).exists()
+    assert Path(config["state_root"]) / "last-success.json" not in publications
+
+
+def test_cleanup_hashing_expires_before_any_unlink(config, publications, clock, monkeypatch):
+    original = backup.digest
+
+    def slow(path, *, budget=None):
+        if budget is not None and path.name == "0000":
+            clock.seconds = budget.deadline
+        return original(path, budget=budget)
+
+    monkeypatch.setattr(backup, "digest", slow)
+    result = backup.run(
+        config, capture=capture, run_command=runner([]), lock=lambda _: nullcontext()
+    )
+    assert result["reason"] == "cleanup_failed" and result["failureCode"] == "job_timeout"
+    assert result["integrityStatus"] == "passed" and result["snapshotId"] == "a" * 64
+    retained = Path(config["state_root"]) / "jobs" / result["jobId"] / "checkpoint"
+    assert (retained / "manifest.json").exists() and (retained / "files" / "0000").exists()
+    assert Path(config["state_root"]) / "last-success.json" not in publications
+
+
+@pytest.mark.parametrize(
+    "hour,minute,second", [(1, 59, 0), (2, 0, 0), (3, 0, 0), (14, 0, 0), (15, 0, 0)]
+)
+def test_near_schedule_skips_without_artifacts(config, publications, clock, hour, minute, second):
+    clock.moment = clock.moment.replace(hour=hour, minute=minute, second=second)
+    result = backup.run(config, lock=lambda _: pytest.fail("must skip before lock"))
+    assert result["status"] == "skipped_busy" and not publications
+    assert not (Path(config["state_root"]) / "jobs").exists()
+
+
+def test_budget_schedule_exact_admission_boundary_and_next_day(config, clock):
+    clock.moment = clock.moment.replace(hour=1, minute=54, second=30)
+    assert backup.JobBudget(config).remaining() == 30
+    clock.moment = clock.moment.replace(second=31)
+    with pytest.raises(backup.checkpoint.CheckpointBusy):
+        backup.JobBudget(config)
+    clock.moment = clock.moment.replace(hour=15, minute=1)
+    assert backup.JobBudget(config).deadline == 130
 
 
 def test_busy_skip(config, publications):
@@ -159,7 +263,7 @@ def test_busy_skip(config, publications):
 
     assert backup.run(config, lock=busy)["status"] == "skipped_busy"
 
-    def busy_capture(*args):
+    def busy_capture(*args, **kwargs):
         raise backup.checkpoint.CheckpointBusy("checkpoint busy")
 
     assert (
@@ -173,13 +277,96 @@ def test_busy_skip(config, publications):
     assert result["status"] == "complete"
 
 
-@pytest.mark.parametrize("code", [1, 3, 10, 11, 12, 130, 254])
-def test_all_nonzero_exit_codes_fail(monkeypatch, code):
-    monkeypatch.setattr(
-        backup.subprocess, "run", lambda *a, **k: SimpleNamespace(returncode=code, stdout=b"secret")
+def test_expired_busy_capture_does_not_remove_even_empty_owned_directories(
+    config, publications, clock
+):
+    def busy(*args, **kwargs):
+        clock.seconds = kwargs["deadline"]
+        raise backup.checkpoint.CheckpointBusy("checkpoint busy")
+
+    result = backup.run(config, capture=busy, lock=lambda _: nullcontext())
+    assert result["status"] == "failed" and result["failureCode"] == "job_timeout"
+    job = Path(config["state_root"]) / "jobs" / result["jobId"]
+    assert {path.name for path in job.iterdir()} == {"home", "tmp"}
+    assert Path(config["state_root"]) / "last-success.json" not in publications
+
+
+@pytest.fixture
+def child(monkeypatch, clock):
+    state = SimpleNamespace(
+        chunks=[b"ok", b""],
+        status=0,
+        launch_error=None,
+        wait_errors=[],
+        ready=[True],
+        closed=False,
+        killed=False,
+        waits=[],
+        calls=[],
     )
+
+    class Pipe:
+        def fileno(self):
+            return 12
+
+        def close(self):
+            state.closed = True
+
+    class Process:
+        def __init__(self, arguments, **kwargs):
+            state.calls.append((arguments, kwargs))
+            if state.launch_error:
+                raise state.launch_error
+            self.stdout = Pipe()
+            self.running = True
+
+        def poll(self):
+            return None if self.running else state.status
+
+        def wait(self, *, timeout):
+            state.waits.append(timeout)
+            if state.wait_errors:
+                raise state.wait_errors.pop(0)
+            self.running = False
+            return state.status
+
+        def kill(self):
+            state.killed = True
+
+    def read(descriptor, maximum):
+        assert descriptor == 12 and maximum == 65536
+        chunk = state.chunks.pop(0)
+        if isinstance(chunk, Exception):
+            raise chunk
+        return chunk
+
+    def select(inputs, writers, errors, timeout):
+        assert timeout <= 0.25 and not writers and not errors
+        ready = state.ready.pop(0) if len(state.ready) > 1 else state.ready[0]
+        return (inputs if ready else [], [], [])
+
+    monkeypatch.setattr(backup, "os", SimpleNamespace(read=read))
+    monkeypatch.setattr(backup, "select", SimpleNamespace(select=select))
+    monkeypatch.setattr(
+        backup,
+        "subprocess",
+        SimpleNamespace(
+            Popen=Process,
+            DEVNULL=subprocess.DEVNULL,
+            PIPE=subprocess.PIPE,
+            TimeoutExpired=subprocess.TimeoutExpired,
+        ),
+    )
+    return state
+
+
+@pytest.mark.parametrize("code", [1, 3, 10, 11, 12, 130, 254])
+def test_all_nonzero_exit_codes_fail(child, code):
+    child.status = code
+    child.chunks = [b"secret", b""]
     with pytest.raises(backup.BackupError, match="restic_failed"):
-        backup.command("/restic", ["backup"], {}, 1)
+        backup.command("/restic", ["backup"], {}, 101)
+    assert child.closed and not child.killed
 
 
 @pytest.mark.parametrize(
@@ -189,31 +376,72 @@ def test_all_nonzero_exit_codes_fail(monkeypatch, code):
         (OSError("secret"), "restic_unavailable"),
     ],
 )
-def test_command_errors_are_value_free(monkeypatch, error, reason):
-    def fail(*args, **kwargs):
-        raise error
-
-    monkeypatch.setattr(backup.subprocess, "run", fail)
+def test_command_errors_are_value_free(child, error, reason):
+    child.launch_error = error
     with pytest.raises(backup.BackupError, match=reason) as failure:
-        backup.command("/restic", [], {}, 1)
+        backup.command("/restic", [], {}, 101)
     assert "secret" not in str(failure.value)
 
 
-def test_command_owned_and_sanitized(monkeypatch):
-    def invoke(args, **kwargs):
-        assert args == ["/restic", "--json", "--no-cache", "check"]
-        assert kwargs["stderr"] == subprocess.DEVNULL
-        assert kwargs["stdin"] == subprocess.DEVNULL
-        assert kwargs["timeout"] == 1 and kwargs["env"] == {"safe": "value"}
-        return SimpleNamespace(returncode=0, stdout=b"ok")
-
-    monkeypatch.setattr(backup.subprocess, "run", invoke)
-    assert backup.command("/restic", ["check"], {"safe": "value"}, 1) == "ok"
-    monkeypatch.setattr(
-        backup.subprocess, "run", lambda *a, **k: SimpleNamespace(returncode=0, stdout=b"\xff")
-    )
+def test_command_owned_and_sanitized(child):
+    child.ready = [False, True]
+    assert backup.command("/restic", ["check"], {"safe": "value"}, 101) == "ok"
+    args, kwargs = child.calls[0]
+    assert args == ["/restic", "--json", "--no-cache", "check"]
+    assert kwargs["stderr"] == subprocess.DEVNULL and kwargs["stdin"] == subprocess.DEVNULL
+    assert kwargs["env"] == {"safe": "value"} and kwargs["bufsize"] == 0
+    assert child.closed and child.waits == [1, 10] and not child.killed
+    child.chunks = [b"\xff", b""]
     with pytest.raises(backup.BackupError, match="invalid_restic_output"):
-        backup.command("/restic", [], {}, 1)
+        backup.command("/restic", [], {}, 101)
+
+
+def test_stdout_cap_is_enforced_during_acquisition_and_reaps_owned_child(child):
+    child.chunks = [b"x" * 65536] * (backup.MAX_STDOUT_BYTES // 65536 + 1)
+    with pytest.raises(backup.BackupError, match="restic_output_limit"):
+        backup.command("/restic", ["backup"], {}, 101)
+    assert child.killed and child.closed and child.waits == [10]
+
+
+def test_command_elapsed_deadline_and_wait_timeout_reap_child(child, clock):
+    with pytest.raises(backup.BackupError, match="job_timeout"):
+        backup.command("/restic", [], {}, 100)
+    assert not child.calls
+    child.wait_errors = [subprocess.TimeoutExpired("owned", 1)]
+    with pytest.raises(backup.BackupError, match="restic_timeout"):
+        backup.command("/restic", [], {}, 101)
+    assert child.killed and child.closed and child.waits == [1, 10]
+
+
+@pytest.mark.parametrize("stage", ["read", "eof"])
+def test_deadline_is_checked_while_child_streams(child, clock, monkeypatch, stage):
+    def read(*args):
+        clock.seconds = 101
+        return b"x" if stage == "read" else b""
+
+    monkeypatch.setattr(backup.os, "read", read)
+    with pytest.raises(backup.BackupError, match="restic_timeout"):
+        backup.command("/restic", [], {}, 101)
+    assert child.killed and child.closed
+
+
+def test_read_error_and_failed_reaping_are_sanitized(child):
+    child.chunks = [OSError("secret")]
+    with pytest.raises(backup.BackupError, match="restic_unavailable"):
+        backup.command("/restic", [], {}, 101)
+    assert child.killed and child.closed
+    child.chunks = [b""]
+    child.wait_errors = [subprocess.TimeoutExpired("owned", 1), OSError("secret")]
+    with pytest.raises(backup.BackupError, match="restic_reap_failed") as failure:
+        backup.command("/restic", [], {}, 101)
+    assert "secret" not in str(failure.value) and child.closed
+
+
+def test_termination_during_read_reaps_owned_child(child):
+    child.chunks = [backup.BackupError("job_terminated")]
+    with pytest.raises(backup.BackupError, match="job_terminated"):
+        backup.command("/restic", [], {}, 101)
+    assert child.killed and child.closed and child.waits == [10]
 
 
 @pytest.mark.parametrize(
@@ -236,7 +464,7 @@ def test_summary_requires_final_unique_object(output):
     "response",
     [{}, {"snapshot_id": "abcd"}, {"snapshot_id": 3}, {"snapshot_id": "a" * 64, "dry_run": True}],
 )
-def test_backup_requires_full_snapshot(config, tmp_path, response):
+def test_backup_requires_full_snapshot(config, tmp_path, response, budget):
     with pytest.raises(backup.BackupError, match="invalid_snapshot"):
         backup.transfer(
             config,
@@ -245,6 +473,7 @@ def test_backup_requires_full_snapshot(config, tmp_path, response):
             {},
             "job",
             lambda *a: json.dumps({"message_type": "summary", **response}),
+            budget=budget,
         )
 
 
@@ -261,7 +490,7 @@ def test_backup_requires_full_snapshot(config, tmp_path, response):
         lambda _: [{}],
     ],
 )
-def test_snapshot_binding_rejected(config, tmp_path, change):
+def test_snapshot_binding_rejected(config, tmp_path, change, budget):
     commands = []
     base = runner(commands)
 
@@ -270,13 +499,13 @@ def test_snapshot_binding_rejected(config, tmp_path, change):
         return json.dumps(change(json.loads(output))) if args[1][0] == "snapshots" else output
 
     with pytest.raises(backup.BackupError):
-        backup.transfer(config, tmp_path, {}, {}, "job", invoke)
+        backup.transfer(config, tmp_path, {}, {}, "job", invoke, budget=budget)
 
 
 @pytest.mark.parametrize(
     "check", [{}, {"num_errors": 1}, {"num_errors": 0, "broken_packs": ["pack"]}]
 )
-def test_integrity_failures(config, tmp_path, check):
+def test_integrity_failures(config, tmp_path, check, budget):
     commands = []
     base = runner(commands)
 
@@ -285,7 +514,9 @@ def test_integrity_failures(config, tmp_path, check):
         return json.dumps({"message_type": "summary", **check}) if args[1][0] == "check" else output
 
     with pytest.raises(backup.BackupError, match="integrity_check_failed"):
-        backup.transfer(config, tmp_path, {"createdAt": "fixture"}, {}, "job", invoke)
+        backup.transfer(
+            config, tmp_path, {"createdAt": "fixture"}, {}, "job", invoke, budget=budget
+        )
 
 
 def test_failed_remote_check_retains_bound_snapshot(config, publications):
@@ -325,30 +556,40 @@ def test_cleanup_retains_changed_jobs(config, publications, mutation):
 
 
 @pytest.mark.parametrize("filename", ["../escape", "", "/absolute"])
-def test_cleanup_rejects_manifest_escape(config, tmp_path, filename):
+def test_cleanup_rejects_manifest_escape(config, tmp_path, filename, budget):
     job = tmp_path / "job"
     job.mkdir()
     captured = job / "checkpoint"
     captured.mkdir()
     (captured / "manifest.json").write_text("{}")
     with pytest.raises(backup.BackupError, match="unsafe_cleanup_manifest"):
-        backup.cleanup(job, captured, {"files": [{"filename": filename}], "images": []}, "a" * 64)
+        backup.cleanup(
+            job,
+            captured,
+            {"files": [{"filename": filename}], "images": []},
+            "a" * 64,
+            budget=budget,
+        )
 
 
-def test_cleanup_duplicate(config, tmp_path):
+def test_cleanup_duplicate(config, tmp_path, budget):
     job = tmp_path / "job"
     job.mkdir()
     captured = job / "checkpoint"
     captured.mkdir()
     with pytest.raises(backup.BackupError, match="duplicate_cleanup_file"):
         backup.cleanup(
-            job, captured, {"files": [{"filename": "manifest.json"}], "images": []}, "a" * 64
+            job,
+            captured,
+            {"files": [{"filename": "manifest.json"}], "images": []},
+            "a" * 64,
+            budget=budget,
         )
 
 
 @pytest.mark.parametrize("location", ["checkpoint", "home/file"])
 def test_busy_artifacts_fail_closed(config, publications, location):
-    def busy_capture(config, destination):
+    def busy_capture(config, destination, *, deadline):
         unexpected = destination.parent / location
         unexpected.write_text("retained")
         raise backup.checkpoint.CheckpointBusy("checkpoint busy")
@@ -380,15 +621,26 @@ def test_load_config(config, tmp_path, monkeypatch):
     assert backup.load_config(path) == config
     for field, value in [
         ("integrity_mode", "bad"),
-        ("command_timeout_seconds", True),
-        ("command_timeout_seconds", 0),
-        ("command_timeout_seconds", 7201),
+        ("job_timeout_seconds", True),
+        ("job_timeout_seconds", 0),
+        ("job_timeout_seconds", 2701),
+        ("schedule_guard_seconds", True),
+        ("schedule_guard_seconds", 299),
+        ("schedule_guard_seconds", 3601),
         ("restic_binary", "/bad"),
     ]:
         changed = {**config, field: value}
         path.write_text(json.dumps(changed))
         with pytest.raises(backup.BackupError):
             backup.load_config(path)
+    legacy = {
+        key: value
+        for key, value in config.items()
+        if key not in {"job_timeout_seconds", "schedule_guard_seconds"}
+    }
+    path.write_text(json.dumps({**legacy, "command_timeout_seconds": 7200}))
+    with pytest.raises(backup.BackupError, match="invalid_config"):
+        backup.load_config(path)
     path.write_text("{}")
     with pytest.raises(backup.BackupError, match="invalid_config"):
         backup.load_config(path)
@@ -411,7 +663,7 @@ def test_publish_atomic_private(tmp_path, monkeypatch):
 
 
 def test_main_platform_and_fixed_failures(monkeypatch, capsys):
-    monkeypatch.setattr(backup.sys, "platform", "win32")
+    monkeypatch.setattr(backup, "sys", SimpleNamespace(platform="win32"))
     assert backup.main(["--config", "anything"]) == 1
     monkeypatch.setattr(backup.sys, "platform", "linux")
     monkeypatch.setattr(backup.os, "geteuid", lambda: 1, raising=False)
@@ -425,6 +677,11 @@ def test_main_platform_and_fixed_failures(monkeypatch, capsys):
         )
         assert backup.main(["--config", "anything"]) == expected
     assert "secret" not in capsys.readouterr().out
+
+
+def test_termination_is_value_free():
+    with pytest.raises(backup.BackupError, match="job_terminated"):
+        backup.terminated()
 
 
 def test_protected_contract(tmp_path, monkeypatch):
@@ -476,5 +733,6 @@ def test_systemd_templates():
     assert "User=root" in service and "UMask=0077" in service
     assert "KillMode=control-group" in service and "CPUQuota=50%" in service
     assert "MemoryMax=768M" in service and "ProtectSystem=strict" in service
+    assert "TimeoutStartSec=47min" in service and "TimeoutStopSec=30s" in service
     assert "ExecStartPre" not in service and "ExecStopPost" not in service
     assert "01:00:00 UTC" in timer and "Persistent=false" in timer

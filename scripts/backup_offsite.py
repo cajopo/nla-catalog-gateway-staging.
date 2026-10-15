@@ -9,11 +9,14 @@ import hashlib
 import json
 import os
 import re
+import select
+import signal
 import stat
 import subprocess
 import sys
+import time
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from scripts import backup_checkpoint as checkpoint
@@ -22,10 +25,49 @@ from scripts.refresh_staging_catalog import pipeline_lock
 REPOSITORY = "s3:https://s3.eu-central-003.backblazeb2.com/nla-catalog/nla/restic-v1"
 RESTIC_SHA256 = "20d4142678d0d95ec11a4759def1b73fd9190abc9ca19e4b62d067c0b387e639"
 HOST = "nla-catalog"
+MAX_STDOUT_BYTES = 4 * 1024**2
+MAX_JOB_SECONDS = 45 * 60
+FAILURE_CODES = {
+    "job_timeout",
+    "job_terminated",
+    "restic_timeout",
+    "restic_output_limit",
+    "restic_reap_failed",
+    "restic_failed",
+    "restic_unavailable",
+}
 
 
 class BackupError(Exception):
     """A deliberately value-free failure suitable for the journal."""
+
+
+class JobBudget:
+    """One admitted monotonic deadline; no fresh allowance between phases."""
+
+    def __init__(self, config):
+        self.deadline = time.monotonic() + config["job_timeout_seconds"]
+        now = datetime.now(UTC)
+        next_start = min(
+            stamp
+            for day in (0, 1)
+            for hour in (2, 3, 14, 15)
+            if (
+                stamp := now.replace(hour=hour, minute=0, second=0, microsecond=0)
+                + timedelta(days=day)
+            )
+            >= now
+        )
+        if (next_start - now).total_seconds() < (
+            config["job_timeout_seconds"] + config["schedule_guard_seconds"]
+        ):
+            raise checkpoint.CheckpointBusy("checkpoint busy")
+
+    def remaining(self):
+        remaining = self.deadline - time.monotonic()
+        if remaining <= 0:
+            raise BackupError("job_timeout")
+        return remaining
 
 
 def timestamp():
@@ -53,9 +95,16 @@ def protected(path, *, directory=False, private=False):
     return path
 
 
-def digest(path):
+def digest(path, *, budget=None):
     with path.open("rb") as stream:
-        return hashlib.file_digest(stream, "sha256").hexdigest()
+        value = hashlib.sha256()
+        while True:
+            if budget is not None:
+                budget.remaining()
+            chunk = stream.read(1024**2)
+            if not chunk:
+                return value.hexdigest()
+            value.update(chunk)
 
 
 def load_config(path):
@@ -68,15 +117,20 @@ def load_config(path):
             "restic_binary",
             "checkpoint",
             "integrity_mode",
-            "command_timeout_seconds",
+            "job_timeout_seconds",
+            "schedule_guard_seconds",
         }
         if set(config) != expected:
             raise BackupError("invalid_config")
         if config["integrity_mode"] not in {"metadata", "read-data"}:
             raise BackupError("invalid_integrity_mode")
-        seconds = config["command_timeout_seconds"]
-        if type(seconds) is not int or not 1 <= seconds <= 7200:
-            raise BackupError("invalid_timeout")
+        for field, minimum, maximum in (
+            ("job_timeout_seconds", 1, MAX_JOB_SECONDS),
+            ("schedule_guard_seconds", 300, 3600),
+        ):
+            seconds = config[field]
+            if type(seconds) is not int or not minimum <= seconds <= maximum:
+                raise BackupError("invalid_timeout")
         protected(config["state_root"], directory=True, private=True)
         binary = protected(config["restic_binary"])
         if not binary.stat().st_mode & 0o111 or digest(binary) != RESTIC_SHA256:
@@ -116,29 +170,58 @@ def environment(config, job):
         raise BackupError("invalid_credentials") from error
 
 
-def command(binary, arguments, env, timeout):
-    """Owned subprocess; discard all raw error output, including provider bodies."""
+def command(binary, arguments, env, deadline):
+    """Stream bounded stdout until the shared deadline; never emit provider bodies."""
+    process = None
     try:
-        result = subprocess.run(  # noqa: S603
+        if time.monotonic() >= deadline:
+            raise BackupError("job_timeout")
+        process = subprocess.Popen(  # noqa: S603 -- pinned executable and fixed arguments.
             [str(binary), "--json", "--no-cache", *arguments],
             env=env,
             stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
-            timeout=timeout,
-            check=False,
+            bufsize=0,
         )
+        output = bytearray()
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise BackupError("restic_timeout")
+            ready, _, _ = select.select([process.stdout], [], [], min(0.25, remaining))
+            if not ready:
+                continue
+            chunk = os.read(process.stdout.fileno(), 65536)
+            if not chunk:
+                break
+            if len(output) + len(chunk) > MAX_STDOUT_BYTES:
+                raise BackupError("restic_output_limit")
+            output.extend(chunk)
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise BackupError("restic_timeout")
+        if process.wait(timeout=remaining) != 0:
+            # Exit 3 is partial backup, never success.
+            raise BackupError("restic_failed")
+        try:
+            return output.decode("utf-8")
+        except UnicodeError as error:
+            raise BackupError("invalid_restic_output") from error
     except subprocess.TimeoutExpired as error:
         raise BackupError("restic_timeout") from error
     except OSError as error:
         raise BackupError("restic_unavailable") from error
-    if result.returncode != 0:
-        # In particular exit 3 is a partial backup, never a successful receipt.
-        raise BackupError("restic_failed")
-    try:
-        return result.stdout.decode("utf-8")
-    except UnicodeError as error:
-        raise BackupError("invalid_restic_output") from error
+    finally:
+        if process is not None:
+            try:
+                if process.poll() is None:
+                    process.kill()
+                process.wait(timeout=10)
+            except (OSError, subprocess.TimeoutExpired) as error:
+                raise BackupError("restic_reap_failed") from error
+            finally:
+                process.stdout.close()
 
 
 def summary(output):
@@ -152,13 +235,16 @@ def summary(output):
         raise BackupError("invalid_restic_output") from error
 
 
-def transfer(config, capture_path, manifest, env, job_id, run_command=command, record=None):
-    manifest_sha256 = digest(capture_path / "manifest.json")
+def transfer(
+    config, capture_path, manifest, env, job_id, run_command=command, record=None, *, budget
+):
+    manifest_sha256 = digest(capture_path / "manifest.json", budget=budget)
 
     def invoke(arguments):
-        return run_command(
-            config["restic_binary"], arguments, env, config["command_timeout_seconds"]
-        )
+        budget.remaining()
+        output = run_command(config["restic_binary"], arguments, env, budget.deadline)
+        budget.remaining()
+        return output
 
     backup = summary(invoke(["backup", "--host", HOST, "--tag", job_id, str(capture_path)]))
     snapshot_id = backup.get("snapshot_id", "")
@@ -223,12 +309,14 @@ def publish(path, document, *, replace=False):
         os.close(descriptor)
 
 
-def cleanup(job, captured, manifest, manifest_sha256):
+def cleanup(job, captured, manifest, manifest_sha256, *, budget):
     """Remove only this invocation's exact, hash-verified completed staging tree."""
+    budget.remaining()
     protected(job, directory=True, private=True)
     protected(captured, directory=True, private=True)
     expected = {captured / "manifest.json": manifest_sha256}
     for item in [*manifest["files"], *manifest["images"]]:
+        budget.remaining()
         name = Path(item["filename"])
         if name.anchor or ".." in name.parts or not name.parts:
             raise BackupError("unsafe_cleanup_manifest")
@@ -242,25 +330,31 @@ def cleanup(job, captured, manifest, manifest_sha256):
     actual_files, actual_dirs = set(), set()
     # Walk never follows symlinks; protected() rejects links before any deletion.
     for parent, children, files in os.walk(job, followlinks=False):
+        budget.remaining()
         actual_dirs.update(Path(parent) / name for name in children)
         actual_files.update(Path(parent) / name for name in files)
     if actual_files != set(expected) or actual_dirs != directories:
         raise BackupError("unexpected_cleanup_entry")
     for path in directories:
+        budget.remaining()
         protected(path, directory=True, private=True)
     for path, sha256 in expected.items():
         protected(path, private=True)
-        if digest(path) != sha256:
+        if digest(path, budget=budget) != sha256:
             raise BackupError("changed_cleanup_file")
     for path in expected:
+        budget.remaining()
         path.unlink()
     for path in sorted(directories, key=lambda item: len(item.parts), reverse=True):
+        budget.remaining()
         path.rmdir()
+    budget.remaining()
     job.rmdir()
 
 
-def discard_busy_job(job):
+def discard_busy_job(job, *, budget):
     """CheckpointBusy is required to leave no capture artifact."""
+    budget.remaining()
     protected(job, directory=True, private=True)
     children = {job / "home", job / "tmp"}
     if set(job.iterdir()) != children:
@@ -270,7 +364,9 @@ def discard_busy_job(job):
         if any(child.iterdir()):
             raise BackupError("busy_job_has_artifacts")
     for child in children:
+        budget.remaining()
         child.rmdir()
+    budget.remaining()
     job.rmdir()
 
 
@@ -280,7 +376,9 @@ def run(config, *, capture=None, run_command=command, lock=pipeline_lock):
     receipt = {"schemaVersion": 1, "jobId": job_id, "startedAt": timestamp()}
     capture = capture or checkpoint.capture
     try:
+        budget = JobBudget(config)
         with lock(root):
+            budget.remaining()
             jobs, receipts = root / "jobs", root / "receipts"
             jobs.mkdir(mode=0o700, exist_ok=True)
             receipts.mkdir(mode=0o700, exist_ok=True)
@@ -293,31 +391,51 @@ def run(config, *, capture=None, run_command=command, lock=pipeline_lock):
             phase = "checkpoint"
             try:
                 env = environment(config, job)
+                budget.remaining()
                 captured = job / "checkpoint"
-                manifest = capture(config["checkpoint"], captured)
+                manifest = capture(config["checkpoint"], captured, deadline=budget.deadline)
+                budget.remaining()
                 phase = "transfer"
                 receipt.update(
-                    transfer(config, captured, manifest, env, job_id, run_command, record=receipt)
+                    transfer(
+                        config,
+                        captured,
+                        manifest,
+                        env,
+                        job_id,
+                        run_command,
+                        record=receipt,
+                        budget=budget,
+                    )
                 )
                 phase = "cleanup"
-                cleanup(job, captured, manifest, receipt["checkpointManifestSha256"])
+                cleanup(job, captured, manifest, receipt["checkpointManifestSha256"], budget=budget)
+                budget.remaining()
                 receipt["status"] = "complete"
             except checkpoint.CheckpointBusy:
                 receipt["status"] = "skipped_busy"
                 try:
-                    discard_busy_job(job)
-                except (BackupError, OSError):
+                    discard_busy_job(job, budget=budget)
+                except (BackupError, OSError) as error:
                     receipt.update(status="failed", reason="busy_job_has_artifacts")
-            except (BackupError, checkpoint.CheckpointError, OSError):
+                    if str(error) in FAILURE_CODES:
+                        receipt["failureCode"] = str(error)
+            except (BackupError, checkpoint.CheckpointError, OSError) as error:
                 receipt["status"] = "failed"
                 receipt["reason"] = phase + "_failed"
+                if isinstance(error, BackupError) and str(error) in FAILURE_CODES:
+                    receipt["failureCode"] = str(error)
             receipt["finishedAt"] = timestamp()
             publish(receipts / (job_id + ".json"), receipt)
             if receipt["status"] == "complete":
                 publish(root / "last-success.json", receipt, replace=True)
             return receipt
-    except BlockingIOError:
+    except (BlockingIOError, checkpoint.CheckpointBusy):
         return {**receipt, "status": "skipped_busy", "finishedAt": timestamp()}
+
+
+def terminated(*_):
+    raise BackupError("job_terminated")
 
 
 def main(argv=None):
@@ -328,7 +446,11 @@ def main(argv=None):
         if sys.platform != "linux" or os.geteuid() != 0:
             raise BackupError("linux_root_required")
         os.umask(0o077)
-        result = run(load_config(args.config))
+        previous = signal.signal(signal.SIGTERM, terminated)
+        try:
+            result = run(load_config(args.config))
+        finally:
+            signal.signal(signal.SIGTERM, previous)
         print(json.dumps({"status": result["status"], "jobId": result["jobId"]}))
         return 0 if result["status"] in {"complete", "skipped_busy"} else 1
     except (BackupError, OSError, ValueError):

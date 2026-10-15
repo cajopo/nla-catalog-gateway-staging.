@@ -13,7 +13,7 @@ Environment=PYTHONPATH=@REPOSITORY@/src
 Environment=PYTHONNOUSERSITE=1
 Environment=PYTHONDONTWRITEBYTECODE=1
 ExecStart=@PYTHON@ -m scripts.backup_offsite --config @BACKUP_CONFIG@
-TimeoutStartSec=7h
+TimeoutStartSec=47min
 TimeoutStopSec=30s
 KillMode=control-group
 Nice=15
