@@ -48,6 +48,70 @@ timestamp); spazio libero 8.988.151.808 byte, pointer e ultima ricevuta del
 refresh invariati. Quarantena e restore aspettano che entrambe le unità siano
 idle; nessun job è stato riavviato.
 
+Alle 16:21:16 UTC il refresh resta in corso, con 7.185.530.880 byte liberi e
+pointer/ultima ricevuta invariati. Preservare anche la terza generazione in
+costruzione. I due helper della quarantena sono installati e verificati ma
+non eseguiti; nessun residuo è stato spostato o eliminato. Il pacchetto health
+è stato preparato e verificato nativamente, con servizi ancora spenti:
+[prove e passaggi mancanti](evidence/OPERATIONAL-HEALTH-2026-10-15.md).
+La versione allora preparata usava il wrapper read-only da 70 secondi,
+pin `789fe358023145d6edec8bd743ba4ad7d5526b780a3000642b6469e213e8090e`:
+il file `.inventory.json` conserva gli esatti byte stdout, che diventano
+l'autorità per review e SHA. Non usare il precedente flusso `.result.json`
+formattato. Questa versione e' storica; la catena v2 qui sotto e' stata superata dal cleanup v3 completato. Non riusare i pin v2 per nuove esecuzioni.
+
+Aggiornamento delle 16:40:10 UTC: il refresh `20261015t150018z-a6b95321` è
+terminato alle 16:36:34, con attivazione alle 16:36:31 e sorgente delle 15:00:35.
+Ricevuta SHA `9a86cb8027a877481b900382f47a90b3ea68806b2653bfba3a16b926aacd1bf9`,
+pointer `ec0946126da6cffe424c1bd5fe38b0f0b8b8aa689dea0872da5427e73b4f4c93`;
+corrente `49521a0f…`, precedente `ed078fcd…`. Retention coerente e conclusa,
+10.245.189.632 byte liberi. Prova privata:
+`retention-20261015T164009Z-4db6bd30/retention_periodic_check_remote.result.json`.
+
+Il primo inventario completo aggiuntivo è stato rifiutato in 9,871 secondi,
+senza piano accettato o mutazioni. La diagnosi delle 16:42–16:43 UTC ha isolato
+la guardia `container_inventory:241`: il solo container storico `52abaae4…`
+usa `0:0`, mentre gli altri due usano `10001:10001`. Tutti gli altri vincoli
+osservati coincidono: fermi dal 21 settembre, immagine e nomi fissati, nessun
+riavvio automatico, rete isolata, root filesystem read-only, nessuna porta e
+solo il mount del vecchio restore. L'eccezione per quel solo ID è stata poi
+preparata e revisionata in una versione separata, senza modificare il container
+o disattivare gli altri controlli. Prove private:
+`inventory-diagnostic-20261015T164224Z-4dc0cb55` e
+`old-containers-20261015T164325Z-3ff82905`.
+
+La catena v2 è installata sotto `/var/lib/nla-maintenance/helpers-v2` e ha
+superato installazione/probe separati: inventario SHA
+`acde202f68b2df31691868cb941dcb89a73b4b9628448e563b5c25354dc59e84`,
+quarantena `e55bb3122333b5357648d2ed5bfc8f2b33379f3eefdb92a3687a9a9b0fdf0226`,
+wrapper read-only `c5a3c0f9c29754ed134b167abd6aad85752634c63c5b3169886440398d5788bd`.
+Il primo tentativo delle 17:00 UTC si è fermato prima di creare il batch:
+due ulteriori container di smoke del 17 settembre montavano la cartella padre.
+Inventariati e revisionati separatamente, sono stati rimossi per i soli due ID
+completi; immagini, directory host e baseline live sono rimaste invariate.
+Ricevuta privata `backup-automation-20261015/quarantine-v2-draft/`:
+`smoke-container-removal-a2fcf86bb85b48de9d35eaa0a2d31410/remove_old_smoke_containers.result.json`.
+
+Il nuovo inventario delle 17:15:08 UTC, SHA
+`160c7c74959794fdf7fa562d57d8bf879120050d2a204109d1e464213fa31211`,
+ha passato la review ma è scaduto durante l'attesa delle autorizzazioni tecniche;
+il builder ha rifiutato il trasferimento senza creare un receiver. Non riusarlo
+come inventario fresco. La successiva esecuzione deve riacquisire i dati e
+confrontarli integralmente con il piano approvato, ammettendo solo un diverso
+`observedAtUtc`; ogni altra differenza richiede nuova review. Il limite di
+600 secondi e i controlli completi sui riferimenti restano invariati.
+Il problema del parser v2 `nsfs` e risolto: il controllo nativo
+completo read-only e l'orchestrazione v3 hanno completato la quarantena del
+vecchio drill. Due container smoke del 17 settembre erano gia stati rimossi
+separatamente; poi sono stati rimossi tre container del drill e spostati in
+quarantena due payload. Lo smoke di 10 richieste/6 controlli e' PASS sulla
+generazione live `ae3be49c...` alle 21:57:13 UTC. La cancellazione esatta dei
+payload e' stata verificata il 15 ottobre alle 21:58 UTC; il restore applicativo
+isolato resta aperto. La retention post-operazione ha confermato pointer e
+manifest coerenti, servizi inattivi con esito positivo, generazioni
+corrente/precedente protette e 13.795.237.888 byte liberi.
+[Dettagli e ricevute](evidence/BACKUP-AUTOMATION-2026-10-15.md).
+
 La PR #112 è in bozza e non fusa. CI è verde con 4.108 test passati per ciascuna
 versione Python indicata nell'evidenza; ciò documenta il codice della PR e non
 una nuova esecuzione completa operativa. Per il nuovo stato GitHub delle PR
@@ -88,11 +152,13 @@ Prima di questa revisione documentale, PR #101 era aperta, non draft e non fusa:
 `agent/refresh-interruption-recovery` (`7ab94d345511ddd53c362206f041bf4942f1a61a`).
 Il vecchio head #101 `6913748dc1513b29c084db522865386067db241a` e i relativi
 controlli sono storici. PR #112 resta draft e non fusa secondo l'evidenza market.
-La PR #101 documentale è aperta e non fusa. Il commit verificato
-`f116c1f49e320166297257a1c400f6e7248763a4` ha CI `38748061728` e CodeQL
-`38748061458` passati: 3.885 test per Python 3.12 e 3.13, coverage 100%;
-container smoke, dependency audit, Ruff, preflight e build passati. La presente
-revisione deve ricevere i controlli esatti sul nuovo head dopo il push.
+La PR #101 documentale è aperta e non fusa. Il head pubblicato verificato
+`551bfbc1a0fa473017b0c934d7e0cfd990e9daed` ha CI `38760991582` e CodeQL
+`38760991612` passati: 3.885 test per Python 3.12 e 3.13, coverage 100%;
+container smoke, dependency audit, Ruff, preflight e build passati. La prova
+privata è `output/nla-recovery/20260930/ci-pr101-551bfbc-final.json`.
+Gli aggiornamenti locali successivi su preparazione alert e roadmap non sono
+ancora pubblicati e richiederanno consegna e controlli sul relativo commit.
 PR #113 è aperta in bozza al head `929c7b0849bc66258effa89e6aac5d78d1444c84`;
 CI `38754689301` e CodeQL `38754689777` sono passati. CI: 4.211 test per
 Python 3.12 e 3.13, copertura 100% (16.476 statement, 5.752 branch); container,
@@ -199,9 +265,12 @@ per gli alert ha scelto l'email dopo il chiarimento. Il 15 ottobre ha confermato
 il destinatario, conservato nelle prove private e modificabile (D-020).
 Ha poi confermato di essere il referente iniziale e autorizzato l'email di
 attivazione UptimeRobot (D-022), richiesta alle 13:49:32 UTC con HTTP 200.
-Il recapito non è ancora collaudato e il monitor richiede la conferma di Jacopo
-nell'email. Il runbook descrive eventi, copertura e limiti del monitor esterno.
-Quando Jacopo conferma l'email e il monitor viene configurato, scegliere
+Jacopo ha poi confermato di avere ricevuto e attivato l'email e di essere entrato
+nella dashboard. Il recapito degli alert non è ancora collaudato. L'ispezione
+della dashboard è stata fermata da Computer Use perché non poteva verificare
+l'URL corrente su Windows: stato e configurazione del monitor restano da
+osservare, senza reinviare l'attivazione. Il runbook descrive copertura e limiti.
+Quando si verifica la configurazione del monitor, scegliere
 esplicitamente GET: [la guida ufficiale UptimeRobot](https://help.uptimerobot.com/en/articles/11358466-how-to-debug-a-monitor-showing-as-down-in-uptimerobot)
 indica HEAD come default e GET al retry. La sonda pubblica read-only del 15
 ottobre ha mostrato `/readyz` GET 200 e HEAD 404. Non reinviare l'email già

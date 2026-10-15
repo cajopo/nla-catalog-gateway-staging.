@@ -163,9 +163,50 @@ Pin del verificatore
 `0c40d5daffaa9702f307bced8f035f2d955f59b33b9edbc249feb806dd2284d0`,
 finalizzatore `e792465d79d569277125d26a8989038ebac50884ff55a652ec326e2af5a7e023`,
 download restic `55d49f0a90ed0e866f531e7932d7180606aea799b4ddfd717099d924eb902571`.
-Queste sono prove locali degli helper; validazione nativa, restore reale,
-importazione dell'immagine e runtime da quel restore restano da eseguire.
-Nessun drill VPS è stato avviato da questi helper.
+Queste erano prove locali degli helper; un workflow v3 separato ha poi superato il controllo completo nativo read-only e completato quarantena e cancellazione esatta del vecchio drill. Il restore applicativo isolato, l'importazione dell'immagine e il runtime da quel restore restano da eseguire.
+
+## Completamento del vecchio drill - verifica del 15 ottobre
+
+Il primo tentativo di finalizzazione e' scaduto al builder con TTL 600 prima
+di creare un receiver o trasferire dati, senza mutazioni. In un secondo
+tentativo il trasferimento di prova e' passato; prima della SSH, `Get-Acl` non
+ha potuto caricare il modulo PowerShell 5.1 perche l'ambiente ereditava
+`PSModulePath` di PowerShell 7. Un fix limitato all'ambiente del child ha
+impostato i moduli PowerShell 5.1; il preflight nativo e' quindi passato senza
+cambiare ACL, pin o executor.
+
+Dopo il fix del parser `nsfs`, la scansione VPS completa read-only dei riferimenti
+e' passata: 122 processi, 205 task e 2.281 descrittori esaminati. Installer v3
+`606a...` e probe separato PASS; helper di quarantena `3f2b...` e orchestratore
+`306e...` PASS.
+
+Il batch `old-drill-20260921-20bbfa9f0ec94690b8065e0004a65b58` ha usato inventory
+SHA-256 `93e2eae74e847027f81f63f2330f672685ac0e7d639fd6911d868d29abc40fd8` e
+ricevuta di quarantena `bf576880761177f744e1149700aaea4a29b5220b2ad497b4db4dc87a2e303894`.
+Due payload sono stati spostati in quarantena. I due container smoke del 17
+settembre erano gia stati rimossi separatamente; durante la quarantena sono
+stati rimossi i tre container del drill. Approval `fc479d...` e smoke
+`f765ec...` (10 richieste, 6 controlli) PASS sulla generazione live
+`ae3be49c...` alle 21:57:13 UTC. La sessione workflow `69277` e' terminata con
+exit 0 e outcome `deleted_payloads_verified`: il finalizzatore ha eliminato e
+verificato i due payload esatti (nove file payload e le directory vuote
+associate). Ricevuta terminale SHA-256
+`ebf076b7f215466f3e2fb47d085e966b40bda08daa394cd9cd0896dedc3cea80`.
+
+Il controllo post-delete delle 21:58:47 UTC ha registrato 13.795.237.888 byte
+liberi; servizi refresh e market `inactive/dead`, entrambi `Result=success` e
+`ExecMainStatus=0`. Retention coerente: run `20261015t150018z-a6b95321`, ultimo
+successo e manifest attivo corrispondenti, due directory e tre container
+pianificati, zero directory residue; pointer e generazioni corrente/precedente
+invariati. SHA-256 della ricevuta post-delete
+`7a934c10747b029c94ee18de779750918d20b7027980a47d8e393acb489bd062`. Il restore
+applicativo isolato resta aperto. I pacchetti backup `929c7b0` e health `59a74e6`
+sono preparati/provati ma inerti; UptimeRobot resta non verificato dopo il blocco
+della policy URL di Computer Use, pur con email attivata e login alla dashboard
+confermati dal proprietario.
+
+Il piu' recente tentativo di ammissione read-only per il restore e' stato rifiutato; la diagnosi e' in corso. Il restore non e' stato avviato.
+
 
 Restano recupero isolato dell'applicazione e verifica del margine disco per lo
 scheduler anche in caso di errore. Scheduler proposto alle
@@ -173,3 +214,24 @@ scheduler anche in caso di errore. Scheduler proposto alle
 password e obiettivi RPO/RTO richiedono ancora chiusura documentata. Nessuna
 cancellazione cloud, modifica MAIN/PowerTools o scrittura Shopify autorizzata
 da questo workstream.
+
+## Preparazione inerte del pacchetto hardening
+
+Il bundle pubblico dal commit `929c7b0849bc66258effa89e6aac5d78d1444c84` è stato
+revisionato indipendentemente: installer `13f2425cc6da200db84680ee2a0f216dc4513eb4644fca656a557529acf29e5b`,
+esito PASS nella review salvata
+`output/nla-backup-hardening-deployment/20261015/1ab5bdbb-f368-4e0c-92e8-c82add799c7c/review-installer-root.json`. La preparazione
+nativa ha restituito `prepared` per 7 file al target
+`/opt/nla-staging/backup-929c7b0`; il probe separato ha restituito
+`probe_pass` sugli stessi 7 file. Entrambi sono vincolati al manifest SHA-256
+`922c569474226c606f11c52e2bfab3cad299e689a39f7162985290136bcb373f`. Ricevute
+private: `backup-package-prepare-528c049d15434db58b61fde64e489695/install_backup_package.result.json`
+e `backup-package-probe-e3ed28b4b3d846d7b494b59dd165f149/install_backup_package.result.json`.
+
+Questa preparazione del pacchetto sorgente è separata dall'attivazione: le unità
+candidate restano sotto `units/` nel pacchetto e non sono state installate in
+`/etc/systemd`; le unità e la configurazione installate in precedenza restano
+in uso, senza modifiche. Nessun job restic, timer o scheduler è stato avviato o
+sostituito. Il timer resta disabilitato e il primo backup corrente delle 13:30
+resta integro. Le candidate di configurazione solo hardening `d5d65f` e
+`health-active 8a7bf` hanno review PASS ma non sono state applicate.

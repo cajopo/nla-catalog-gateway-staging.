@@ -132,6 +132,14 @@ richiede conferma tramite il vecchio indirizzo. Non è una modifica del codice N
 La readiness dal PC, con TLS validato e senza redirect, è risultata 200/ready
 alle 17:06 UTC. Questo è un controllo singolo, non un monitor configurato.
 
+Il 15 ottobre alle 16:20–16:21 UTC il pacchetto health è stato preparato sulla
+VPS: 101 file verificati, unità validate e import Python eseguiti senza privilegi.
+Servizi e `/opsz` restano da attivare. Prima di intervenire, seguire i gate e i
+pin in [preparazione degli alert](evidence/OPERATIONAL-HEALTH-2026-10-15.md):
+attendere pipeline idle, validare il proxy, predisporre rollback e aggiornare
+insieme l'inventario backup. Non reinstallare il pacchetto già preparato e non
+riutilizzare un tentativo parziale. La prova di recapito resta distinta.
+
 ## Retention e controllo ogni 48 ore
 
 Jacopo ha autorizzato la pulizia degli artefatti VPS non più necessari il
@@ -351,7 +359,7 @@ periodico e non ripetere i trasferimenti delle credenziali già riusciti.
 | Credenziali e reference | Reference completa e configurazione restaurata accettate offline; credenziali/certificati esclusi | Collaudare il ciclo refresh/importer con accessi recuperati; definire conservazione cifrata e recupero degli accessi, senza segreti in Git/documenti |
 | RPO | Nessun RPO garantito dal backup manuale | Proposta iniziale: massimo 24 ore per copie fuori host, coerente con tolleranza del catalogo; richiede scheduler e prova dei fallimenti |
 | RTO | Restore dati PC: 49,826 s; copia riscaricata da Backblaze: 61,970 s; reference storico: 23,164 s. Questi tempi escludono trasferimenti e avvio del runtime; nessun RTO completo certificato | Budget proposto: 2 ore su host Linux già pronto, escluso provisioning/DNS; serve prova completa con immagine/credenziali, oggi non garantito. [Prova Backblaze](evidence/BACKBLAZE-2026-10-03.md) |
-| Alert e reperibilità | Jacopo referente; richiesta di attivazione UptimeRobot autorizzata e inviata, recapito e monitor ancora da verificare | Conferma del proprietario nell'email; poi verifica configurazione e prova di alert concordata; completare copertura refresh/freschezza |
+| Alert e reperibilità | Jacopo ha confermato email ricevuta/attivata e login alla dashboard; configurazione del monitor e recapito non verificati per blocco della verifica URL in Computer Use | Verificare stato, metodo, intervallo e contatto del monitor; concordare una prova di recapito e completare la copertura refresh/freschezza. [Stato e limiti](evidence/OPERATIONAL-HEALTH-2026-10-15.md) |
 | Recupero trigger persi | `Persistent=no` osservato | Valutare `Persistent=yes` e prova isolata dopo verifica dei vincoli di locking/overlap; nessun timer cambiato ora |
 
 Le proposte non sono SLA né assegnazioni implicite. PM e operatori conservano

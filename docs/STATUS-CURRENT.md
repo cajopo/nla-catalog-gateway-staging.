@@ -32,6 +32,21 @@ entrambi i servizi erano inattivi e il refresh delle
 precedente invariate. Esito documentato in
 [incidente market](evidence/MARKET-SOURCE-2026-10-15.md).
 
+Il successivo refresh ordinario `20261015t150018z-a6b95321` è terminato con
+successo alle 16:36:34 UTC. Il controllo delle 16:40:10 conferma ricevuta,
+last-success e manifest attivo coerenti; retention eseguita, nessuna directory
+prevista ancora da rimuovere e soltanto corrente/precedente conservate.
+Spazio libero 10.245.189.632 byte; entrambi i servizi inattivi con esito positivo.
+Il parser `nsfs` corretto ha superato il controllo nativo completo in sola
+lettura. Due container smoke del 17 settembre erano già stati rimossi
+separatamente; poi il vecchio drill è stato messo in quarantena, con tre
+container rimossi e due payload cancellati dopo lo smoke PASS (10 richieste,
+6 controlli) sulla generazione live `ae3be49c…` alle 21:57:13 UTC. La ricevuta terminale del
+15 ottobre alle 21:58 UTC verifica la cancellazione; la retention successiva è
+coerente, con 13.795.237.888 byte liberi e le generazioni corrente/precedente
+protette. [Dettagli e ricevute](evidence/BACKUP-AUTOMATION-2026-10-15.md).
+
+
 Questa pagina riassume lo stato; la [fotografia del 30 settembre](evidence/STATE-2026-09-30.md)
 contiene inventario, limiti delle prove, versioni e riconciliazione con GitHub.
 Il 15 ottobre è riuscita anche la [prova di backup cifrato S3](evidence/BACKUP-ENCRYPTION-2026-10-15.md):
@@ -48,13 +63,18 @@ applicativo e margine disco per trasferimenti lunghi/falliti prima dell'attivazi
 PR #113 (backup, head `929c7b0849bc66258effa89e6aac5d78d1444c84`) e PR #114
 (health #13, head `59a74e60edd967dc27e65fd95ac2a390eb619961`) hanno review,
 CI e CodeQL passati. Il collector read-only #114 ha i limiti documentati nel
-[handoff PM](PM-HANDOFF.md). Nessun nuovo codice è installato: il servizio resta
-alla versione precedente, con timer disabilitato e prima copia verificata.
+[handoff PM](PM-HANDOFF.md). Anche il pacchetto backup `929c7b0` è ora installato
+e verificato in una nuova directory; unità e configurazione operative restano
+quelle precedenti, con timer disabilitato e prima copia verificata.
+Alle 16:20–16:21 UTC il pacchetto
+health è stato installato e verificato senza attivare servizi, timer o `/opsz`;
+restano proxy, aggiornamento coordinato dell'inventario backup e recapito.
+Vedi [preparazione degli alert](evidence/OPERATIONAL-HEALTH-2026-10-15.md).
 Recupero applicativo, prova di capacità e pulizia dopo
 errore restano aperti. Per run ID, dettagli di review e limiti vedere
-[handoff PM](PM-HANDOFF.md). Il precedente head #101
-`f116c1f49e320166297257a1c400f6e7248763a4` era stato verificato con CI e
-CodeQL verdi; il nuovo head dopo questo aggiornamento richiede i controlli finali.
+[handoff PM](PM-HANDOFF.md). Il head pubblicato #101
+`551bfbc1a0fa473017b0c934d7e0cfd990e9daed` ha CI e CodeQL verdi.
+Il successivo aggiornamento locale sugli alert non è ancora consegnato in GitHub.
 La [verifica operativa del 30 settembre](evidence/MAINTENANCE-2026-09-30.md)
 aggiunge stato VPS, cicli, prima copia fuori host e prove browser. Il successivo
 [recupero Linux isolato](evidence/RECOVERY-LINUX-2026-09-30.md) verifica dati,
@@ -91,11 +111,10 @@ installati, offline sul PC. Il ciclo Shopify effettivo resta da collaudare.
 - Completare la consegna delle correzioni successive e della documentazione:
   l'integrazione principale della PR #108 è fusa dal 4 ottobre in `90f4f49`;
   le PR #100 (recovery), #101 (PM), #112 (market), #113 (backup) e #114
-  (health operativa #13) restano non fuse. #101 aveva CI e CodeQL verdi sul
-  precedente head `f116c1f`; questa revisione riceverà i controlli sul nuovo head.
-  #113 e #114 hanno review indipendenti e CI/CodeQL passati sui
-  rispettivi head. La revisione PM corrente deve ancora ricevere i propri
-  controlli sul nuovo head; resta la riconciliazione delle issue per i residui.
+  (health operativa #13) restano non fuse. #101 ha CI e CodeQL verdi sul head
+  pubblicato `551bfbc`; #113 e #114 hanno review indipendenti e CI/CodeQL passati
+  sui rispettivi head. Il delta documentale locale sugli alert richiederà
+  consegna e controlli sul relativo commit; resta la riconciliazione delle issue.
 - Certificazione completa della release: matrice browser/accessibilità/carico
   e prove di recupero legate alla stessa versione.
 - Completare backup automatico e recupero del servizio: destinazione Backblaze
