@@ -98,15 +98,16 @@ CI `38754689301` e CodeQL `38754689777` sono passati. CI: 4.211 test per
 Python 3.12 e 3.13, copertura 100% (16.476 statement, 5.752 branch); container,
 dependency audit, Ruff, preflight e build passati. Python 3.13 riporta un
 `ResourceWarning` nel test esistente dei facet; nessun test fallito o saltato.
-Review indipendente: 125 test mirati, copertura statement/branch 100%, 18
-verifiche, Ruff/preflight/build passati. PR #114, health operativa #13, è aperta
+Validazione dell'autore: 125 test mirati, copertura statement/branch 100% e
+Ruff/preflight/build passati; review indipendente: 18 verifiche. PR #114,
+health operativa #13, è aperta
 in bozza al head `59a74e60edd967dc27e65fd95ac2a390eb619961`; CI `38754640052`
 e CodeQL `38754639981` sono passati. CI: 4.154 test per Python 3.12 e 3.13,
 copertura 100% (15.994 statement, 5.614 branch); container, dependency audit,
 Ruff, preflight e build passati. Un `ResourceWarning` appare in Python 3.13 nel
-test dei facet, senza test falliti o saltati. Review indipendente: 10 casi e
-68 test mirati con copertura statement/branch 100%, lint, format, preflight e
-build passati. Nessuna delle due PR operative è stata installata o attivata. Un collector
+test dei facet, senza test falliti o saltati. Validazione dell'autore: 68 test
+mirati, copertura statement/branch 100%, lint, format, preflight e build passati;
+review indipendente: 10 casi. Nessuna delle due PR operative è stata installata o attivata. Un collector
 read-only sul modulo #114 ha ottenuto `collect=healthy` senza scrivere file,
 toccare unità o lock; il risultato convalida il contratto osservato sull'host,
 non unità, sandbox, Caddy o deployment dell'endpoint pubblico. I residui #100,

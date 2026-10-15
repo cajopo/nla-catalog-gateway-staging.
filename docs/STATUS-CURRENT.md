@@ -39,9 +39,8 @@ checkpoint del 3 ottobre trasferito, controllato integralmente e recuperato su P
 con hash identico. Era la prova sul checkpoint storico; il successivo primo
 backup completo corrente è descritto sotto. Scheduler, conservazione e custodia
 indipendente delle chiavi restano da completare.
-Il codice del backup automatico è nella [PR #113](https://github.com/cajopo/nla-catalog-gateway-staging./pull/113),
-con CI Linux verde (4.191 test per versione Python, copertura 100%) e review
-indipendente. [Prove e limiti](evidence/BACKUP-AUTOMATION-2026-10-15.md):
+Il codice del backup automatico è nella [PR #113](https://github.com/cajopo/nla-catalog-gateway-staging./pull/113).
+[Prove e limiti](evidence/BACKUP-AUTOMATION-2026-10-15.md):
 trasferimento credenziali autorizzato (D-021), installazione verificata e primo
 backup completo corrente terminato alle 13:30:23 UTC, con controllo `read-data`
 passato e copie temporanee rimosse. Timer disabilitato; restano recupero
