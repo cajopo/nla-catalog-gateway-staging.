@@ -1,8 +1,8 @@
 # Backup automatico — validazione del 15 ottobre 2026
 
-Stato alle 12:42 UTC: codice verificato e pacchetto installato sulla VPS;
-credenziali, configurazione e unità non ancora installate. Questa evidenza non
-attesta un backup corrente né un recupero completo.
+Stato alle 13:55 UTC (15:55 Europe/Rome): installazione completata, primo backup
+corrente cifrato e controllo integrale dei dati passati. Il timer è disabilitato;
+questa evidenza non attesta ancora il recupero completo dell'applicazione.
 
 Workstream #13, branch `agent/offsite-backup-13`, commit
 `079a242c2129b346d58e170e6f954995364a8716`, base
@@ -88,13 +88,66 @@ Pin wrapper pubblico:
 wrapper credenziali/guardie:
 `011cca9c4f8767e1b4fab4b522c9157889da5ee048b26564577c59b1e9fba0f2`.
 
-La revisione automatica ha bloccato il successivo trasferimento delle
-credenziali: richiede autorizzazione esplicita del proprietario a copiare sulla
-VPS la chiave Backblaze e la password del repository. Domanda inviata; nessun
-trasferimento o avvio eseguito. Non aggirare il blocco con un altro trasporto.
-Dopo autorizzazione: credenziali, configurazione/unità, verificatore già
-revisionato, poi singolo avvio protetto e osservazione dell'esito. Conservare
-le prove nuove senza sovrascrivere quelle iniziali.
+La revisione automatica aveva bloccato il trasferimento delle credenziali per
+mancanza di consenso esplicito alla destinazione. Jacopo lo ha poi autorizzato
+nella chat (D-021); sono stati eseguiti gli stessi helper revisionati, senza
+aggirare il blocco. Directory root 0700 e credenziali root 0600 verificate.
+Configurazione, pin, versione restic e limiti systemd sono stati verificati
+alle 13:28:40 UTC. Il solo `daemon-reload` ha caricato le nuove unità; i servizi
+market/refresh e i loro InvocationID sono rimasti invariati.
+
+Il primo job è iniziato alle 13:28:57 UTC ed è terminato alle 13:30:23 UTC:
+86,632 secondi per cattura, trasferimento, controllo completo `read-data` e
+pulizia delle copie proprie. Ricevuta `backup-4adf397a664545e6855c5ceb889cfaf6`,
+snapshot `f11005053ed6d498a312c7be84181ee40f28f6947a82dc349ef91319267a70bb`,
+manifest `3ecbd4ed9cc078b7825c88c6ed074e195444d56b7401c36a5afe23bb5f203b8d`.
+Il controllo delle 13:33:05 UTC conferma `complete`, integrità passata, servizio
+terminato con successo, timer inattivo e spazio libero 10.672.623.616 byte.
+Nessun ciclo market/refresh è stato avviato, fermato o riavviato dal backup.
+
+Alle 13:55 UTC il manifest è stato riscaricato con `restic dump` in sola lettura,
+senza cache o lock del repository: hash identico, 167.547 byte, 633 file e due
+immagini Docker, per 2.126.057.298 byte descritti. Ricevuta terminale e
+`last-success.json` coincidono, SHA-256
+`fbd1869b5beb9da4b6e0d0cb821a079fe37d0b24c0e62203bd2e7fa7ba08af1b`.
+Helper SHA-256 `37f290f15e90c954acfde5dd25f8da0dbd441929de790d12ece520b03250d509`,
+35 test sintetici, Ruff e review indipendente passati; esecuzione nativa
+3,409 secondi, nessun file remoto scritto. Il primo tentativo aveva rifiutato
+il timestamp restic con offset `+02:00`: il verificatore ora normalizza gli
+orari con fuso a UTC, mantenendo il rifiuto degli orari senza fuso. Non è un
+errore del backup o una prova di recupero applicativo.
+Ricevuta privata `recovery-draft/manifest-20261015T135522Z-be7e6f30/fetch_first_manifest_remote.result.json`.
+
+Prima di abilitare il timer occorre chiudere il caso di trasferimento lungo o
+fallito: la cattura rilascia i lock prima dell'upload e una copia fallita resta
+in staging. I limiti CPU/memoria non riservano spazio disco per i cicli delle
+02/03 UTC; la durata riuscita di questa prova non è una garanzia per i job futuri.
+Non abilitare il timer sulla sola base di questo esito. Il probe in sola lettura
+delle 13:42:17 UTC misura 10.672.390.144 byte liberi e zero byte ancora
+recuperabili dalla pulizia ordinaria pre-market: i file eleggibili sono già
+rimossi. Gli ultimi run hanno allocato 530.079.744 byte per market e
+3.059.703.808 byte per cattura refresh più nuova generazione. Con lo staging
+backup osservato di 2.141.757.440 byte, servirebbero almeno 12.173.991.936 byte
+iniziali per conservare anche la riserva di 6 GiB: deficit 1.501.601.792 byte.
+È una stima su run osservati, non un limite massimo dei run futuri.
+Probe SHA-256 `e0e8755f2c1985923c95cf65022a2b079ffc284a0ae5724255b0d2c6c7e273f4`,
+review indipendente passata, nessuna modifica VPS.
+Risultato privato `inventory/capacity-20261015T134214Z-574f5d5d/capacity_before_market.result.json`,
+SHA-256 `482f0f950273791f4302bfdc3e05bff306bb6b82fb242c8b890d05f7a07b202d`.
+
+L'inventario mirato delle 13:54 UTC conferma il vecchio drill del 21 settembre:
+archivio 1.780.002.816 byte allocati e dati restaurati circa 1.780.006.912 byte.
+Tre container di quel drill sono arrestati con restart policy `no` e conservano
+montaggi dei dati restaurati; nessun riferimento aperto rilevato in quel momento.
+Questo inventario non autorizza da solo la rimozione: preservare ricevute/prove,
+chiudere i riferimenti esatti, quarantena e verifica funzionale, review
+indipendente prima della cancellazione. Nessuna pulizia eseguita da questo probe.
+Il totale del sottoalbero è indicativo, perché il probe non segnala errori di
+attraversamento; prima della pulizia serve inventario completo che li rifiuti.
+Il filesystem principale usa LVM sul disco da 40 GiB: non è attestato un volume
+separato disponibile per il backup. Prova privata
+`inventory/topology-20261015T135429Z-8a446f94/topology_old_drill.result.json`,
+helper SHA-256 `d05dc5b80914066ecb4a66bdc9fcb95e5b64826387acf49654be7ed6f5cb5cd9`.
 
 Sono preparati anche helper privati di recupero e pulizia delle sole copie del
 drill. La review ha rilevato nella prima versione l'omissione del backup delle
@@ -114,8 +167,8 @@ Queste sono prove locali degli helper; validazione nativa, restore reale,
 importazione dell'immagine e runtime da quel restore restano da eseguire.
 Nessun drill VPS è stato avviato da questi helper.
 
-Restano installazione completa verificata, prima copia completa corrente e
-recupero isolato dell'applicazione. Scheduler proposto alle
+Restano recupero isolato dell'applicazione e verifica del margine disco per lo
+scheduler anche in caso di errore. Scheduler proposto alle
 01 UTC; non è ancora attivo. Conservazione cloud, custodia indipendente della
 password e obiettivi RPO/RTO richiedono ancora chiusura documentata. Nessuna
 cancellazione cloud, modifica MAIN/PowerTools o scrittura Shopify autorizzata

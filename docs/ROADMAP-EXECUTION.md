@@ -32,14 +32,15 @@ backup/recupero, QA completa e alert/referente descritte sotto.
 
 La [prova cifrata S3 del 15 ottobre](evidence/BACKUP-ENCRYPTION-2026-10-15.md)
 ha verificato il trasferimento e il recupero del checkpoint del 3 ottobre con
-restic. Il passo successivo è il backup automatico completo dei dati correnti;
-non occorre ripetere il pilota manuale già riuscito. Scheduler, copertura del
-runtime e custodia indipendente della password restano requisiti aperti.
+restic. Il pilota manuale già riuscito non va ripetuto: il primo backup completo
+dei dati correnti è ora passato, come descritto sotto. Attivazione periodica,
+recupero del runtime e custodia indipendente della password restano aperti.
 Il codice del nuovo job è nella PR #113 in bozza, con CI Linux verde e review
 indipendente; [evidenza del backup automatico](evidence/BACKUP-AUTOMATION-2026-10-15.md).
-Il solo pacchetto è installato; il trasferimento delle credenziali attende
-autorizzazione esplicita richiesta dalla revisione automatica. Restano
-configurazione, prima copia completa corrente e recupero applicativo.
+Il trasferimento delle credenziali è stato autorizzato (D-021) e l'installazione
+verificata. Primo backup corrente completato alle 13:30:23 UTC, controllo
+integrale passato e staging rimosso. Restano recupero applicativo e verifica
+del margine disco per trasferimenti lunghi/falliti; timer ancora disabilitato.
 
 ## Stato GitHub verificato — 15 ottobre
 
@@ -64,7 +65,7 @@ non attesta CI nuova; i risultati CI delle nuove PR sono nelle evidenze dedicate
 | Priorità | Attività | Responsabile della fase | Criterio di accettazione | Vincolo |
 | --- | --- | --- | --- | --- |
 | P1 | Consolidare la documentazione e registrare i limiti delle prove | PM Codex | Stato, roadmap, decisioni e fonti coerenti; cronologia preservata; controlli documentali ripetibili | Questo intervento; #34 resta aperta fino alla consegna prevista |
-| P1 | Completare le garanzie operative e chi interviene in caso di errore | PM con operatore da assegnare | Email e destinatario confermati (15 ottobre); restano recapito, referente e backup automatico; [runbook](OPERATIONS-RUNBOOK.md) pronto | Nessun monitor email configurato o messaggio a terzi; controllo spazio Codex attivo, prova di recapito da autorizzare |
+| P1 | Completare le garanzie operative e chi interviene in caso di errore | PM; Jacopo referente iniziale degli alert | Email, destinatario e referente confermati; attivazione UptimeRobot richiesta alle 13:49 UTC, da confermare nell'email; [runbook](OPERATIONS-RUNBOOK.md) pronto | HTTP 200 non prova recapito o monitor attivo; restano collaudo concordato, copertura refresh/freschezza e backup automatico |
 | P1 | Mantenere lo spazio VPS | PM per verifica; retention ordinaria sulla VPS | Pulizia legacy 3,65 GB verificata; retention refresh 3 ottobre completata, corrente/precedente e reference protetti; controllo Codex ogni 48 ore attivo | Riserva 6 GiB solo pre-cattura; nessuna garanzia sul picco. [Prove](evidence/RETENTION-2026-09-30.md), [incidente](evidence/INCIDENT-2026-10-03.md) |
 | P1 | Chiudere i residui GitHub con review e controlli sul head finale | Autori dei workstream e reviewer indipendente da assegnare | Consegna principale #108 fusa il 4 ottobre; #100 e #101 restano aperte, #112 draft; nessun merge dei residui attestato | La lettura metadata-only non attesta CI nuova; verificare i gate sul head finale. Vedere [inventario GitHub](evidence/GITHUB-RESUME-2026-10-03.md) e [PR #108](https://github.com/cajopo/nla-catalog-gateway-staging./pull/108) |
 | P2 | Completare la certificazione QA della release | QA indipendente da assegnare | Fixture Chrome/Firefox/WebKit 21/21 per motore; axe qualificato; errore HTTP del cursore provato e 40 richieste di carico passate sulla copia restaurata; restano Shopify E2E/mobile/a11y/guasto-freschezza/carico produzione | [Prova e limiti](evidence/RECOVERY-LINUX-2026-09-30.md); riutilizzare prove valide, sessione negozio da sbloccare |

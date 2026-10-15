@@ -303,6 +303,41 @@ pending-state wording; they do not broaden the gateway's read-only boundary.
   messaggio di prova. Servizio, referente operativo e collaudo restano distinti.
   Preparare il recapito concreto prima della richiesta finale di autorizzazione.
 
+## D-021 — Credenziali del backup sulla VPS
+
+- Status: autorizzazione esplicita di Jacopo il 15 ottobre 2026: «Sì, autorizzo
+  il trasferimento alla VPS NLA», in risposta alla richiesta relativa a chiave
+  Backblaze dedicata e password del repository cifrato.
+- Decisione: trasferire le due credenziali dal PC alla VPS NLA tramite SSH in
+  file leggibili solo da root. Il proprietario è stato informato che chi avesse
+  accesso root alla VPS potrebbe leggerle. Il precedente blocco della revisione
+  automatica è risolto; non serve ripetere questa richiesta.
+- Esito: directory `/etc/nla-backup` root 0700 e file 0600 creati; configurazione
+  e unità verificate. Primo backup completo corrente terminato alle 13:30:23 UTC
+  con controllo integrale `read-data` passato e staging proprio rimosso.
+- Limiti: il timer resta disabilitato fino alla chiusura delle verifiche di
+  recupero e del budget disco in caso di trasferimento lungo/fallito. Restano
+  distinti custodia indipendente della password, retention cloud e alert email.
+  [Evidenza](evidence/BACKUP-AUTOMATION-2026-10-15.md).
+
+## D-022 — Attivazione UptimeRobot e referente iniziale
+
+- Status: Jacopo ha autorizzato nella chat il 15 ottobre 2026 l'invio del
+  destinatario confermato e dell'URL a UptimeRobot, con la conseguente email
+  di attivazione; ha confermato di essere il referente iniziale degli incidenti.
+- Configurazione richiesta: piano Free, HTTPS ogni cinque minuti su
+  `https://catalog-staging.nextlevelarena.it/readyz`, avvisi email down/up.
+  Contratto e piano gratuiti verificati nuovamente il 15 ottobre.
+- Esito: richiesta inviata alle 13:49:32 UTC; HTTP 200, `status=ok`.
+  Il contratto del provider ammette la stessa risposta anche per richieste
+  ignorate: ricezione, attivazione e monitor funzionante non sono ancora provati.
+  Jacopo deve aprire il link e premere Activate entro 24 ore. Nessun reinvio
+  automatico né accesso alla casella per attivare il monitor al suo posto.
+- Limiti: questa autorizzazione riguarda l'email di attivazione e il monitor
+  proposto; non autorizza simulazioni di guasto sul servizio o altri messaggi
+  di prova. Refresh fallito e dati oltre 24 ore richiedono copertura ulteriore.
+  [Procedura e fonte ufficiale](OPERATIONS-RUNBOOK.md).
+
 ## Reserved decisions
 
 Future actions in the following areas are not delegated technical details and require Jacopo: paid hosting or

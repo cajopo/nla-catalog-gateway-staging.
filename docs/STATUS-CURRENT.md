@@ -29,15 +29,16 @@ Questa pagina riassume lo stato; la [fotografia del 30 settembre](evidence/STATE
 contiene inventario, limiti delle prove, versioni e riconciliazione con GitHub.
 Il 15 ottobre è riuscita anche la [prova di backup cifrato S3](evidence/BACKUP-ENCRYPTION-2026-10-15.md):
 checkpoint del 3 ottobre trasferito, controllato integralmente e recuperato su PC
-con hash identico. Non è ancora un backup automatico dei dati correnti;
-cattura completa, scheduler, conservazione e custodia indipendente delle chiavi
-restano da completare.
+con hash identico. Era la prova sul checkpoint storico; il successivo primo
+backup completo corrente è descritto sotto. Scheduler, conservazione e custodia
+indipendente delle chiavi restano da completare.
 Il codice del backup automatico è nella [PR #113](https://github.com/cajopo/nla-catalog-gateway-staging./pull/113),
 con CI Linux verde (4.191 test per versione Python, copertura 100%) e review
 indipendente. [Prove e limiti](evidence/BACKUP-AUTOMATION-2026-10-15.md):
-solo pacchetto installato alle 12:42 UTC; trasferimento credenziali bloccato
-dalla revisione automatica in attesa di autorizzazione esplicita. Servizio e
-timer assenti; prima copia completa corrente ancora da verificare.
+trasferimento credenziali autorizzato (D-021), installazione verificata e primo
+backup completo corrente terminato alle 13:30:23 UTC, con controllo `read-data`
+passato e copie temporanee rimosse. Timer disabilitato; restano recupero
+applicativo e margine disco per trasferimenti lunghi/falliti prima dell'attivazione.
 La [verifica operativa del 30 settembre](evidence/MAINTENANCE-2026-09-30.md)
 aggiunge stato VPS, cicli, prima copia fuori host e prove browser. Il successivo
 [recupero Linux isolato](evidence/RECOVERY-LINUX-2026-09-30.md) verifica dati,
@@ -64,7 +65,7 @@ installati, offline sul PC. Il ciclo Shopify effettivo resta da collaudare.
 | Aggiornamenti | Timer attivi; refresh delle 15 UTC completato alle 16:40 UTC del 30 settembre; otto nuove carte nel ciclo mattutino, zero in quello pomeridiano | Ricevuta terminale e pointer concordanti; nessun job riavviato |
 | Refresh e market, 3 ottobre | Run `20261003t073240z-3f7384f8` exit 0; servizio terminato 09:12:19 UTC, monitorato 09:14:01. Attivazione 09:12:13; freshness PASS 09:15:01, source age 6.124 secondi (1 h 42 min 4 s), ricevuta/last-success/pointer coerenti, HTTPS 200; smoke 10/10 alle 09:14:42. Dataset SHA-256 `5152b3c3…`; runtime `af366c05…` senza OOM. Resolver/ack market hanno ripulito solo stato storico senza avviare job o chiamare Shopify. Timer prossimi: market 14 UTC, refresh 15 UTC | [Incidente](evidence/INCIDENT-2026-10-03.md); refresh Shopify read-only |
 | Retention e spazio VPS | Retention finale 09:15:41: piano completato, sei container e quattro directory obsolete rimosse, due generazioni soltanto; corrente/precedente e ledger protetti/verificati. Spazio 11.782.266.880 byte. Letture precedenti: 5.446.959.104 byte alle 07:45 e 5,67 GB; non sommarle per dedurre il recupero del piano | [Retention](evidence/RETENTION-2026-09-30.md); [stato incidente](evidence/INCIDENT-2026-10-03.md). Riserva 6 GiB solo pre-cattura, senza garanzia sul picco |
-| Backup e recupero | Checkpoint PC copiato nel bucket privato Backblaze, riscaricato con SHA-256/SHA-1 identici e restaurato offline: PASS, tre DB verificati. Prima copia cloud manuale; automazione e recupero completo del runtime ancora aperti | [Backblaze 3 ottobre](evidence/BACKBLAZE-2026-10-03.md); [checkpoint PC](evidence/BACKUP-PC-2026-10-03.md); prove storiche: [PC](evidence/RECOVERY-PC-2026-10-01.md), [reference](evidence/REFERENCE-RECOVERY-2026-10-01.md), [Linux](evidence/RECOVERY-LINUX-2026-09-30.md) |
+| Backup e recupero | Servizio e credenziali installati sulla VPS; primo backup corrente completo su Backblaze e controllo integrale passati il 15 ottobre alle 13:30 UTC. Timer disabilitato: restano margine disco in caso di errore e recupero applicativo. Il precedente checkpoint PC del 3 ottobre era già stato riscaricato e restaurato offline, tre DB PASS | [Backup corrente](evidence/BACKUP-AUTOMATION-2026-10-15.md); prove storiche: [Backblaze 3 ottobre](evidence/BACKBLAZE-2026-10-03.md), [checkpoint PC](evidence/BACKUP-PC-2026-10-03.md), [PC](evidence/RECOVERY-PC-2026-10-01.md), [reference](evidence/REFERENCE-RECOVERY-2026-10-01.md), [Linux](evidence/RECOVERY-LINUX-2026-09-30.md) |
 | QA componente | Matrice 21/21 in Chrome, Firefox e WebKit; smoke touch 390×844 e retry dopo 503 simulato sulla fixture; axe zero violazioni, un incomplete di contrasto valutato manualmente nello stato coperto | Solo fixture congelata; non certifica Shopify/mobile reale, Safari/iOS, screen reader, outage gateway o freschezza. Dettagli: [QA](evidence/MAINTENANCE-2026-09-30.md#qa-sul-sorgente-congelato); ricevuta privata in `../output/nla-recovery/20260930/evidence/qa-touch-down-final/index.json` |
 | Sicurezza | Confine Shopify App Proxy autenticato; gateway e refresh in sola lettura | Architettura #17 e prove del servizio |
 | Tema | 175195881740 principale; 175194898700 conservato per ripristino; password attiva | [Ricevute del passaggio](workstreams/ws-12-release-readiness-20260929.md) |
@@ -79,18 +80,23 @@ installati, offline sul PC. Il ciclo Shopify effettivo resta da collaudare.
 - Certificazione completa della release: matrice browser/accessibilità/carico
   e prove di recupero legate alla stessa versione.
 - Completare backup automatico e recupero del servizio: destinazione Backblaze
-  scelta e prima copia cloud verificata, ma scheduler, gestione errori e
-  conservazione restano da configurare. Il checkpoint non è atomico tra
-  catalogo e ledger. Il preflight memoria PC del
+  scelta, servizio installato e prima copia corrente verificata; timer da
+  attivare dopo le prove di recupero e margine disco in caso di errore.
+  La conservazione cloud resta da definire. Il checkpoint manuale del 3 ottobre
+  non era atomico tra catalogo e ledger; la nuova cattura del 15 ottobre usa
+  i lock delle pipeline. Il preflight memoria PC del
   3 ottobre ha misurato 2.378.674.176 byte disponibili, sotto il minimo richiesto
   di 2.415.919.104; impostazioni invariate, seed fermo, nessun runtime avviato.
   Restano decisione del proprietario sulle risorse per la prova isolata,
-  ciclo reale runtime/refresh/importer, copertura di configurazione, credenziali e
-  certificati, che richiedono procedure dedicate.
-- Alert effettivamente recapitati, referente operativo e obiettivi di recupero.
-  Email e destinatario confermati dal proprietario (15 ottobre); indirizzo
-  conservato nelle prove private e modificabile nella configurazione futura.
-  Servizio di invio, referente e prova autorizzata di recapito restano da completare.
+  ciclo reale runtime/refresh/importer e verifica di recupero di configurazione,
+  credenziali e certificati inclusi nella nuova cattura.
+- Alert effettivamente recapitati e obiettivi di recupero.
+  Email, destinatario e Jacopo come referente iniziale confermati (15 ottobre).
+  Richiesta di attivazione UptimeRobot autorizzata e inviata alle 13:49:32 UTC,
+  HTTP 200; questa risposta non prova recapito o creazione del monitor.
+  Serve la conferma di Jacopo nell'email; poi verifica della configurazione
+  e prova concordata. Il monitor proposto copre la raggiungibilità;
+  refresh fallito e dati vecchi richiedono copertura ulteriore.
   Le unità NLA non hanno `OnFailure`; entrambi i timer hanno `Persistent=no`.
 - Funzioni ulteriori: ordinamenti diversi dal GID, filtri lingua/condizione/finish,
   migliore copertura dei dati non singole. Sono backlog, non difetti dimostrati.

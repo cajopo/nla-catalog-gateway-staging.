@@ -78,10 +78,11 @@ Non chiedere o copiare chiavi/password in chat. Non disabilitare la verifica TLS
 
 Non esiste una prova di recapito degli alert. `OnFailure` è vuoto nelle unità
 NLA e non risultano unità o nomi di file cron NLA per monitor fra quelli censiti.
-Rimane possibile un monitor esterno da identificare. Una futura prova dovrà
+Il monitor esterno proposto e la sua attivazione sono descritti sotto. Una futura prova dovrà
 inviare un messaggio identificabile al destinatario autorizzato, conservarne
-esito e ricezione, verificare deduplicazione e chi interviene. Nessun messaggio
-a terzi è stato inviato in questa fase.
+esito e ricezione e verificare deduplicazione. È stata autorizzata e richiesta
+la sola email di attivazione UptimeRobot; nessun messaggio di prova di guasto
+è stato inviato.
 
 Per la scelta del proprietario, il pacchetto minimo proposto segnala servizio
 irraggiungibile, refresh fallito e sorgente oltre 24 ore. Un guasto va confermato
@@ -91,11 +92,9 @@ da quando, ultimo aggiornamento valido e prima azione utile; inviare il rientro
 alla normalità e contenere i duplicati. Nessun riepilogo periodico non richiesto.
 
 Jacopo ha scelto l'email come canale iniziale il 30 settembre e ha confermato
-il destinatario il 15 ottobre (D-020). L'indirizzo resta nelle prove private ed
-e' modificabile nella futura configurazione degli alert. Servizio di invio,
-autenticazione e costi restano da verificare; la scelta del destinatario non
-dimostra il recapito. Il destinatario e il referente possono coincidere
-con Jacopo, solo se lo conferma. Il referente prende in carico la segnalazione
+il destinatario il 15 ottobre (D-020). L'indirizzo resta nelle prove private.
+Il 15 ottobre ha autorizzato l'attivazione UptimeRobot e ha confermato di essere
+il referente iniziale (D-022). Il referente prende in carico la segnalazione
 e decide chi interviene; non implica che debba risolvere ogni problema da solo.
 
 Il monitor di raggiungibilità deve essere fuori dalla VPS per segnalare anche
@@ -107,7 +106,7 @@ Proposta pronta per il solo controllo esterno di raggiungibilità: UptimeRobot
 Free, `https://catalog-staging.nextlevelarena.it/readyz`, HTTPS ogni cinque minuti,
 email di down/up al recapito confermato. Il [piano gratuito](https://help.uptimerobot.com/en/articles/11604710-who-should-use-uptimerobot-s-free-plan)
 è ammesso anche per uso commerciale, senza carta; il [recapito email personale](https://help.uptimerobot.com/en/articles/11360953-uptimerobot-personal-notification-channels-setup-guide)
-è uno per utente. Costi/limiti verificati il 30 settembre: zero euro/mese,
+è uno per utente. Costi/limiti verificati nuovamente il 15 ottobre: piano gratuito,
 50 monitor, intervallo cinque minuti; non garantisce rilevazione entro cinque minuti.
 Non copre da solo refresh falliti o dati vecchi con readiness ancora positiva.
 
@@ -115,11 +114,17 @@ La [skill ufficiale quick-monitor-setup](https://github.com/uptimerobot/ai/blob/
 è stata letta per preparare il flusso senza installare plugin o chiedere API key.
 Richiede URL e indirizzo identici nel challenge e nella richiesta; difficulty
 letto dalla risposta, proof-of-work SHA256, poi invio della richiesta e conferma
-dell'email da parte del proprietario. Non è stata fatta alcuna richiesta di
-attivazione: il destinatario ora e' noto, ma manca l'autorizzazione a inviare
-quell'email; verificare nuovamente il contratto del provider prima della richiesta. Un HTTP 200
-del provider non proverebbe creazione o recapito: occorrono attivazione del
-proprietario, configurazione effettiva e prova concordata senza guasti sul live.
+dell'email da parte del proprietario. Dopo l'autorizzazione D-022, la richiesta
+è stata inviata alle 13:49:32 UTC del 15 ottobre: HTTP 200, `status=ok`.
+Un HTTP 200 del provider non prova creazione o recapito: può indicare anche
+una richiesta ignorata. Occorrono attivazione del proprietario, configurazione
+effettiva e prova concordata senza guasti sul live. Il link scade dopo 24 ore:
+Jacopo apre l'email e preme Activate nella pagina di conferma. Non reinviare
+automaticamente una richiesta dall'esito non verificato.
+Ricevuta privata in `output/nla-recovery/20260930/alert-activation-20261015T134927Z-f53333c3/receipt.json`.
+L'indirizzo è modificabile dalle impostazioni dell'account; il
+[cambio email](https://help.uptimerobot.com/en/articles/11582766-how-to-change-your-uptimerobot-account-email-or-username)
+richiede conferma tramite il vecchio indirizzo. Non è una modifica del codice NLA.
 La readiness dal PC, con TLS validato e senza redirect, è risultata 200/ready
 alle 17:06 UTC. Questo è un controllo singolo, non un monitor configurato.
 
@@ -270,7 +275,8 @@ Vedi [ricevute, pin e limiti](evidence/BACKBLAZE-2026-10-03.md).
 Gli helper sono in `output/nla-recovery/20260930/backblaze-setup/`, privata e
 ignorata da Git. La chiave è in `credentials.clixml`, cifrata tramite DPAPI
 per l'utente Windows; non copiarla in documenti, log o repository. Non è
-installata sulla VPS. Il prompt console iniziale aveva registrato Ctrl+V:
+installata sulla VPS in quella prova del 3 ottobre; il trasferimento successivo
+è autorizzato da D-021 e registrato sotto. Il prompt console iniziale aveva registrato Ctrl+V:
 `save-key.ps1` ora apre due campi mascherati e rifiuta caratteri di controllo.
 Il file non valido è conservato separatamente; non va riutilizzato.
 
@@ -304,7 +310,8 @@ SHA-256 `1ee73777e5af520597c2226e0094210e08ccbc1f02f9e60e0cf7e525fa1e0592`.
 Verificare questo hash prima di eseguirlo. `Init` è già completato e rifiuta
 una password esistente: non cancellare `password.clixml` per forzarlo.
 La password è protetta da DPAPI e dagli ACL del PC; non è ancora custodita
-indipendentemente dall'utente/PC né installata sulla VPS.
+indipendentemente dall'utente/PC. In quella prova non era sulla VPS; è stata
+successivamente installata con autorizzazione D-021, descritta sotto.
 
 Per un recupero successivo autorizzato, usare `VerifyRestore` con l'ID completo
 dello snapshot riportato nella prova e una nuova directory diretta sotto
@@ -314,8 +321,8 @@ e controlla l'hash. Non esegue un recupero del runtime o dei segreti applicativi
 Eseguire come proprietario con Windows PowerShell tramite percorso completo,
 senza indebolire ACL. Le ricevute precedenti restano conservate.
 
-Per i dati reali la VPS è stata soltanto inventariata. Completare cattura dei dati correnti,
-copertura cifrata di configurazione/accessi/immagini, custodia della password,
+La prova pilota non catturava i dati correnti della VPS. La successiva prima
+cattura completa cifrata è descritta sotto; restano custodia della password,
 scheduler e prove dei fallimenti prima di dichiarare il backup automatico.
 Nessuna rimozione cloud, policy di retention o modifica lifecycle è stata attivata.
 
@@ -323,22 +330,24 @@ Il codice del nuovo servizio è nella PR #113, con CI Linux e review indipendent
 passate. Anche la prova sintetica nel sandbox systemd reale è passata: lettura
 del ledger WAL riuscita, scrittura ai sorgenti respinta, unità e fixture proprie
 rimosse. [Versione, pin e limiti](evidence/BACKUP-AUTOMATION-2026-10-15.md).
-Alle 12:42 UTC il solo pacchetto è installato; `/etc/nla-backup` e unità ancora
-assenti. La revisione automatica ha bloccato il trasferimento delle credenziali
-in attesa di autorizzazione esplicita del proprietario. Nessuna copia completa
-corrente è stata eseguita; riprendere dalle fasi documentate nell'evidenza.
-Il nuovo timer non è ancora attivo; non usare il vecchio pilota come job periodico.
+Jacopo ha autorizzato il trasferimento delle credenziali (D-021). `/etc/nla-backup`
+è root 0700, file credenziali 0600; configurazione e unità sono verificate.
+Primo backup corrente terminato alle 13:30:23 UTC con `read-data` passato e
+staging rimosso; spazio libero 10.672.623.616 byte alle 13:33 UTC.
+Il timer resta disabilitato: chiudere recupero applicativo e margine disco per
+upload lunghi/falliti prima di abilitarlo. Non usare il vecchio pilota come job
+periodico e non ripetere i trasferimenti delle credenziali già riusciti.
 
 ## Decisioni e obiettivi da chiudere
 
 | Voce | Situazione | Proposta verificabile |
 | --- | --- | --- |
 | Destinazione durevole | Backblaze scelto dal proprietario il 3 ottobre; prima copia nel bucket privato, download e restore dati verificati | Scelta e primo trasferimento conclusi; restano copertura completa e conservazione delle copie. [Prova Backblaze](evidence/BACKBLAZE-2026-10-03.md) |
-| Backup automatico e retention | Non configurati | Copia dopo ciclo riuscito, verifica hash/restore, retention da approvare; misurare quanto rimane recuperabile se un ciclo fallisce |
+| Backup automatico e retention | Servizio installato e prima copia corrente verificata; timer disabilitato, retention cloud non attiva | Chiudere recupero applicativo e margine disco in caso di errore prima dell'attivazione periodica; definire conservazione |
 | Credenziali e reference | Reference completa e configurazione restaurata accettate offline; credenziali/certificati esclusi | Collaudare il ciclo refresh/importer con accessi recuperati; definire conservazione cifrata e recupero degli accessi, senza segreti in Git/documenti |
 | RPO | Nessun RPO garantito dal backup manuale | Proposta iniziale: massimo 24 ore per copie fuori host, coerente con tolleranza del catalogo; richiede scheduler e prova dei fallimenti |
 | RTO | Restore dati PC: 49,826 s; copia riscaricata da Backblaze: 61,970 s; reference storico: 23,164 s. Questi tempi escludono trasferimenti e avvio del runtime; nessun RTO completo certificato | Budget proposto: 2 ore su host Linux già pronto, escluso provisioning/DNS; serve prova completa con immagine/credenziali, oggi non garantito. [Prova Backblaze](evidence/BACKBLAZE-2026-10-03.md) |
-| Alert e reperibilità | Email e destinatario confermati; recapito e referente ancora da provare/confermare | PM verifica servizio/costi e prepara configurazione modificabile; prova identificabile al destinatario dopo autorizzazione |
+| Alert e reperibilità | Jacopo referente; richiesta di attivazione UptimeRobot autorizzata e inviata, recapito e monitor ancora da verificare | Conferma del proprietario nell'email; poi verifica configurazione e prova di alert concordata; completare copertura refresh/freschezza |
 | Recupero trigger persi | `Persistent=no` osservato | Valutare `Persistent=yes` e prova isolata dopo verifica dei vincoli di locking/overlap; nessun timer cambiato ora |
 
 Le proposte non sono SLA né assegnazioni implicite. PM e operatori conservano

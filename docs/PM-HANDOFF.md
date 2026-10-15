@@ -88,11 +88,12 @@ non attribuirgli i controlli del precedente head. I residui #100, #101, #112 e
 Il codice del backup automatico è consegnato nella PR #113 in bozza, commit
 `079a242c2129b346d58e170e6f954995364a8716`. CI e CodeQL passati, 4.191 test per
 versione Python e copertura 100%; review indipendente e prova Linux sintetica
-passate. Alle 12:42 UTC solo il pacchetto è installato; credenziali, configurazione
-e unità assenti. La revisione automatica richiede autorizzazione esplicita al
-trasferimento di chiave Backblaze e password del repository sulla VPS; domanda
-pendente, nessun trasferimento eseguito. Prima copia completa e recupero
-applicativo restano da verificare. Usare [evidenza e pin](evidence/BACKUP-AUTOMATION-2026-10-15.md),
+passate. Jacopo ha autorizzato il trasferimento delle credenziali (D-021), ora
+installate con configurazione e unità verificate. Primo backup corrente concluso
+alle 13:30:23 UTC con integrità `read-data` passata e staging proprio rimosso.
+Il timer è disabilitato: prima di abilitarlo verificare recupero applicativo e
+spazio in caso di upload lungo/fallito, che conserva lo staging oltre la cattura.
+Usare [evidenza e pin](evidence/BACKUP-AUTOMATION-2026-10-15.md),
 senza ripetere il pilota sul checkpoint storico del 3 ottobre.
 
 - Considerare concluse le prove e le unità terminali del 29 settembre; non
@@ -138,30 +139,34 @@ se preparare il riavvio concordato di Docker Desktop a 4 GB o rinviare; solo con
 preflight memoria valido proseguire il runtime isolato. Poi completare la prova
 su host nuovo, completare backup automatico e conservazione, collaudare il
 ciclo refresh/importer e definire conservazione/recupero credenziali, verificare il
-recapito email degli alert e il referente operativo.
+recapito email degli alert; Jacopo è il referente iniziale confermato (D-022).
 La destinazione è ora Backblaze: il 3 ottobre Jacopo ha scelto `nla-catalog`.
 Prima copia manuale del checkpoint PC caricata, riscaricata con hash identici
-e restaurata offline, tre database PASS. La chiave resta sul PC; scheduler
-sulla VPS e copertura di immagini/configurazione/credenziali ancora aperti.
+e restaurata offline, tre database PASS. In quella prova la chiave era solo
+sul PC; D-021 ne ha poi autorizzato l'installazione sulla VPS. Per il backup
+corrente del 15 ottobre usare il delta sopra, senza confonderlo con il pilota.
 Vedi [prova Backblaze](evidence/BACKBLAZE-2026-10-03.md).
 Il 15 ottobre è passato il [pilota cifrato S3](evidence/BACKUP-ENCRYPTION-2026-10-15.md):
 restic 0.19.1, checkpoint identico del 3 ottobre, controllo integrale e recupero
 con SHA-256 invariato. Il repository `nla/restic-v1` è pronto per il lavoro
-successivo; il suo helper è manuale e non va schedulato. Procedere ora con
-cattura completa dei dati correnti, custodia indipendente della password e
-scheduler VPS con prove di rinvio/fallimento, preservando i cicli in esercizio.
+successivo; il suo helper è manuale e non va schedulato. La prima cattura
+corrente completa è ora riuscita; restano recupero applicativo, custodia
+indipendente della password e scheduler VPS con prove di rinvio/fallimento,
+preservando i cicli in esercizio.
 Le prove di cifratura già riuscite non vanno ripetute senza una nuova modifica.
 La [prova reference del 1 ottobre](evidence/REFERENCE-RECOVERY-2026-10-01.md)
 ha già validato offline tutte le 336.752 identità restaurate e accettato la
 configurazione tramite i sorgenti installati del refresh. È un contenitore
 separato con 768 MiB, senza rete né credenziali: non supera il preflight del
 runtime PC e non prova un ciclo Shopify. Non ripeterla senza nuova lacuna.
-Jacopo ha confermato il PC per la prima copia e indicherà lo spazio definitivo;
+Jacopo aveva confermato il PC per la prima copia e ha poi scelto Backblaze;
 per gli alert ha scelto l'email dopo il chiarimento. Il 15 ottobre ha confermato
 il destinatario, conservato nelle prove private e modificabile (D-020).
-Referente e servizio di invio restano da completare; nessun recapito e' ancora collaudato. Il runbook descrive
-eventi, canale, ruolo del referente e necessità del monitor fuori VPS.
-Nessun destinatario inventato o messaggio a terzi. Il primo tentativo Docker
+Ha poi confermato di essere il referente iniziale e autorizzato l'email di
+attivazione UptimeRobot (D-022), richiesta alle 13:49:32 UTC con HTTP 200.
+Il recapito non è ancora collaudato e il monitor richiede la conferma di Jacopo
+nell'email. Il runbook descrive eventi, copertura e limiti del monitor esterno.
+Nessun altro messaggio di prova inviato. Il primo tentativo Docker
 locale fallì al socket e resta conservato come evento storico; non furono
 resettati né cancellati dati. Nella prova del 1 ottobre Docker Desktop era attivo e l'immagine del
 backup è stata collegata al manifest previsto tramite digest OCI, senza
