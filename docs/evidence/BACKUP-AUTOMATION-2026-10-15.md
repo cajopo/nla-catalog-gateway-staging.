@@ -97,15 +97,22 @@ revisionato, poi singolo avvio protetto e osservazione dell'esito. Conservare
 le prove nuove senza sovrascrivere quelle iniziali.
 
 Sono preparati anche helper privati di recupero e pulizia delle sole copie del
-drill, con 30 test locali sintetici e Ruff passati. Il recupero verifica manifest,
-hash e tre SQLite restaurati; la prova runtime richiede 90 minuti liberi dai
-cicli programmati e conserva corrente/precedente separati. La pulizia richiede
-un inventario esatto e una review indipendente per ogni esecuzione. Pin del
-verificatore `9bdace89d57cc15751841efc26d353c3bf45c939765e6ef281c6daece3aeb66e`,
-finalizzatore `b56df6d80967035aee102b231f79f637ac8d910d2d2aef88e4d3cb24d8e4aef8`.
-Queste sono prove locali degli helper; review finale, restore reale, importazione
-dell'immagine e runtime da quel restore restano da eseguire. Nessun drill VPS
-è stato avviato da questi helper.
+drill. La review ha rilevato nella prima versione l'omissione del backup delle
+01 UTC e un limite all'output applicato troppo tardi; entrambi sono stati
+corretti prima dell'uso. Le versioni finali hanno review statica passata,
+45 test sintetici per recupero/pulizia e 11 per il download restic, più Ruff.
+Il recupero verifica manifest, hash e tre SQLite restaurati; la prova runtime
+richiede 90 minuti liberi dai cicli programmati. Questi helper sono limitati
+alla fase precedente all'attivazione: richiedono servizi inattivi senza job
+pendenti e timer backup disabilitato, senza cambiare automaticamente le unità.
+La pulizia richiede un inventario esatto e review indipendente per ogni esecuzione.
+Pin del verificatore
+`0c40d5daffaa9702f307bced8f035f2d955f59b33b9edbc249feb806dd2284d0`,
+finalizzatore `e792465d79d569277125d26a8989038ebac50884ff55a652ec326e2af5a7e023`,
+download restic `55d49f0a90ed0e866f531e7932d7180606aea799b4ddfd717099d924eb902571`.
+Queste sono prove locali degli helper; validazione nativa, restore reale,
+importazione dell'immagine e runtime da quel restore restano da eseguire.
+Nessun drill VPS è stato avviato da questi helper.
 
 Restano installazione completa verificata, prima copia completa corrente e
 recupero isolato dell'applicazione. Scheduler proposto alle
