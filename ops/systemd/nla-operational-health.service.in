@@ -1,0 +1,35 @@
+# Render reviewed paths. This process can read only the sanitized observation.
+[Unit]
+Description=NLA loopback operational health endpoint
+After=network.target
+
+[Service]
+Type=exec
+DynamicUser=yes
+WorkingDirectory=@OBSERVER_PACKAGE@
+Environment=PYTHONPATH=@OBSERVER_PACKAGE@/src
+Environment=PYTHONNOUSERSITE=1
+ExecStart=@PYTHON@ -m scripts.serve_operational_health \
+    --observation /run/nla-operational-health/status.json
+ProtectSystem=strict
+ProtectHome=yes
+InaccessiblePaths=/opt/nla-staging /var/lib/nla-catalog-refresh /var/lib/nla-staging
+PrivateTmp=yes
+NoNewPrivileges=yes
+RestrictSUIDSGID=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_INET AF_UNIX
+IPAddressDeny=any
+IPAddressAllow=localhost
+Restart=on-failure
+RestartSec=5s
+TimeoutStopSec=10s
+MemoryMax=96M
+CPUQuota=10%
+StandardOutput=null
+StandardError=null
+
+[Install]
+WantedBy=multi-user.target
