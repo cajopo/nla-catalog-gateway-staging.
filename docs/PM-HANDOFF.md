@@ -1,6 +1,6 @@
 # Passaggio di consegne PM NLA
 
-Aggiornato il 3 ottobre 2026. Jacopo ha affidato a Codex il ruolo PM di questa
+Aggiornato il 15 ottobre 2026. Jacopo ha affidato a Codex il ruolo PM di questa
 fase. Riferimenti: master #3, manutenzione documentale #34, architettura #17 e
 tassonomia #19, consultati prima dell'intervento.
 
@@ -18,20 +18,36 @@ abbiamo, ciò che manca e le prove disponibili. Lo [stato attuale](STATUS-CURREN
 La [ripresa GitHub del 3 ottobre](evidence/GITHUB-RESUME-2026-10-03.md) registra
 stato delle PR, dipendenze e piano di consegna aggiornati.
 
-## Stato operativo corrente — 3 ottobre
+## Stato operativo — fotografia storica del 3 ottobre
 
 La recovery VPS è terminata alle 07:29:11 UTC. Il solo refresh ordinario
 read-only `20261003t073240z-3f7384f8` è terminato exit 0 alle 09:12:19; freshness
 PASS alle 09:15:01, source age 6.124 secondi (1 h 42 min 4 s), smoke 10/10, HTTPS 200 e retention
-periodica completata alle 09:15:41. Runtime `af366c05…` è attivo senza OOM;
+periodica completata alle 09:15:41. Il runtime `af366c05…` e la relativa readiness sono prove storiche del 3 ottobre;
 due generazioni preservate e ledger invariato. Le misure di spazio precedenti
 (5.446.959.104 byte alle 07:45 e 5,67 GB) restano alert storici, non valori da
-sommare; finale 11.782.266.880 byte. Dati completi in [incidente](evidence/INCIDENT-2026-10-03.md).
+sommare; finale 11.782.266.880 byte. Dati completi in [incidente](evidence/INCIDENT-2026-10-03.md). Questi numeri e
+stati PR/runtime descrivono il 3 ottobre e non attestano lo stato corrente.
 
-La consegna documentale usa un checkout pulito separato:
+## Delta market — 15 ottobre
+
+La correzione della cattura CardTrader è stata applicata il 15 ottobre alle
+10:17:47 UTC e verificata alle 10:18:11 UTC. Il servizio market è sbloccato e
+inattivo in attesa del timer; non è stato avviato un nuovo ciclo. Il refresh
+read-only era già terminato alle 04:38:51 UTC e resta intatto. Nessun ciclo
+market completo successivo è attestato. Dettagli e limiti in
+[evidenza market](evidence/MARKET-SOURCE-2026-10-15.md).
+
+La PR #112 è in bozza e non fusa. CI è verde con 4.108 test passati per ciascuna
+versione Python indicata nell'evidenza; ciò documenta il codice della PR e non
+una nuova esecuzione completa operativa. I run CI, i conteggi di test e gli
+stati di review riportati sotto sono una fotografia storica del 3 ottobre;
+l'head PR #101 precedente a questa revisione è registrato più avanti.
+
+La consegna documentale del 3 ottobre usava un checkout pulito separato (stato storico):
 `C:\Users\umbri\.codex\worktrees\nla-pm-incident-docs\nla-catalog-gateway-staging`,
 branch `agent/pm-incident-state-20261003`, PR #101 ready for review. Alle 09:54
-UTC era verificato il head `6913748dc1513b29c084db522865386067db241a`, basato sul head PR #100
+UTC era verificato il head PR #101 `6913748dc1513b29c084db522865386067db241a` (dato storico, non corrente), basato sul head PR #100
 `7ab94d3`. CI #37113804901 e CodeQL #37113804893
 passati; 3.885 test e coverage 100% con Python 3.12 e 3.13. Contiene 23 file solo
 documentali, incluso `docs/workstreams/ws-09g-refresh-interruption-recovery.md`;
@@ -49,7 +65,35 @@ delle 09:58:17 ha misurato 2.378.674.176 byte disponibili, sotto la soglia
 2.415.919.104; impostazioni invariate e seed fermo. Nessun nuovo container
 avviato; le decisioni del proprietario restano pendenti.
 
+## Stato GitHub verificato — 15 ottobre
+
+La lettura metadata-only registra PR #108 chiusa e fusa il 4 ottobre 2026 alle
+12:16:49 UTC, merge commit `90f4f49bf2094fa2af51dff3a998b82054d93c76`:
+[PR #108](https://github.com/cajopo/nla-catalog-gateway-staging./pull/108).
+La consegna principale è completata con #108. PR #100 resta aperta, non draft e
+non fusa: head `7ab94d345511ddd53c362206f041bf4942f1a61a`, base
+`agent/staging-warm-activation` (`83b14e45ba20180805b2414f0c7b838041cd8ad7`).
+Prima di questa revisione documentale, PR #101 era aperta, non draft e non fusa: head
+`55aa1bedcc99d39e7d60ae1f388fa6c5541ebdf4`, base
+`agent/refresh-interruption-recovery` (`7ab94d345511ddd53c362206f041bf4942f1a61a`).
+Il vecchio head #101 `6913748dc1513b29c084db522865386067db241a` e i relativi
+controlli sono storici. PR #112 resta draft e non fusa secondo l'evidenza market.
+Questa lettura riguarda metadati PR: non attesta CI nuova. Il commit della
+revisione documentale e i suoi controlli sono identificati nella PR #101;
+non attribuirgli i controlli del precedente head. I residui #100, #101, #112 e
+#113 non sono fusi; non confonderli con la consegna principale #108.
+
 ## Regole per il prossimo intervento
+
+Il codice del backup automatico è consegnato nella PR #113 in bozza, commit
+`079a242c2129b346d58e170e6f954995364a8716`. CI e CodeQL passati, 4.191 test per
+versione Python e copertura 100%; review indipendente e prova Linux sintetica
+passate. Alle 12:42 UTC solo il pacchetto è installato; credenziali, configurazione
+e unità assenti. La revisione automatica richiede autorizzazione esplicita al
+trasferimento di chiave Backblaze e password del repository sulla VPS; domanda
+pendente, nessun trasferimento eseguito. Prima copia completa e recupero
+applicativo restano da verificare. Usare [evidenza e pin](evidence/BACKUP-AUTOMATION-2026-10-15.md),
+senza ripetere il pilota sul checkpoint storico del 3 ottobre.
 
 - Considerare concluse le prove e le unità terminali del 29 settembre; non
   riavviarle e non ripetere il conteggio delle nuove carte come aggiornamento.
@@ -92,26 +136,41 @@ Il checkpoint aggiornato [recupero PC](evidence/RECOVERY-PC-2026-10-01.md)
 precisa che è passato il seed dei dati, non il runtime. Prossimi passi: decidere
 se preparare il riavvio concordato di Docker Desktop a 4 GB o rinviare; solo con
 preflight memoria valido proseguire il runtime isolato. Poi completare la prova
-su host nuovo, chiudere destinazione durevole e backup automatico, collaudare il
+su host nuovo, completare backup automatico e conservazione, collaudare il
 ciclo refresh/importer e definire conservazione/recupero credenziali, verificare il
 recapito email degli alert e il referente operativo.
+La destinazione è ora Backblaze: il 3 ottobre Jacopo ha scelto `nla-catalog`.
+Prima copia manuale del checkpoint PC caricata, riscaricata con hash identici
+e restaurata offline, tre database PASS. La chiave resta sul PC; scheduler
+sulla VPS e copertura di immagini/configurazione/credenziali ancora aperti.
+Vedi [prova Backblaze](evidence/BACKBLAZE-2026-10-03.md).
+Il 15 ottobre è passato il [pilota cifrato S3](evidence/BACKUP-ENCRYPTION-2026-10-15.md):
+restic 0.19.1, checkpoint identico del 3 ottobre, controllo integrale e recupero
+con SHA-256 invariato. Il repository `nla/restic-v1` è pronto per il lavoro
+successivo; il suo helper è manuale e non va schedulato. Procedere ora con
+cattura completa dei dati correnti, custodia indipendente della password e
+scheduler VPS con prove di rinvio/fallimento, preservando i cicli in esercizio.
+Le prove di cifratura già riuscite non vanno ripetute senza una nuova modifica.
 La [prova reference del 1 ottobre](evidence/REFERENCE-RECOVERY-2026-10-01.md)
 ha già validato offline tutte le 336.752 identità restaurate e accettato la
 configurazione tramite i sorgenti installati del refresh. È un contenitore
 separato con 768 MiB, senza rete né credenziali: non supera il preflight del
 runtime PC e non prova un ciclo Shopify. Non ripeterla senza nuova lacuna.
 Jacopo ha confermato il PC per la prima copia e indicherà lo spazio definitivo;
-per gli alert ha scelto l'email dopo il chiarimento. Indirizzo e referente restano
-da confermare; nessun servizio di invio o recapito è ancora collaudato. Il runbook descrive
+per gli alert ha scelto l'email dopo il chiarimento. Il 15 ottobre ha confermato
+il destinatario, conservato nelle prove private e modificabile (D-020).
+Referente e servizio di invio restano da completare; nessun recapito e' ancora collaudato. Il runbook descrive
 eventi, canale, ruolo del referente e necessità del monitor fuori VPS.
 Nessun destinatario inventato o messaggio a terzi. Il primo tentativo Docker
 locale fallì al socket e resta conservato come evento storico; non furono
-resettati né cancellati dati. Docker Desktop ora è attivo e l'immagine del
+resettati né cancellati dati. Nella prova del 1 ottobre Docker Desktop era attivo e l'immagine del
 backup è stata collegata al manifest previsto tramite digest OCI, senza
 indebolire il pin del config. La nuova [prova PC](evidence/RECOVERY-PC-2026-10-01.md)
 ha verificato il seed di 12 file e tre database; la preparazione del runtime è
 stata fermata perché la memoria libera risultava sotto soglia. Nessun runtime
 PC è stato creato o avviato. Volume e seed arrestato restano preservati.
+Questo paragrafo descrive la prova storica: non attesta la disponibilità attuale
+del daemon Docker Desktop, da verificare prima di qualsiasi ripresa.
 È pendente la scelta asincrona di Jacopo fra preparare un riavvio concordato
 con Docker Desktop a 4 GB o rinviare; nessuna impostazione è stata cambiata.
 Non ripetere le prove precedenti senza una nuova decisione e un preflight valido.

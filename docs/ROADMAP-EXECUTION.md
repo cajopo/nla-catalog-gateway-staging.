@@ -1,6 +1,6 @@
 # Roadmap della manutenzione NLA
 
-Aggiornata il 3 ottobre 2026, sotto la roadmap #3 e il workstream PM #34.
+Aggiornata il 15 ottobre 2026, sotto la roadmap #3 e il workstream PM #34.
 La fase di bootstrap è chiusa operativamente. Questa roadmap ordina manutenzione,
 consolidamento e possibili sviluppi. L'obiettivo di manutenzione autorizza
 verifiche e preparazione reversibile; MAIN/password, GitHub e decisioni riservate
@@ -16,16 +16,59 @@ eseguito il 29 settembre alle 19:20 Europe/Rome. Password attiva e PowerTools in
 La [fotografia](evidence/STATE-2026-09-30.md) definisce il punto di partenza.
 Non occorre ripetere bootstrap, acquisizioni, cicli terminali o audit già accettati.
 
+## Delta operativo — 15 ottobre
+
+La correzione market è stata applicata alle 10:17:47 UTC e verificata alle
+10:18:11 UTC. Market è sbloccato e attende il timer; nessun nuovo ciclo è stato
+avviato. Il refresh ordinario era già concluso alle 04:38:51 UTC e non è stato
+toccato. Non è attestato un nuovo ciclo market completo. La PR #112 è draft,
+non merged, con CI verde e 4.108 test per ciascuna versione Python riportata
+nell'[evidenza](evidence/MARKET-SOURCE-2026-10-15.md).
+
+I run CI/CodeQL e lo stato runtime del 3 ottobre restano storici; gli head PR
+correnti verificati in modalità metadata-only sono registrati sotto. Questa
+lettura non prova un ciclo market successivo. Restano aperte le lacune
+backup/recupero, QA completa e alert/referente descritte sotto.
+
+La [prova cifrata S3 del 15 ottobre](evidence/BACKUP-ENCRYPTION-2026-10-15.md)
+ha verificato il trasferimento e il recupero del checkpoint del 3 ottobre con
+restic. Il passo successivo è il backup automatico completo dei dati correnti;
+non occorre ripetere il pilota manuale già riuscito. Scheduler, copertura del
+runtime e custodia indipendente della password restano requisiti aperti.
+Il codice del nuovo job è nella PR #113 in bozza, con CI Linux verde e review
+indipendente; [evidenza del backup automatico](evidence/BACKUP-AUTOMATION-2026-10-15.md).
+Il solo pacchetto è installato; il trasferimento delle credenziali attende
+autorizzazione esplicita richiesta dalla revisione automatica. Restano
+configurazione, prima copia completa corrente e recupero applicativo.
+
+## Stato GitHub verificato — 15 ottobre
+
+La lettura metadata-only registra PR #108 chiusa e fusa il 4 ottobre 2026 alle
+12:16:49 UTC, merge commit `90f4f49bf2094fa2af51dff3a998b82054d93c76`:
+[PR #108](https://github.com/cajopo/nla-catalog-gateway-staging./pull/108).
+La consegna principale è completata. PR #100 è aperta, non draft e non fusa,
+head `7ab94d345511ddd53c362206f041bf4942f1a61a`, base
+`agent/staging-warm-activation` (`83b14e45ba20180805b2414f0c7b838041cd8ad7`).
+Prima di questa revisione documentale, PR #101 era aperta, non draft e non fusa, head
+`55aa1bedcc99d39e7d60ae1f388fa6c5541ebdf4`, base
+`agent/refresh-interruption-recovery` (`7ab94d345511ddd53c362206f041bf4942f1a61a`).
+Il precedente head #101 `6913748dc1513b29c084db522865386067db241a` è storico.
+Il nuovo commit documentale e i suoi controlli sono identificati nella PR #101;
+non usare i risultati del precedente head per attestare questa revisione.
+PR #112 e #113 sono draft e non fuse secondo le rispettive evidenze market e
+backup. I residui #100, #101, #112 e #113 non sono fusi. La lettura dei metadati
+non attesta CI nuova; i risultati CI delle nuove PR sono nelle evidenze dedicate.
+
 ## Ordine di lavoro proposto
 
 | Priorità | Attività | Responsabile della fase | Criterio di accettazione | Vincolo |
 | --- | --- | --- | --- | --- |
 | P1 | Consolidare la documentazione e registrare i limiti delle prove | PM Codex | Stato, roadmap, decisioni e fonti coerenti; cronologia preservata; controlli documentali ripetibili | Questo intervento; #34 resta aperta fino alla consegna prevista |
-| P1 | Completare le garanzie operative e chi interviene in caso di errore | PM con operatore da assegnare | Inventario svolto il 30 settembre; email scelta, restano recapito, destinatario/referente e backup automatico; [runbook](OPERATIONS-RUNBOOK.md) pronto | Nessun monitor email configurato o messaggio a terzi; controllo spazio Codex attivo, decisioni sul recapito pendenti |
+| P1 | Completare le garanzie operative e chi interviene in caso di errore | PM con operatore da assegnare | Email e destinatario confermati (15 ottobre); restano recapito, referente e backup automatico; [runbook](OPERATIONS-RUNBOOK.md) pronto | Nessun monitor email configurato o messaggio a terzi; controllo spazio Codex attivo, prova di recapito da autorizzare |
 | P1 | Mantenere lo spazio VPS | PM per verifica; retention ordinaria sulla VPS | Pulizia legacy 3,65 GB verificata; retention refresh 3 ottobre completata, corrente/precedente e reference protetti; controllo Codex ogni 48 ore attivo | Riserva 6 GiB solo pre-cattura; nessuna garanzia sul picco. [Prove](evidence/RETENTION-2026-09-30.md), [incidente](evidence/INCIDENT-2026-10-03.md) |
-| P1 | Consolidare sorgenti, release e issue GitHub | Autori dei workstream e reviewer indipendente da assegnare | PR #100 e PR documentale #101 hanno head verificati con CI/CodeQL verdi; consolidamento altri workstream e merge ancora aperti | Ogni commit successivo richiede nuovi controlli sul suo head finale; vedere [inventario GitHub](evidence/GITHUB-RESUME-2026-10-03.md) |
+| P1 | Chiudere i residui GitHub con review e controlli sul head finale | Autori dei workstream e reviewer indipendente da assegnare | Consegna principale #108 fusa il 4 ottobre; #100 e #101 restano aperte, #112 draft; nessun merge dei residui attestato | La lettura metadata-only non attesta CI nuova; verificare i gate sul head finale. Vedere [inventario GitHub](evidence/GITHUB-RESUME-2026-10-03.md) e [PR #108](https://github.com/cajopo/nla-catalog-gateway-staging./pull/108) |
 | P2 | Completare la certificazione QA della release | QA indipendente da assegnare | Fixture Chrome/Firefox/WebKit 21/21 per motore; axe qualificato; errore HTTP del cursore provato e 40 richieste di carico passate sulla copia restaurata; restano Shopify E2E/mobile/a11y/guasto-freschezza/carico produzione | [Prova e limiti](evidence/RECOVERY-LINUX-2026-09-30.md); riutilizzare prove valide, sessione negozio da sbloccare |
-| P1 | Completare recupero fuori VPS | PM, operatore continuativo da assegnare | Nuovo checkpoint PC 3 ottobre ripristinato offline (12 file, 3 DB quick_check); seed precedente preservato, runtime mai avviato; prova non atomica catalogo+ledger e non backup automatico/durevole | Preflight PC alle 09:58:17: 2.378.674.176 byte disponibili contro 2.415.919.104 richiesti; limiti invariati, seed fermo. Runtime/ciclo refresh-importer, credenziali, destinazione durevole e test RTO completo restano aperti. [Checkpoint](evidence/BACKUP-PC-2026-10-03.md) |
+| P1 | Completare recupero fuori VPS | PM, operatore continuativo da assegnare | Checkpoint PC del 3 ottobre anche su Backblaze: download con hash identici e restore offline PASS, 12 file e 3 DB quick_check. Prima copia cloud manuale; catalogo/ledger non atomici, runtime mai avviato sul PC | Preflight PC alle 09:58:17: 2.378.674.176 byte disponibili contro 2.415.919.104 richiesti; limiti invariati, seed fermo. Restano automazione, conservazione, copertura completa, ciclo runtime/refresh-importer e RTO. [Prova Backblaze](evidence/BACKBLAZE-2026-10-03.md) |
 | P2 | Valutare il lancio pubblico | Jacopo decide; PM prepara il pacchetto | Decisione su rimozione password, rischi residui e gestione operativa | Nessuna autorizzazione attuale alla rimozione password |
 | P3 | Migliorare filtri e ordinamenti | Workstream #10, da pianificare | Contratto dati/UX approvato e prove su campioni verificati | Lingua, condizione, finish e altri sort non sono dichiarati disponibili |
 | P3 | Progettare “Altre stampe di questa carta” | PM per fattibilità; autore da assegnare | Identità canonica affidabile, gruppo completo, link Shopify, preview tastiera/mobile | È autorizzata solo la documentazione |

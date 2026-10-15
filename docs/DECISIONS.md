@@ -260,6 +260,49 @@ pending-state wording; they do not broaden the gateway's read-only boundary.
   reset without starting a process or making Shopify calls; its historical
   `ExecMainStatus=1` remains visible and is not a new market success.
 
+## D-018 — Backblaze backup destination
+
+- Status: owner choice on 2026-10-03. Jacopo created the private `nla-catalog`
+  bucket in `eu-central-003`, supplied a bucket-scoped application key through
+  the local encrypted collector, then explicitly instructed us to proceed.
+- Decision: use this bucket for NLA backups. The first transfer is the existing
+  verified catalog/ledger checkpoint; read, upload, download and offline restore
+  have succeeded. The key is stored only on the PC under its protected ACL.
+- Evidence: [Backblaze transfer and restore](evidence/BACKBLAZE-2026-10-03.md).
+  This supersedes the earlier pending choice of durable destination; it does
+  not establish scheduled backups, an RPO/RTO guarantee or full-system recovery.
+- Limits: preserve original checkpoints and receipts. No bucket lifecycle or
+  Object Lock changes, deletion, VPS changes, email or Shopify/PowerTools changes
+  were performed in this first-copy operation. Scheduling, retention and the
+  treatment of credentials/configuration/runtime images remain separate work.
+
+## D-019 — Preparazione del backup cifrato
+
+- Status: technical preparation on 2026-10-15, within the authorized backup
+  destination D-018. No new hosting or subscription is selected.
+- Decision: evaluate and verify restic 0.19.1 through the Backblaze S3 endpoint,
+  in the separate `nla/restic-v1` prefix. Preserve the original manual object.
+  Official binaries were authenticated; the private pilot was independently
+  reviewed. Encrypted transfer, full cloud-data check and PC archive recovery
+  passed with identical SHA-256 before any connection to unattended VPS backups.
+- Evidence: [encryption pilot and inventory](evidence/BACKUP-ENCRYPTION-2026-10-15.md).
+  The pilot is fixed to the October 3 checkpoint; a new transfer does not make
+  its source data current. It is not the recurring backup implementation.
+- Limits: no cloud retention/deletion policy, lifecycle/Object Lock changes or
+  VPS scheduler is activated by this decision. Complete encrypted coverage,
+  independent key recovery and a fresh full-service restore remain required.
+
+## D-020 — Destinatario email iniziale degli alert
+
+- Status: confermato da Jacopo nella chat il 15 ottobre 2026.
+- Decisione: usare l'indirizzo fornito come destinatario iniziale; mantenerlo
+  modificabile nella configurazione, senza inserirlo nel codice o nei documenti
+  pubblicati. La scelta e' registrata in privato in
+  `output/nla-recovery/20260930/alert-recipient-20261015.json`.
+- Limiti: confermare un indirizzo non dimostra la consegna e non autorizza un
+  messaggio di prova. Servizio, referente operativo e collaudo restano distinti.
+  Preparare il recapito concreto prima della richiesta finale di autorizzazione.
+
 ## Reserved decisions
 
 Future actions in the following areas are not delegated technical details and require Jacopo: paid hosting or

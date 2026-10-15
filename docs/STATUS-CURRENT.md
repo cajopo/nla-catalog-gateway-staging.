@@ -1,20 +1,43 @@
 # Stato attuale del progetto NLA
 
-Aggiornato il 3 ottobre 2026. PM della fase: Codex, incaricato da Jacopo.
+Aggiornamento operativo del 15 ottobre 2026; fotografia generale del 3 ottobre.
+PM della fase: Codex, incaricato da Jacopo.
 Workstream documentale [#34](https://github.com/cajopo/nla-catalog-gateway-staging./issues/34), roadmap [#3](https://github.com/cajopo/nla-catalog-gateway-staging./issues/3).
 
 L'obiettivo operativo della chat «Esegui bootstrap e audit NLA» è raggiunto.
 Il catalogo usa il tema principale dal 29 settembre, ore 19:20 Europe/Rome.
 Il negozio resta protetto da password. Il 3 ottobre Jacopo ha revocato il rinvio
 della consegna GitHub e ha chiesto di capire e correggere l'errore, poi riprendere
-la consegna. Nessuna PR è stata ancora fusa. Recovery VPS conclusa alle 07:29:11
+la consegna. Il ramo main è ora `90f4f49` (integrazione PR #108); la correzione
+market è nella [PR #112](https://github.com/cajopo/nla-catalog-gateway-staging./pull/112).
+Recovery VPS del 3 ottobre conclusa alle 07:29:11
 UTC; il refresh ordinario read-only successivo è terminato exit 0 alle 09:12:19.
 Freschezza, pointer e readiness sono passati; runtime `af366c05…` è attivo senza
 OOM. Vedi [incidente](evidence/INCIDENT-2026-10-03.md) e
 [ripresa GitHub](evidence/GITHUB-RESUME-2026-10-03.md).
 
+Il 15 ottobre alle 10:17:47 UTC è stato corretto e sbloccato il market:
+interruzione della cattura CardTrader del 14 ottobre, prima di qualsiasi scrittura
+Shopify; marker pendente archiviato dopo verifica indipendente e ledger immutato.
+Il modulo ora ritenta gli errori transitori e conserva diagnostica sicura.
+Readiness 200/ready, puntatore e ricevuta del refresh invariati; nessun avvio o
+riavvio di processi. Il refresh ordinario era già terminato alle 04:38:51 UTC.
+Prossimo market previsto alle 14:00 UTC, refresh alle 15:00 UTC; un nuovo ciclo
+market completo non è ancora attestato. Vedi [incidente market](evidence/MARKET-SOURCE-2026-10-15.md).
+
 Questa pagina riassume lo stato; la [fotografia del 30 settembre](evidence/STATE-2026-09-30.md)
 contiene inventario, limiti delle prove, versioni e riconciliazione con GitHub.
+Il 15 ottobre è riuscita anche la [prova di backup cifrato S3](evidence/BACKUP-ENCRYPTION-2026-10-15.md):
+checkpoint del 3 ottobre trasferito, controllato integralmente e recuperato su PC
+con hash identico. Non è ancora un backup automatico dei dati correnti;
+cattura completa, scheduler, conservazione e custodia indipendente delle chiavi
+restano da completare.
+Il codice del backup automatico è nella [PR #113](https://github.com/cajopo/nla-catalog-gateway-staging./pull/113),
+con CI Linux verde (4.191 test per versione Python, copertura 100%) e review
+indipendente. [Prove e limiti](evidence/BACKUP-AUTOMATION-2026-10-15.md):
+solo pacchetto installato alle 12:42 UTC; trasferimento credenziali bloccato
+dalla revisione automatica in attesa di autorizzazione esplicita. Servizio e
+timer assenti; prima copia completa corrente ancora da verificare.
 La [verifica operativa del 30 settembre](evidence/MAINTENANCE-2026-09-30.md)
 aggiunge stato VPS, cicli, prima copia fuori host e prove browser. Il successivo
 [recupero Linux isolato](evidence/RECOVERY-LINUX-2026-09-30.md) verifica dati,
@@ -41,28 +64,33 @@ installati, offline sul PC. Il ciclo Shopify effettivo resta da collaudare.
 | Aggiornamenti | Timer attivi; refresh delle 15 UTC completato alle 16:40 UTC del 30 settembre; otto nuove carte nel ciclo mattutino, zero in quello pomeridiano | Ricevuta terminale e pointer concordanti; nessun job riavviato |
 | Refresh e market, 3 ottobre | Run `20261003t073240z-3f7384f8` exit 0; servizio terminato 09:12:19 UTC, monitorato 09:14:01. Attivazione 09:12:13; freshness PASS 09:15:01, source age 6.124 secondi (1 h 42 min 4 s), ricevuta/last-success/pointer coerenti, HTTPS 200; smoke 10/10 alle 09:14:42. Dataset SHA-256 `5152b3c3…`; runtime `af366c05…` senza OOM. Resolver/ack market hanno ripulito solo stato storico senza avviare job o chiamare Shopify. Timer prossimi: market 14 UTC, refresh 15 UTC | [Incidente](evidence/INCIDENT-2026-10-03.md); refresh Shopify read-only |
 | Retention e spazio VPS | Retention finale 09:15:41: piano completato, sei container e quattro directory obsolete rimosse, due generazioni soltanto; corrente/precedente e ledger protetti/verificati. Spazio 11.782.266.880 byte. Letture precedenti: 5.446.959.104 byte alle 07:45 e 5,67 GB; non sommarle per dedurre il recupero del piano | [Retention](evidence/RETENTION-2026-09-30.md); [stato incidente](evidence/INCIDENT-2026-10-03.md). Riserva 6 GiB solo pre-cattura, senza garanzia sul picco |
-| Backup e recupero | Nuovo checkpoint privato PC acquisito e restaurato offline con esito PASS; seed precedente preservato e fermo, runtime PC mai avviato, nessun RTO completo né backup automatico/durevole | [Checkpoint e restore PC 3 ottobre](evidence/BACKUP-PC-2026-10-03.md); prove storiche: [PC](evidence/RECOVERY-PC-2026-10-01.md), [reference](evidence/REFERENCE-RECOVERY-2026-10-01.md), [Linux](evidence/RECOVERY-LINUX-2026-09-30.md) |
+| Backup e recupero | Checkpoint PC copiato nel bucket privato Backblaze, riscaricato con SHA-256/SHA-1 identici e restaurato offline: PASS, tre DB verificati. Prima copia cloud manuale; automazione e recupero completo del runtime ancora aperti | [Backblaze 3 ottobre](evidence/BACKBLAZE-2026-10-03.md); [checkpoint PC](evidence/BACKUP-PC-2026-10-03.md); prove storiche: [PC](evidence/RECOVERY-PC-2026-10-01.md), [reference](evidence/REFERENCE-RECOVERY-2026-10-01.md), [Linux](evidence/RECOVERY-LINUX-2026-09-30.md) |
 | QA componente | Matrice 21/21 in Chrome, Firefox e WebKit; smoke touch 390×844 e retry dopo 503 simulato sulla fixture; axe zero violazioni, un incomplete di contrasto valutato manualmente nello stato coperto | Solo fixture congelata; non certifica Shopify/mobile reale, Safari/iOS, screen reader, outage gateway o freschezza. Dettagli: [QA](evidence/MAINTENANCE-2026-09-30.md#qa-sul-sorgente-congelato); ricevuta privata in `../output/nla-recovery/20260930/evidence/qa-touch-down-final/index.json` |
 | Sicurezza | Confine Shopify App Proxy autenticato; gateway e refresh in sola lettura | Architettura #17 e prove del servizio |
 | Tema | 175195881740 principale; 175194898700 conservato per ripristino; password attiva | [Ricevute del passaggio](workstreams/ws-12-release-readiness-20260929.md) |
 
 ## Cosa resta aperto
 
-- Consolidamento dei rami e consegna GitHub con CI/CodeQL sul commit finale,
-  review indipendente e aggiornamento delle issue: autorizzato a riprendere il 3 ottobre,
-  ancora da completare.
+- Completare la consegna delle correzioni successive e della documentazione:
+  l'integrazione principale della PR #108 è fusa dal 4 ottobre in `90f4f49`;
+  le PR #100 (recovery), #101 (PM), #112 (market) e #113 (backup) restano non fuse.
+  Verifica metadati del 15 ottobre, senza nuova esecuzione CI. Restano review,
+  controlli sui commit finali e riconciliazione delle issue per questi residui.
 - Certificazione completa della release: matrice browser/accessibilità/carico
   e prove di recupero legate alla stessa versione.
-- Completare backup automatico/destinazione durevole e recupero del servizio:
-  checkpoint PC e restore offline sono verificati, ma non sono una copia atomica
-  catalogo+ledger né un backup automatico/durevole. Il preflight memoria PC del
+- Completare backup automatico e recupero del servizio: destinazione Backblaze
+  scelta e prima copia cloud verificata, ma scheduler, gestione errori e
+  conservazione restano da configurare. Il checkpoint non è atomico tra
+  catalogo e ledger. Il preflight memoria PC del
   3 ottobre ha misurato 2.378.674.176 byte disponibili, sotto il minimo richiesto
   di 2.415.919.104; impostazioni invariate, seed fermo, nessun runtime avviato.
   Restano decisione del proprietario sulle risorse per la prova isolata,
-  ciclo reale runtime/refresh/importer, destinazione durevole, credenziali e
+  ciclo reale runtime/refresh/importer, copertura di configurazione, credenziali e
   certificati, che richiedono procedure dedicate.
 - Alert effettivamente recapitati, referente operativo e obiettivi di recupero.
-  Email scelta dal proprietario; indirizzo e servizio di invio ancora da verificare.
+  Email e destinatario confermati dal proprietario (15 ottobre); indirizzo
+  conservato nelle prove private e modificabile nella configurazione futura.
+  Servizio di invio, referente e prova autorizzata di recapito restano da completare.
   Le unità NLA non hanno `OnFailure`; entrambi i timer hanno `Persistent=no`.
 - Funzioni ulteriori: ordinamenti diversi dal GID, filtri lingua/condizione/finish,
   migliore copertura dei dati non singole. Sono backlog, non difetti dimostrati.

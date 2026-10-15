@@ -1,18 +1,43 @@
 # Runbook operativo NLA
 
-Aggiornato il 3 ottobre 2026. Stato e prove:
+Aggiornamento market del 15 ottobre 2026; baseline del 3 ottobre. Stato e prove:
 [manutenzione del 30 settembre](evidence/MAINTENANCE-2026-09-30.md) e
 [recupero PC](evidence/RECOVERY-PC-2026-10-01.md),
 [checkpoint PC del 3 ottobre](evidence/BACKUP-PC-2026-10-03.md),
 [incidente refresh del 3 ottobre](evidence/INCIDENT-2026-10-03.md) e
 [ripresa GitHub](evidence/GITHUB-RESUME-2026-10-03.md).
-PM della fase: Codex. Operatore continuativo e destinatari degli alert da
-assegnare da Jacopo; questo documento non crea un servizio di reperibilità.
+PM della fase: Codex. Destinatario email confermato da Jacopo il 15 ottobre
+(D-020), conservato nelle prove private e modificabile. Operatore continuativo
+ancora da assegnare; questo documento non crea un servizio di reperibilità.
 Il 3 ottobre il refresh ordinario `20261003t073240z-3f7384f8` è terminato exit 0
 alle 09:12:19 UTC; freshness, pointer, smoke e retention periodica sono passati.
 Spazio finale 11.782.266.880 byte. Seguire la
 [timeline dell'incidente](evidence/INCIDENT-2026-10-03.md) per ricevute, hash e
 limite dei 6 GiB pre-cattura (non garantisce il picco di spazio).
+
+## Correzione market del 15 ottobre
+
+Alle 10:17:47 UTC è stato installato il fix della [PR #112](https://github.com/cajopo/nla-catalog-gateway-staging./pull/112),
+commit `8657aaa495ae5e602d54365ffb691d06adc4f2c1`: massimo tre tentativi GET
+CardTrader per errori transitori, con attese e scadenza globale; ricevute con
+motivo, endpoint e tentativi, senza segreti. Il modulo di cattura installato ha
+SHA256 `04a16414b0889751ad4d383a12070afe53bafaaf6459188fe0d0148fef329aa5`.
+L'installazione importer mantiene il nome storico `importer-d7e6fc9`; identificare
+questa patch tramite il suo hash e la ricevuta, non dal solo nome della directory.
+
+Il ciclo fallito `market-20261014t140021z-b86bf562` si era fermato prima delle
+scritture Shopify. Dopo lock non bloccanti, hash e ledger verificati, il marker
+è stato archiviato nel ciclo insieme a `inspection-resolved.json`; la retention
+preserva l'intera prova. Il file originale e le ricevute sono in
+`/opt/nla-staging/importer-state/maintenance-20261015-market-source/`.
+Non ripetere il helper specifico dell'incidente: un nuovo blocco richiede una
+nuova ispezione, soprattutto se esistono batch, identità o pubblicazioni incerte.
+
+Verifica finale alle 10:18:11 UTC: modulo importabile, HTTPS 200/ready, ledger,
+puntatore, configurazione, ricevuta e invocazione del refresh invariati; timer
+market 14:00 UTC e refresh 15:00 UTC attivi. Nessun processo avviato o riavviato.
+Il reset dello stato fallito non attesta un nuovo ciclo completo. Dettagli e
+limiti in [incidente market](evidence/MARKET-SOURCE-2026-10-15.md).
 
 ## Controllare prima di intervenire
 
@@ -65,9 +90,11 @@ generare un falso alert di errore. Il messaggio deve dire cosa è accaduto,
 da quando, ultimo aggiornamento valido e prima azione utile; inviare il rientro
 alla normalità e contenere i duplicati. Nessun riepilogo periodico non richiesto.
 
-Jacopo ha scelto l'email come canale iniziale il 30 settembre. Indirizzo,
-servizio di invio, autenticazione e costi non sono ancora verificati;
-la scelta del canale non dimostra il recapito. Il destinatario e il referente possono coincidere
+Jacopo ha scelto l'email come canale iniziale il 30 settembre e ha confermato
+il destinatario il 15 ottobre (D-020). L'indirizzo resta nelle prove private ed
+e' modificabile nella futura configurazione degli alert. Servizio di invio,
+autenticazione e costi restano da verificare; la scelta del destinatario non
+dimostra il recapito. Il destinatario e il referente possono coincidere
 con Jacopo, solo se lo conferma. Il referente prende in carico la segnalazione
 e decide chi interviene; non implica che debba risolvere ogni problema da solo.
 
@@ -89,7 +116,8 @@ La [skill ufficiale quick-monitor-setup](https://github.com/uptimerobot/ai/blob/
 Richiede URL e indirizzo identici nel challenge e nella richiesta; difficulty
 letto dalla risposta, proof-of-work SHA256, poi invio della richiesta e conferma
 dell'email da parte del proprietario. Non è stata fatta alcuna richiesta di
-attivazione: mancano indirizzo e autorizzazione a inviare quell'email. Un HTTP 200
+attivazione: il destinatario ora e' noto, ma manca l'autorizzazione a inviare
+quell'email; verificare nuovamente il contratto del provider prima della richiesta. Un HTTP 200
 del provider non proverebbe creazione o recapito: occorrono attivazione del
 proprietario, configurazione effettiva e prova concordata senza guasti sul live.
 La readiness dal PC, con TLS validato e senza redirect, è risultata 200/ready
@@ -230,16 +258,87 @@ hash sono nella cartella privata `evidence/reference-offline-closed` del backup.
 Riutilizzare questa prova; per un nuovo checkpoint scegliere nuove identità e
 percorsi, verificare i pin e ottenere review prima di eseguire gli helper.
 
+## Backblaze: prima copia e verifica del 3 ottobre
+
+Destinazione scelta da Jacopo: bucket privato `nla-catalog`, regione
+`eu-central-003`, cifratura SSE-B2/AES256. Il checkpoint PC del mattino è stato
+caricato e riscaricato integralmente: SHA-256 e SHA-1 coincidono. Il restore
+della copia cloud ha superato hash, dimensioni e tre SQLite `quick_check`
+in 61,970 secondi dopo il controllo iniziale dell'archivio.
+Vedi [ricevute, pin e limiti](evidence/BACKBLAZE-2026-10-03.md).
+
+Gli helper sono in `output/nla-recovery/20260930/backblaze-setup/`, privata e
+ignorata da Git. La chiave è in `credentials.clixml`, cifrata tramite DPAPI
+per l'utente Windows; non copiarla in documenti, log o repository. Non è
+installata sulla VPS. Il prompt console iniziale aveva registrato Ctrl+V:
+`save-key.ps1` ora apre due campi mascherati e rifiuta caratteri di controllo.
+Il file non valido è conservato separatamente; non va riutilizzato.
+
+Per una diagnosi autorizzata, verificare prima lo SHA-256 documentato di
+`check-connection.ps1`, poi eseguirlo come proprietario con Windows PowerShell
+tramite il percorso completo dell'eseguibile e `-NoProfile -ExecutionPolicy
+RemoteSigned -File`. Effettua solo tre richieste di lettura e salva una nuova
+ricevuta priva di segreti. Non indebolire gli ACL della cartella per eseguirlo.
+
+`upload-checkpoint.ps1` è una procedura per il checkpoint fissato del 3 ottobre:
+controlla hash/dimensione dell'originale, verifica o crea l'oggetto con nome
+derivato dall'hash e lo riscarica in un nuovo file. Non usarla come backup
+periodico dei dati correnti. Il restore usa una copia invariata di
+`restore_offline.py`, hash dell'archivio atteso e destinazione nuova.
+
+Questa prova chiude la scelta della destinazione e la prima copia cloud dei
+dati. Restano scheduler sulla VPS, gestione errori, conservazione, copertura
+di configurazione/immagini/accessi e recupero completo del servizio.
+Il bucket non ha regole lifecycle; nessuna scadenza delle copie è stata impostata.
+
+## Backup cifrato: pilota verificato il 15 ottobre
+
+La [prova S3](evidence/BACKUP-ENCRYPTION-2026-10-15.md) ha verificato restic
+0.19.1, cifratura prima del trasferimento, controllo integrale del repository e
+recupero su PC con hash identico. Il repository separato è
+`s3:https://s3.eu-central-003.backblazeb2.com/nla-catalog/nla/restic-v1`.
+La copia è ancora il checkpoint del 3 ottobre; il pilota non va schedulato.
+
+Helper privato: `output/nla-recovery/20260930/backup-automation-20261015/restic-pilot.ps1`,
+SHA-256 `1ee73777e5af520597c2226e0094210e08ccbc1f02f9e60e0cf7e525fa1e0592`.
+Verificare questo hash prima di eseguirlo. `Init` è già completato e rifiuta
+una password esistente: non cancellare `password.clixml` per forzarlo.
+La password è protetta da DPAPI e dagli ACL del PC; non è ancora custodita
+indipendentemente dall'utente/PC né installata sulla VPS.
+
+Per un recupero successivo autorizzato, usare `VerifyRestore` con l'ID completo
+dello snapshot riportato nella prova e una nuova directory diretta sotto
+`backup-automation-20261015/restores/`. L'helper richiede la ricevuta di backup
+riuscita, ripristina solo la sottocartella del checkpoint, rifiuta sovrascritture
+e controlla l'hash. Non esegue un recupero del runtime o dei segreti applicativi.
+Eseguire come proprietario con Windows PowerShell tramite percorso completo,
+senza indebolire ACL. Le ricevute precedenti restano conservate.
+
+Per i dati reali la VPS è stata soltanto inventariata. Completare cattura dei dati correnti,
+copertura cifrata di configurazione/accessi/immagini, custodia della password,
+scheduler e prove dei fallimenti prima di dichiarare il backup automatico.
+Nessuna rimozione cloud, policy di retention o modifica lifecycle è stata attivata.
+
+Il codice del nuovo servizio è nella PR #113, con CI Linux e review indipendente
+passate. Anche la prova sintetica nel sandbox systemd reale è passata: lettura
+del ledger WAL riuscita, scrittura ai sorgenti respinta, unità e fixture proprie
+rimosse. [Versione, pin e limiti](evidence/BACKUP-AUTOMATION-2026-10-15.md).
+Alle 12:42 UTC il solo pacchetto è installato; `/etc/nla-backup` e unità ancora
+assenti. La revisione automatica ha bloccato il trasferimento delle credenziali
+in attesa di autorizzazione esplicita del proprietario. Nessuna copia completa
+corrente è stata eseguita; riprendere dalle fasi documentate nell'evidenza.
+Il nuovo timer non è ancora attivo; non usare il vecchio pilota come job periodico.
+
 ## Decisioni e obiettivi da chiudere
 
 | Voce | Situazione | Proposta verificabile |
 | --- | --- | --- |
-| Destinazione durevole | Prima copia su PC pronta e scelta confermata da Jacopo il 30 settembre; spazio definitivo sarà indicato dal proprietario | Il PC non aggiunge una sottoscrizione; costi di un eventuale provider vanno verificati prima della scelta |
+| Destinazione durevole | Backblaze scelto dal proprietario il 3 ottobre; prima copia nel bucket privato, download e restore dati verificati | Scelta e primo trasferimento conclusi; restano copertura completa e conservazione delle copie. [Prova Backblaze](evidence/BACKBLAZE-2026-10-03.md) |
 | Backup automatico e retention | Non configurati | Copia dopo ciclo riuscito, verifica hash/restore, retention da approvare; misurare quanto rimane recuperabile se un ciclo fallisce |
 | Credenziali e reference | Reference completa e configurazione restaurata accettate offline; credenziali/certificati esclusi | Collaudare il ciclo refresh/importer con accessi recuperati; definire conservazione cifrata e recupero degli accessi, senza segreti in Git/documenti |
 | RPO | Nessun RPO garantito dal backup manuale | Proposta iniziale: massimo 24 ore per copie fuori host, coerente con tolleranza del catalogo; richiede scheduler e prova dei fallimenti |
-| RTO | Restore dati PC 3 ottobre: 49,826 s; restore reference storico: 23,164 s. Non è stato avviato runtime PC, quindi nessun RTO completo certificato. Restano distinti gli esiti del drill Linux VPS | Budget proposto: 2 ore su host Linux già pronto, escluso provisioning/DNS; serve prova completa con immagine/credenziali, oggi non garantito. [Nuova prova PC](evidence/BACKUP-PC-2026-10-03.md) |
-| Alert e reperibilità | Email scelta; indirizzo, recapito e referente ancora da confermare | PM verifica servizio/costi e prepara configurazione; prova identificabile al destinatario dopo autorizzazione |
+| RTO | Restore dati PC: 49,826 s; copia riscaricata da Backblaze: 61,970 s; reference storico: 23,164 s. Questi tempi escludono trasferimenti e avvio del runtime; nessun RTO completo certificato | Budget proposto: 2 ore su host Linux già pronto, escluso provisioning/DNS; serve prova completa con immagine/credenziali, oggi non garantito. [Prova Backblaze](evidence/BACKBLAZE-2026-10-03.md) |
+| Alert e reperibilità | Email e destinatario confermati; recapito e referente ancora da provare/confermare | PM verifica servizio/costi e prepara configurazione modificabile; prova identificabile al destinatario dopo autorizzazione |
 | Recupero trigger persi | `Persistent=no` osservato | Valutare `Persistent=yes` e prova isolata dopo verifica dei vincoli di locking/overlap; nessun timer cambiato ora |
 
 Le proposte non sono SLA né assegnazioni implicite. PM e operatori conservano
