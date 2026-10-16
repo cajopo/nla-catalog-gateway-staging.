@@ -243,6 +243,95 @@ def test_fail_closed_never_completes_and_does_not_modify_sources(setup, monkeypa
     assert before == {path: path.read_bytes() for path in before}
 
 
+def inspect_mounts(monkeypatch, before, after=None):
+    previous = checkpoint._run
+    inspections = []
+
+    def run(arguments, budget):
+        raw = previous(arguments, budget)
+        if arguments[1] != "container":
+            return raw
+        value = json.loads(raw)
+        value[0]["Mounts"] = before if not inspections or after is None else after
+        inspections.append(True)
+        return json.dumps(value).encode()
+
+    monkeypatch.setattr(checkpoint, "_run", run)
+
+
+def mounts_fixture():
+    return [
+        {
+            "Type": "bind",
+            "Name": "",
+            "Source": "/var/lib/second",
+            "Destination": "/z-last",
+            "Driver": "",
+            "Mode": "ro",
+            "RW": False,
+            "Propagation": "rprivate",
+            "FutureMetadata": {"preserve": [1, 2]},
+        },
+        {"Type": "bind", "Source": "/var/lib/first", "Destination": "/a-first", "RW": True},
+    ]
+
+
+def test_reordered_mounts_complete_checkpoint_and_preserve_every_field(setup, monkeypatch):
+    config, destination, _, _ = setup
+    mounts = mounts_fixture()
+    inspect_mounts(monkeypatch, mounts, list(reversed(mounts)))
+    manifest = checkpoint.capture(config, destination)
+    assert manifest["status"] == "checkpoint_complete"
+    launch = json.loads((destination / "containers/nla-catalog-staging-private.json").read_bytes())
+    assert launch["Mounts"] == sorted(mounts, key=lambda mount: mount["Destination"])
+    assert launch["Mounts"][1] == mounts[0]
+    assert launch["Config"] == {"Env": ["fixture-secret=value"]}
+    assert launch["HostConfig"] == {"Memory": 1024}
+
+
+@pytest.mark.parametrize(
+    ("field", "changed"),
+    [
+        ("Type", "volume"),
+        ("Name", "new-volume"),
+        ("Source", "/changed"),
+        ("Destination", "/changed"),
+        ("Driver", "new-driver"),
+        ("Mode", "rw"),
+        ("RW", True),
+        ("Propagation", "shared"),
+        ("FutureMetadata", {"preserve": [1, 3]}),
+    ],
+)
+def test_material_mount_change_still_rejects_checkpoint(setup, monkeypatch, field, changed):
+    config, destination, _, _ = setup
+    mounts = mounts_fixture()
+    modified = copy.deepcopy(mounts)
+    modified[0][field] = changed
+    inspect_mounts(monkeypatch, mounts, modified)
+    with pytest.raises(checkpoint.CheckpointError, match=r"^checkpoint rejected$"):
+        checkpoint.capture(config, destination)
+    assert destination.is_dir() and not (destination / "manifest.json").exists()
+
+
+@pytest.mark.parametrize(
+    "mounts",
+    [
+        None,
+        {},
+        [None],
+        [{}],
+        [{"Destination": 1}],
+        [{"Destination": "/duplicate"}, {"Destination": "/duplicate"}],
+    ],
+)
+def test_mounts_require_unique_string_destinations(setup, monkeypatch, mounts):
+    config, _, _, _ = setup
+    inspect_mounts(monkeypatch, mounts)
+    with pytest.raises(checkpoint.CheckpointError, match=r"^checkpoint rejected$"):
+        checkpoint._idle(config, Budget())
+
+
 def test_source_changes_during_image_export_are_detected(setup, monkeypatch):
     config, destination, sources, _ = setup
     original = checkpoint._image

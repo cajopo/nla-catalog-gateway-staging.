@@ -235,10 +235,20 @@ def _idle(config, budget):
         containers = json.loads(_run(["/usr/bin/docker", "container", "inspect", name], budget))
         _require(len(containers) == 1)
         _require(containers[0]["State"]["Running"] is True and containers[0]["Image"] == image)
+        mounts = containers[0]["Mounts"]
+        _require(
+            type(mounts) is list
+            and all(
+                type(mount) is dict and type(mount.get("Destination")) is str for mount in mounts
+            )
+        )
+        _require(len({mount["Destination"] for mount in mounts}) == len(mounts))
         launches.append(
             {
                 "name": name,
-                **{key: containers[0][key] for key in ("Image", "Config", "HostConfig", "Mounts")},
+                **{key: containers[0][key] for key in ("Image", "Config", "HostConfig")},
+                # Engine inspect enumerates a map: mount ordering is not an identity.
+                "Mounts": sorted(mounts, key=lambda mount: mount["Destination"]),
             }
         )
     return launches
