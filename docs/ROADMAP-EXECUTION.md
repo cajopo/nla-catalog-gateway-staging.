@@ -1,6 +1,6 @@
 # Roadmap della manutenzione NLA
 
-Aggiornata il 15 ottobre 2026, sotto la roadmap #3 e il workstream PM #34.
+Aggiornata il 16 ottobre 2026, sotto la roadmap #3 e il workstream PM #34.
 La fase di bootstrap è chiusa operativamente. Questa roadmap ordina manutenzione,
 consolidamento e possibili sviluppi. L'obiettivo di manutenzione autorizza
 verifiche e preparazione reversibile; MAIN/password, GitHub e decisioni riservate
@@ -16,33 +16,30 @@ eseguito il 29 settembre alle 19:20 Europe/Rome. Password attiva e PowerTools in
 La [fotografia](evidence/STATE-2026-09-30.md) definisce il punto di partenza.
 Non occorre ripetere bootstrap, acquisizioni, cicli terminali o audit già accettati.
 
-## Delta operativo — 15 ottobre
+## Delta operativo — 15–16 ottobre
 
-La correzione market è stata applicata alle 10:17:47 UTC e verificata alle
-10:18:11 UTC. Market è sbloccato e attende il timer; nessun nuovo ciclo è stato
-avviato. Il refresh ordinario era già concluso alle 04:38:51 UTC e non è stato
-toccato. Non è attestato un nuovo ciclo market completo. La PR #112 è draft,
-non merged, con CI verde e 4.108 test per ciascuna versione Python riportata
-nell'[evidenza](evidence/MARKET-SOURCE-2026-10-15.md).
+La correzione market è stata applicata il 15 ottobre alle 10:17:47 UTC e verificata
+alle 10:18:11 UTC. Dopo la correzione, i cicli market del 15 ottobre alle 14:00 UTC
+e del 16 ottobre alle 02:00 UTC sono terminati con successo; l'ultima sorgente è
+stata acquisita alle 03:00 UTC. Alle 11:45 UTC refresh e market risultavano
+`inactive/success`, con pointer/generazioni protette invariati. La PR #112 resta
+draft con CI verde. [Evidenza](evidence/MARKET-SOURCE-2026-10-15.md).
 
-I run CI/CodeQL e lo stato runtime del 3 ottobre restano storici; gli head PR
-correnti verificati in modalità metadata-only sono registrati sotto. Questa
-lettura non prova un ciclo market successivo. Restano aperte le lacune
-backup/recupero, QA completa e alert/referente descritte sotto.
+I risultati CI/CodeQL e lo stato runtime del 3 ottobre sono storici. Il ciclo market e i controlli live del 15–16 ottobre sono riportati sopra; restano aperte le lacune backup/recupero, QA completa e verifica del monitor UptimeRobot.
 
 La [prova cifrata S3 del 15 ottobre](evidence/BACKUP-ENCRYPTION-2026-10-15.md)
-ha verificato il trasferimento e il recupero del checkpoint del 3 ottobre con
-restic. Il pilota manuale già riuscito non va ripetuto: il primo backup completo
-dei dati correnti è ora passato, come descritto sotto. Attivazione periodica,
-recupero del runtime e custodia indipendente della password restano aperti.
-Il codice del nuovo job è nella PR #113 in bozza, con CI Linux verde e review
-indipendente; [evidenza del backup automatico](evidence/BACKUP-AUTOMATION-2026-10-15.md).
-Il trasferimento delle credenziali è stato autorizzato (D-021) e l'installazione
-verificata. Primo backup corrente completato alle 13:30:23 UTC, controllo
-integrale passato e staging rimosso. Restano recupero applicativo e verifica
-del margine disco per trasferimenti lunghi/falliti; timer ancora disabilitato.
+ha verificato il checkpoint storico del 3 ottobre. Il backup corrente valido resta
+quello del 15 ottobre alle 13:30:23 UTC (`read-data` PASS); i restore isolati dei
+ruoli `current` e `previous` sono PASS. L'immagine era già residente prima del
+loader: `emptyHostRecoveryProven=false`. Il runtime di test è stato avviato,
+verificato e chiuso; il runtime live continua operativo. Pulizia copie isolate
+completata. Il timer backup è disabilitato e il solo componente health è inerte.
+Il job del 16 ottobre partito alle 11:38:34 UTC è terminato alle 11:39:01 con
+`checkpoint_failed` prima del trasferimento; staging di circa 2,14 GB conservato
+per diagnosi. [Evidenza](evidence/BACKUP-AUTOMATION-2026-10-15.md).
 
-## Stato GitHub verificato — 15 ottobre
+
+## Stato GitHub verificato — 16 ottobre
 
 La lettura metadata-only registra PR #108 chiusa e fusa il 4 ottobre 2026 alle
 12:16:49 UTC, merge commit `90f4f49bf2094fa2af51dff3a998b82054d93c76`:
@@ -58,7 +55,7 @@ Il nuovo commit documentale e i suoi controlli sono identificati nella PR #101;
 non usare i risultati del precedente head per attestare questa revisione.
 PR #112 e #113 sono draft e non fuse secondo le rispettive evidenze market e
 backup. I residui #100, #101, #112 e #113 non sono fusi. La lettura dei metadati
-non attesta CI nuova; i risultati CI delle nuove PR sono nelle evidenze dedicate.
+non attesta CI nuova; i risultati CI delle nuove PR sono nelle evidenze dedicate. Il checkpoint documentale pubblicato precedente della PR #101 era `b6ab98e618b0867f875b97ccf6d6854359a826d0`, con CI `38819024906` e CodeQL `38819025033` completati con esito positivo alle 22:56 UTC. Il head finale e i controlli del delta attuale sono da seguire nei metadati della PR #101.
 
 ## Ordine di lavoro proposto
 
@@ -69,7 +66,7 @@ non attesta CI nuova; i risultati CI delle nuove PR sono nelle evidenze dedicate
 | P1 | Mantenere lo spazio VPS | PM per verifica; retention ordinaria sulla VPS | Pulizia legacy 3,65 GB verificata; retention refresh 3 ottobre completata, corrente/precedente e reference protetti; controllo Codex ogni 48 ore attivo | Riserva 6 GiB solo pre-cattura; nessuna garanzia sul picco. [Prove](evidence/RETENTION-2026-09-30.md), [incidente](evidence/INCIDENT-2026-10-03.md) |
 | P1 | Chiudere i residui GitHub con review e controlli sul head finale | Autori dei workstream e reviewer indipendenti | Consegna principale #108 fusa il 4 ottobre; #100 e #101 aperte; #112, #113 e #114 draft. CI e CodeQL verdi sui head pubblicati #101, #113 e #114 registrati nell'[handoff](PM-HANDOFF.md) | Nessun merge dei residui attestato; aggiornamenti locali sugli alert ancora da consegnare. Code review e CI non sostituiscono i gate operativi |
 | P2 | Completare la certificazione QA della release | QA indipendente da assegnare | Fixture Chrome/Firefox/WebKit 21/21 per motore; axe qualificato; errore HTTP del cursore provato e 40 richieste di carico passate sulla copia restaurata; restano Shopify E2E/mobile/a11y/guasto-freschezza/carico produzione | [Prova e limiti](evidence/RECOVERY-LINUX-2026-09-30.md); riutilizzare prove valide, sessione negozio da sbloccare |
-| P1 | Completare recupero fuori VPS | PM, operatore continuativo da assegnare | Primo backup completo corrente su Backblaze concluso il 15 ottobre alle 13:30 UTC con controllo integrale passato; [prova](evidence/BACKUP-AUTOMATION-2026-10-15.md). Timer ancora disabilitato | Restano recupero applicativo isolato, capacità, runner aggiornato, conservazione e custodia indipendente della password. Il nuovo componente health richiede l'aggiornamento dell'inventario; non è coperto dallo snapshot precedente |
+| P1 | Completare recupero fuori VPS | PM, operatore continuativo da assegnare | Backup valido del 15 ottobre; restore isolati VPS `current`/`previous` PASS; runtime di test chiuso e live operativo; pulizia finale delle copie isolate completata; [prove](evidence/BACKUP-AUTOMATION-2026-10-15.md) | Host vuoto non provato perché immagine preesistente. Timer backup disabilitato; componente health inerte. Job del 16 ottobre fallito `checkpoint_failed` prima del trasferimento, staging conservato e diagnosi in corso. Restano margine disco, conservazione e custodia indipendente della password; health non coperto dallo snapshot precedente |
 | P2 | Valutare il lancio pubblico | Jacopo decide; PM prepara il pacchetto | Decisione su rimozione password, rischi residui e gestione operativa | Nessuna autorizzazione attuale alla rimozione password |
 | P3 | Migliorare filtri e ordinamenti | Workstream #10, da pianificare | Contratto dati/UX approvato e prove su campioni verificati | Lingua, condizione, finish e altri sort non sono dichiarati disponibili |
 | P3 | Progettare “Altre stampe di questa carta” | PM per fattibilità; autore da assegnare | Identità canonica affidabile, gruppo completo, link Shopify, preview tastiera/mobile | È autorizzata solo la documentazione |

@@ -315,10 +315,13 @@ pending-state wording; they do not broaden the gateway's read-only boundary.
 - Esito: directory `/etc/nla-backup` root 0700 e file 0600 creati; configurazione
   e unità verificate. Primo backup completo corrente terminato alle 13:30:23 UTC
   con controllo integrale `read-data` passato e staging proprio rimosso.
-- Limiti: il timer resta disabilitato fino alla chiusura delle verifiche di
-  recupero e del budget disco in caso di trasferimento lungo/fallito. Restano
-  distinti custodia indipendente della password, retention cloud e alert email.
-  [Evidenza](evidence/BACKUP-AUTOMATION-2026-10-15.md).
+- Aggiornamento 16 ottobre: un tentativo di attivazione si è fermato in admission
+  senza avviare il job; un successivo job avviato alle 11:38:34 UTC è terminato
+  alle 11:39:01 UTC con `checkpoint_failed`, prima del trasferimento. Il timer
+  resta disabilitato; la configurazione v2 `d5d65f` con sorgente `929c7b0` e servizio `804` è installata; lo staging di circa 2,14 GB resta conservato per diagnosi.
+- Limiti: margine disco per trasferimenti lunghi/falliti, custodia indipendente
+  della password, retention cloud e alert email restano aperti. L'ultimo backup
+  valido è il job delle 13:30:23 UTC del 15 ottobre. [Evidenza](evidence/BACKUP-AUTOMATION-2026-10-15.md).
 
 ## D-022 — Attivazione UptimeRobot e referente iniziale
 
@@ -329,14 +332,31 @@ pending-state wording; they do not broaden the gateway's read-only boundary.
   `https://catalog-staging.nextlevelarena.it/readyz`, avvisi email down/up.
   Contratto e piano gratuiti verificati nuovamente il 15 ottobre.
 - Esito: richiesta inviata alle 13:49:32 UTC; HTTP 200, `status=ok`.
-  Il contratto del provider ammette la stessa risposta anche per richieste
-  ignorate: ricezione, attivazione e monitor funzionante non sono ancora provati.
-  Jacopo deve aprire il link e premere Activate entro 24 ore. Nessun reinvio
-  automatico né accesso alla casella per attivare il monitor al suo posto.
+  Jacopo ha poi confermato ricezione, attivazione e accesso alla dashboard.
+  Non serve ripetere l'attivazione o richiedere il consenso all'accesso.
+  La verifica del monitor resta da completare: Computer Use ha interrotto
+  l'accesso perché non poteva accertare l'URL del browser per applicare la
+  propria policy. È un limite tecnico distinto dall'autorizzazione del titolare.
 - Limiti: questa autorizzazione riguarda l'email di attivazione e il monitor
   proposto; non autorizza simulazioni di guasto sul servizio o altri messaggi
   di prova. Refresh fallito e dati oltre 24 ore richiedono copertura ulteriore.
   [Procedura e fonte ufficiale](OPERATIONS-RUNBOOK.md).
+
+## D-023 — Continuità operativa entro l'obiettivo autorizzato
+
+- Status: istruzione esplicita di Jacopo, ribadita il 16 ottobre 2026:
+  «basta chiedere consensi. approvo tutto» e richiesta di ridurre le conferme
+  che rallentano l'operatività.
+- Decisione: proseguire autonomamente il lavoro già compreso nell'obiettivo
+  operativo NLA e nelle autorizzazioni precedenti. Non riproporre al titolare
+  le stesse decisioni, né trattare ogni comando o verifica come un nuovo consenso.
+  Raggruppare le operazioni revisionate in procedure concrete; quando disponibile,
+  usare un'autorizzazione tecnica persistente limitata alla procedura del progetto.
+- Esecuzione: restano richiesti controlli tecnici, prove riproducibili e review
+  indipendente nei punti previsti. Le restrizioni dell'ambiente non vanno aggirate
+  né rimosse modificando ACL, credenziali o impostazioni globali. Un eventuale
+  blocco deve indicare il vincolo effettivo, senza attribuirlo a un consenso utente
+  già ottenuto. Restano validi i confini su Shopify MAIN, PowerTools e dati esistenti.
 
 ## Reserved decisions
 

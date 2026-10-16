@@ -116,16 +116,19 @@ Richiede URL e indirizzo identici nel challenge e nella richiesta; difficulty
 letto dalla risposta, proof-of-work SHA256, poi invio della richiesta e conferma
 dell'email da parte del proprietario. Dopo l'autorizzazione D-022, la richiesta
 è stata inviata alle 13:49:32 UTC del 15 ottobre: HTTP 200, `status=ok`.
-Un HTTP 200 del provider non prova creazione o recapito: può indicare anche
-una richiesta ignorata. Occorrono attivazione del proprietario, configurazione
-effettiva e prova concordata senza guasti sul live. Il link scade dopo 24 ore:
-Jacopo apre l'email e preme Activate nella pagina di conferma. Non reinviare
-automaticamente una richiesta dall'esito non verificato.
+Al momento dell'invio, HTTP 200 del provider non provava creazione o recapito:
+poteva indicare anche una richiesta ignorata. In seguito Jacopo ha confermato
+ricezione dell'email, attivazione e accesso alla dashboard ([D-022](DECISIONS.md#d-022--attivazione-uptimerobot-e-referente-iniziale)).
+L'apertura del link con scadenza a 24 ore e il clic su Activate sono quindi
+passaggi storici completati. Non reinviare l'email né una richiesta di attivazione.
 Ricevuta privata in `output/nla-recovery/20260930/alert-activation-20261015T134927Z-f53333c3/receipt.json`.
-Quando Jacopo conferma l'email, configurare e verificare il monitor con metodo
-GET esplicito: [UptimeRobot usa HEAD di default e GET al retry](https://help.uptimerobot.com/en/articles/11358466-how-to-debug-a-monitor-showing-as-down-in-uptimerobot),
-mentre `/readyz` ha risposto GET 200 e HEAD 404 alla sonda read-only del 15
-ottobre. Non reinviare l'email.
+Resta da verificare il monitor con metodo GET esplicito: [UptimeRobot usa HEAD di default e GET al retry](https://help.uptimerobot.com/en/articles/11358466-how-to-debug-a-monitor-showing-as-down-in-uptimerobot),
+mentre `/readyz` ha risposto GET 200 e HEAD 404 alla sonda read-only del 15 ottobre.
+L'ispezione della dashboard è stata fermata da Computer Use per il blocco tecnico
+della policy sull'URL; l'autorizzazione del titolare non manca ([D-022](DECISIONS.md#d-022--attivazione-uptimerobot-e-referente-iniziale),
+[D-023](DECISIONS.md#d-023--continuità-operativa-entro-lobiettivo-autorizzato)).
+Proseguire entro lo scope autorizzato senza ripetere richieste di consenso; non
+reinviare l'email. Il monitor e la prova di alert non sono dichiarati verificati.
 L'indirizzo è modificabile dalle impostazioni dell'account; il
 [cambio email](https://help.uptimerobot.com/en/articles/11582766-how-to-change-your-uptimerobot-account-email-or-username)
 richiede conferma tramite il vecchio indirizzo. Non è una modifica del codice NLA.
@@ -342,20 +345,23 @@ Il codice del nuovo servizio è nella PR #113, con CI Linux e review indipendent
 passate. Anche la prova sintetica nel sandbox systemd reale è passata: lettura
 del ledger WAL riuscita, scrittura ai sorgenti respinta, unità e fixture proprie
 rimosse. [Versione, pin e limiti](evidence/BACKUP-AUTOMATION-2026-10-15.md).
-Jacopo ha autorizzato il trasferimento delle credenziali (D-021). `/etc/nla-backup`
-è root 0700, file credenziali 0600; configurazione e unità sono verificate.
-Primo backup corrente terminato alle 13:30:23 UTC con `read-data` passato e
-staging rimosso; spazio libero 10.672.623.616 byte alle 13:33 UTC.
-Il timer resta disabilitato: chiudere recupero applicativo e margine disco per
-upload lunghi/falliti prima di abilitarlo. Non usare il vecchio pilota come job
-periodico e non ripetere i trasferimenti delle credenziali già riusciti.
+Jacopo ha autorizzato il trasferimento delle credenziali (D-021). Il backup
+corrente valido resta il job del 15 ottobre alle 13:30:23 UTC (`read-data` PASS).
+Il 16 ottobre il job avviato alle 11:38:34.037255 UTC è terminato alle
+11:39:01.617282 UTC con `checkpoint_failed`, prima del trasferimento; circa 2,14 GB
+di staging sono stati conservati. La configurazione v2 `d5d65f` con sorgente
+`929c7b0` e servizio `804` è installata. Il primo tentativo di attivazione era
+stato fermato in admission senza avviare il job. Il timer è disabilitato. Il
+diagnostico v2 PASS alle 12:22:50 UTC ha verificato 743/744 file attesi (manifest
+mancante); la causa resta non stabilita. Non riavviare né pulire lo staging durante
+la diagnosi; consultare l'[evidenza aggiornata](evidence/BACKUP-AUTOMATION-2026-10-15.md).
 
 ## Decisioni e obiettivi da chiudere
 
 | Voce | Situazione | Proposta verificabile |
 | --- | --- | --- |
 | Destinazione durevole | Backblaze scelto dal proprietario il 3 ottobre; prima copia nel bucket privato, download e restore dati verificati | Scelta e primo trasferimento conclusi; restano copertura completa e conservazione delle copie. [Prova Backblaze](evidence/BACKBLAZE-2026-10-03.md) |
-| Backup automatico e retention | Servizio installato e prima copia corrente verificata; timer disabilitato, retention cloud non attiva | Chiudere recupero applicativo e margine disco in caso di errore prima dell'attivazione periodica; definire conservazione |
+| Backup automatico e retention | Backup valido del 15 ottobre; job del 16 ottobre avviato e fallito `checkpoint_failed` prima del trasferimento; staging conservato, timer disabilitato | Diagnosi in corso; non riavviare il job né rimuovere lo staging. Restano margine disco, conservazione e prova di capacità |
 | Credenziali e reference | Reference completa e configurazione restaurata accettate offline; credenziali/certificati esclusi | Collaudare il ciclo refresh/importer con accessi recuperati; definire conservazione cifrata e recupero degli accessi, senza segreti in Git/documenti |
 | RPO | Nessun RPO garantito dal backup manuale | Proposta iniziale: massimo 24 ore per copie fuori host, coerente con tolleranza del catalogo; richiede scheduler e prova dei fallimenti |
 | RTO | Restore dati PC: 49,826 s; copia riscaricata da Backblaze: 61,970 s; reference storico: 23,164 s. Questi tempi escludono trasferimenti e avvio del runtime; nessun RTO completo certificato | Budget proposto: 2 ore su host Linux già pronto, escluso provisioning/DNS; serve prova completa con immagine/credenziali, oggi non garantito. [Prova Backblaze](evidence/BACKBLAZE-2026-10-03.md) |

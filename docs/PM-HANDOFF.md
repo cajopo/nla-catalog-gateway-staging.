@@ -1,8 +1,13 @@
 # Passaggio di consegne PM NLA
 
-Aggiornato il 15 ottobre 2026. Jacopo ha affidato a Codex il ruolo PM di questa
+Aggiornato il 16 ottobre 2026. Jacopo ha affidato a Codex il ruolo PM di questa
 fase. Riferimenti: master #3, manutenzione documentale #34, architettura #17 e
 tassonomia #19, consultati prima dell'intervento.
+
+Jacopo ha ribadito di proseguire autonomamente entro l'obiettivo approvato e di
+non ripetere richieste di consenso già risolte: [decisione D-023](DECISIONS.md#d-023--continuità-operativa-entro-lobiettivo-autorizzato).
+Raggruppare i passaggi revisionati; distinguere un vincolo tecnico dell'ambiente
+da un'autorizzazione del titolare già presente.
 
 ## Punto di partenza
 
@@ -139,7 +144,7 @@ delle 09:58:17 ha misurato 2.378.674.176 byte disponibili, sotto la soglia
 2.415.919.104; impostazioni invariate e seed fermo. Nessun nuovo container
 avviato; le decisioni del proprietario restano pendenti.
 
-## Stato GitHub verificato — 15 ottobre
+## Stato GitHub verificato — 16 ottobre
 
 La lettura metadata-only registra PR #108 chiusa e fusa il 4 ottobre 2026 alle
 12:16:49 UTC, merge commit `90f4f49bf2094fa2af51dff3a998b82054d93c76`:
@@ -152,19 +157,21 @@ Prima di questa revisione documentale, PR #101 era aperta, non draft e non fusa:
 `agent/refresh-interruption-recovery` (`7ab94d345511ddd53c362206f041bf4942f1a61a`).
 Il vecchio head #101 `6913748dc1513b29c084db522865386067db241a` e i relativi
 controlli sono storici. PR #112 resta draft e non fusa secondo l'evidenza market.
-La PR #101 documentale è aperta e non fusa. Il head pubblicato verificato
-`551bfbc1a0fa473017b0c934d7e0cfd990e9daed` ha CI `38760991582` e CodeQL
-`38760991612` passati: 3.885 test per Python 3.12 e 3.13, coverage 100%;
-container smoke, dependency audit, Ruff, preflight e build passati. La prova
-privata è `output/nla-recovery/20260930/ci-pr101-551bfbc-final.json`.
-Gli aggiornamenti locali successivi su preparazione alert e roadmap non sono
-ancora pubblicati e richiederanno consegna e controlli sul relativo commit.
-PR #113 è aperta in bozza al head `929c7b0849bc66258effa89e6aac5d78d1444c84`;
+La PR #101 documentale è aperta e non fusa. Il checkpoint pubblicato precedente
+`551bfbc1a0fa473017b0c934d7e0cfd990e9daed` aveva CI `38760991582` e CodeQL
+`38760991612` passati: 3.885 test per Python 3.12 e 3.13, coverage 100%; container
+smoke, dependency audit, Ruff, preflight e build passati. Il checkpoint documentale
+successivo prima della presente consegna era `b6ab98e618b0867f875b97ccf6d6854359a826d0`,
+con CI `38819024906` e CodeQL `38819025033` completed/success alle 22:56 UTC.
+Il head finale e i controlli del delta attuale vanno verificati nei metadati della
+PR #101. Gli aggiornamenti locali su alert e roadmap sono in questa consegna.
+Il checkpoint pubblicato precedente della PR #113, aperta in bozza, è
+`929c7b0849bc66258effa89e6aac5d78d1444c84`;
 CI `38754689301` e CodeQL `38754689777` sono passati. CI: 4.211 test per
 Python 3.12 e 3.13, copertura 100% (16.476 statement, 5.752 branch); container,
 dependency audit, Ruff, preflight e build passati. Python 3.13 riporta un
 `ResourceWarning` nel test esistente dei facet; nessun test fallito o saltato.
-Validazione dell'autore: 125 test mirati, copertura statement/branch 100% e
+Validazione di quel checkpoint: 125 test mirati, copertura statement/branch 100% e
 Ruff/preflight/build passati; review indipendente: 18 verifiche. PR #114,
 health operativa #13, è aperta
 in bozza al head `59a74e60edd967dc27e65fd95ac2a390eb619961`; CI `38754640052`
@@ -182,17 +189,13 @@ principale #108.
 
 ## Regole per il prossimo intervento
 
-Jacopo ha autorizzato il trasferimento delle
-credenziali (D-021), ora installate con configurazione e unità verificate.
-Il servizio installato resta alla versione precedente, il timer è disabilitato
-e la prima copia è verificata. Il primo backup completo corrente era concluso alle
-13:30:23 UTC con `read-data` passato e staging rimosso. Prima dell'attivazione
-restano recupero applicativo, prova di capacità e verifica della pulizia dopo
-errore; usare [evidenza e pin](evidence/BACKUP-AUTOMATION-2026-10-15.md), senza
-ripetere il pilota sul checkpoint storico del 3 ottobre.
-La prova mirata della PR #113 ha coperto l'I/O pipe Linux e i limiti di
-ammissione del comando; non sostituisce una nuova cattura o la prova completa
-di timeout, unità e backup, né autorizza ad attivare il timer.
+Il backup corrente valido resta quello del 15 ottobre alle 13:30:23 UTC, con
+`read-data` PASS. Il 16 ottobre un primo tentativo di attivazione è stato fermato
+in admission senza avviare il job; un secondo job è partito alle 11:38:34.037255
+UTC e si è chiuso alle 11:39:01.617282 UTC (27,580 s) con `checkpoint_failed`,
+prima del trasferimento. Lo staging di circa 2,14 GB resta conservato per la
+diagnosi; timer disabilitato. Non ripetere il job o rimuovere lo staging finché
+la diagnosi è aperta. [Dettagli e ricevute](evidence/BACKUP-AUTOMATION-2026-10-15.md).
 
 La PR #114 resta un candidato di codice, non una modifica al monitor o un
 deployment; lo stato dei gate e la prova read-only sono riportati sopra.
@@ -285,9 +288,10 @@ stata fermata perché la memoria libera risultava sotto soglia. Nessun runtime
 PC è stato creato o avviato. Volume e seed arrestato restano preservati.
 Questo paragrafo descrive la prova storica: non attesta la disponibilità attuale
 del daemon Docker Desktop, da verificare prima di qualsiasi ripresa.
-È pendente la scelta asincrona di Jacopo fra preparare un riavvio concordato
-con Docker Desktop a 4 GB o rinviare; nessuna impostazione è stata cambiata.
-Non ripetere le prove precedenti senza una nuova decisione e un preflight valido.
+Al 30 settembre era pendente la scelta fra riavviare Docker Desktop con 4 GB
+o rinviare; nessuna impostazione è stata cambiata. È uno stato storico, non una
+nuova richiesta di consenso dopo D-023. La replica locale resta non provata;
+il recupero isolato sulla VPS procede con i propri controlli di ammissione.
 Preservare anche i fallimenti Firefox e la correzione del PNG nella sola fixture
 privata; le assertion sono invariate. Restano QA dei flussi Shopify/mobile,
 accessibilità completa, guasto/freschezza E2E e capacità in produzione. Il successivo diagnostico
@@ -297,9 +301,10 @@ con review indipendente; ricevuta axe originale invariata. Screen reader,
 altri stati/viewport e contesto Shopify rimangono da verificare. Il browser
 di Codex raggiunge la pagina password: nessuna sessione negozio sbloccata nella
 prova del 30 settembre; richiesto al proprietario l'accesso nell'app, senza
-password in chat. La review automatica dell'accesso è stata negata; la richiesta
-asincrona di autorizzazione del proprietario è ancora pendente. Non è stata
-eseguita una prova sul negozio protetto. Il tab è conservato per questo passaggio.
+password in chat. In quella prova la review automatica dell'accesso era stata
+negata. Dopo D-023 non considerare ancora pendente il consenso al lavoro NLA;
+resta da verificare l'effettiva disponibilità della sessione e l'accesso tecnico.
+Non è stata eseguita una prova sul negozio protetto.
 
 La prova mirata del 30 settembre alle 21:53 UTC aggiunge sei assertion locali
 con Chrome touch emulato a 390×844: scorrimento, tap/selezione suggerimento e
@@ -355,3 +360,21 @@ Non è ancora un sistema di backup automatico.
 
 Il [passaggio di consegne storico](PM-HANDOFF-HISTORY-20260929.md) è conservato
 senza riscritture e non costituisce una nuova istruzione operativa.
+
+## Aggiornamento restore — 16 ottobre 2026
+
+Il restore isolato è terminato in 35.62632 s e la verifica guarded read-only è PASS su tutti i file e i tre database SQLite. Snapshot `f11005053ed6d498a312c7be84181ee40f28f6947a82dc349ef91319267a70bb` (dimensione logica ripristinata 2.126.224.845 byte; `resticVerify=true`); verifica del 16 ottobre 09:30 con snapshot current `ed078…` e previous `fd665…`. Questa evidenza supera lo stato precedente “restore non avviato” limitatamente al recupero e alla verifica dello snapshot: alla verifica delle 09:30 il caricamento dell'archivio non era ancora stato eseguito; la presenza dell'immagine sul nodo è distinta; il successivo runtime di test è stato avviato, verificato e chiuso, mentre il runtime live continua operativo. Il controllo live delle 09:24:36 è distinto: pointer `6e1b…`, current `4cbb2053`, previous `49521`, refresh e market `inactive/success`, 11.665.154.048 byte liberi. Non confondere il pointer live con quello dello snapshot restaurato. Dettagli e ricevute: [evidenza backup e restore](evidence/BACKUP-AUTOMATION-2026-10-15.md).
+
+Il drill applicativo del 16 ottobre ha chiuso PASS i ruoli `current` e `previous`;
+`emptyHostRecoveryProven=false` perché l'immagine era già residente. La pulizia finale
+delle copie isolate del restore ha rimosso esattamente 643 file, 72 directory e
+3.930.589.037 byte, conservando lo snapshot. I due container di test erano già chiusi prima della pulizia; il finalizer non ha rimosso container.
+Alle 11:21:55 UTC erano liberi 13.793.955.840 byte e il controllo retention
+confermava le generazioni protette invariate. Il runtime di test è chiuso, il live
+resta operativo, il componente health è inerte e il timer backup disabilitato.
+
+Per il backup, il job valido resta quello del 15 ottobre delle 13:30:23 UTC. Dopo
+un primo tentativo fermato in admission senza start, il job del 16 ottobre partito
+alle 11:38:34.037255 UTC è terminato alle 11:39:01.617282 UTC (27,580 s) con
+`checkpoint_failed`, prima del trasferimento. Lo staging di circa 2,14 GB resta
+conservato per diagnosi; timer disabilitato. [Dettagli e ricevute](evidence/BACKUP-AUTOMATION-2026-10-15.md).
