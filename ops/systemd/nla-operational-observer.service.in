@@ -14,8 +14,9 @@ ExecStart=@PYTHON@ -m scripts.observe_catalog_health \
     --refresh-root @REFRESH_ROOT@ \
     --market-root @MARKET_ROOT@ \
     --store @CATALOG_STORE@ \
+    --backup-root @BACKUP_ROOT@ \
     --output /run/nla-operational-health/status.json \
-    --min-free-bytes 6442450944 --max-source-age-seconds 86400
+    --min-free-bytes 6442450944 --max-source-age-seconds 86400 --max-backup-age-seconds 93600
 RuntimeDirectory=nla-operational-health
 RuntimeDirectoryMode=0755
 RuntimeDirectoryPreserve=yes

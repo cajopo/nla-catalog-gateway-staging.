@@ -10,8 +10,9 @@ import re
 import shutil
 import stat
 import subprocess
+import time
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 MAX_DOCUMENT_BYTES = 128 * 1024
@@ -19,6 +20,7 @@ MAX_DOCUMENT_BYTES = 128 * 1024
 # budget for batch/deferred metadata without allowing an unbounded JSON parse.
 MAX_MARKET_RECEIPT_BYTES = 8 * 1024**2
 MAX_SOURCE_AGE_SECONDS = 86400
+MAX_BACKUP_AGE_SECONDS = 26 * 60 * 60
 MIN_FREE_BYTES = 6 * 1024**3
 REASONS = frozenset(
     {
@@ -28,12 +30,29 @@ REASONS = frozenset(
         "low_disk",
         "runtime_unavailable",
         "source_stale_or_unverified",
+        "backup_attention",
+        "scheduler_attention",
         "observation_unknown",
     }
 )
 OBSERVATION_TTL_SECONDS = 90
-UNITS = ("nla-catalog-refresh.service", "nla-market-catalog.service")
-PROPERTIES = ("LoadState", "ActiveState", "SubState", "Result", "ExecMainStatus", "Job")
+UNITS = (
+    "nla-catalog-refresh.service",
+    "nla-market-catalog.service",
+    "nla-backup-offsite.service",
+)
+TIMERS = tuple(name.replace(".service", ".timer") for name in UNITS)
+PROPERTIES = (
+    "LoadState",
+    "ActiveState",
+    "SubState",
+    "Result",
+    "ExecMainStatus",
+    "Job",
+    "ExecMainStartTimestamp",
+)
+TIMER_PROPERTIES = ("LoadState", "ActiveState", "SubState", "Result", "UnitFileState")
+BACKUP_JOB_PATTERN = r"backup-[0-9a-f]{32}"
 
 
 def read_document(path: Path, *, max_bytes: int = MAX_DOCUMENT_BYTES) -> tuple[dict, bytes]:
@@ -91,15 +110,17 @@ def source_healthy(
     return 0 <= age < max_age
 
 
-def systemd_unit(name: str) -> dict:
+def systemd_units(names: tuple[str, ...], properties: tuple[str, ...]) -> dict[str, dict]:
+    """Two fixed batches cover services/timers inside the collector deadline."""
     result = subprocess.run(  # noqa: S603 -- fixed executable/properties/unit allowlist
         [
             "/usr/bin/systemctl",
             "show",
-            name,
+            *names,
             "--no-pager",
             "--all",
-            "--property=" + ",".join(PROPERTIES),
+            "--timestamp=unix",
+            "--property=Id," + ",".join(properties),
         ],
         check=True,
         capture_output=True,
@@ -108,9 +129,118 @@ def systemd_unit(name: str) -> dict:
         env={"PATH": os.defpath, "LC_ALL": "C"},
     )
     # Only selected scalar properties; reject changed/oversized output contracts.
-    if len(result.stdout) > 4096:
+    if len(result.stdout) > 4096 * len(names):
         raise ValueError("invalid service observation")
-    return dict(line.split("=", 1) for line in result.stdout.splitlines())
+    units = {}
+    for block in result.stdout.strip().split("\n\n"):
+        lines = [line.split("=", 1) for line in block.splitlines()]
+        unit = dict(lines)
+        name = unit.pop("Id")
+        if name not in names or name in units or len(lines) != len(unit) + 1:
+            raise ValueError("invalid service observation")
+        if set(unit) != set(properties):
+            raise ValueError("invalid service observation")
+        units[name] = unit
+    if set(units) != set(names):
+        raise ValueError("invalid service observation")
+    return units
+
+
+def timers_healthy(timers: dict[str, dict], market: dict) -> bool:
+    for name, timer in timers.items():
+        # The market service deliberately stops this timer during its child refresh.
+        paused = name == TIMERS[0] and market["ActiveState"] in ("active", "activating")
+        if (
+            timer["LoadState"] != "loaded"
+            or timer["UnitFileState"] != "enabled"
+            or timer["Result"] != "success"
+            or (
+                (timer["ActiveState"], timer["SubState"])
+                not in (("active", "waiting"), ("active", "running"))
+                and not (
+                    paused and (timer["ActiveState"], timer["SubState"]) == ("inactive", "dead")
+                )
+            )
+        ):
+            return False
+    return True
+
+
+def backup_timestamp(value: str) -> datetime:
+    parsed = datetime.fromisoformat(value)
+    if parsed.utcoffset() is None:
+        raise ValueError("invalid backup timestamp")
+    return parsed.astimezone(UTC)
+
+
+def backup_healthy(
+    root: Path,
+    unit: dict,
+    now: datetime,
+    max_age: int,
+    *,
+    observation_started: float | None = None,
+) -> bool:
+    """Observe existing local evidence only; never run backup/check or scan receipts."""
+    if observation_started is None:
+        observation_started = time.monotonic()
+    receipt, _ = read_document(root / "last-success.json")
+    job_id = receipt.get("jobId")
+    if (
+        type(receipt.get("schemaVersion")) is not int
+        or receipt["schemaVersion"] != 1
+        or not isinstance(job_id, str)
+        or re.fullmatch(BACKUP_JOB_PATTERN, job_id) is None
+        or receipt.get("status") != "complete"
+        or receipt.get("integrityMode") != "read-data"
+        or receipt.get("integrityStatus") != "passed"
+        or not isinstance(receipt.get("snapshotId"), str)
+        or re.fullmatch(r"[0-9a-f]{64}", str(receipt.get("snapshotId"))) is None
+        or not isinstance(receipt.get("checkpointManifestSha256"), str)
+        or re.fullmatch(r"[0-9a-f]{64}", str(receipt.get("checkpointManifestSha256"))) is None
+    ):
+        return False
+    immutable, _ = read_document(root / "receipts" / (job_id + ".json"))
+    if receipt != immutable:
+        return False
+    started, captured, snapshot, finished = (
+        backup_timestamp(receipt[key])
+        for key in ("startedAt", "checkpointCreatedAt", "snapshotTime", "finishedAt")
+    )
+    # Metadata/receipt reads can span a legitimate completion. Advance only by
+    # elapsed monotonic time; keep the published observation timestamp unchanged.
+    observed = now + timedelta(seconds=time.monotonic() - observation_started)
+    if not started <= captured <= snapshot <= finished <= observed or not (
+        0 <= (observed - captured).total_seconds() < max_age
+    ):
+        return False
+    expected_path = str(root / "jobs" / job_id / "checkpoint")
+    if receipt.get("snapshotPaths") != [expected_path]:
+        return False
+    jobs = root / "jobs"
+    if not stat.S_ISDIR(jobs.lstat().st_mode):
+        return False
+    # At most one active job can exist; stop after two entries even after incidents.
+    with os.scandir(jobs) as entries:
+        entry = next(entries, None)
+        if entry is None:
+            return True
+        if next(entries, None) is not None:
+            return False
+        facts = entry.stat(follow_symlinks=False)
+        if (
+            not stat.S_ISDIR(facts.st_mode)
+            or re.fullmatch(BACKUP_JOB_PATTERN, entry.name) is None
+            or unit["ActiveState"] not in ("active", "activating")
+            or (root / "receipts" / (entry.name + ".json")).exists()
+        ):
+            return False
+        # Reject staging older than this invocation; mtime is only temporal evidence.
+        start = unit["ExecMainStartTimestamp"]
+        if re.fullmatch(r"@[0-9]+", start) is None:
+            return False
+        observed = now + timedelta(seconds=time.monotonic() - observation_started)
+        return int(start[1:]) <= facts.st_mtime <= observed.timestamp()
 
 
 def runtime_ready(port: int) -> bool:
@@ -143,6 +273,7 @@ class ObserverPaths:
     refresh: Path
     market: Path
     store: Path
+    backup: Path
 
 
 def collect(
@@ -151,9 +282,14 @@ def collect(
     now: datetime,
     min_free_bytes: int = MIN_FREE_BYTES,
     max_source_age_seconds: int = MAX_SOURCE_AGE_SECONDS,
+    max_backup_age_seconds: int = MAX_BACKUP_AGE_SECONDS,
 ) -> str:
     """No credentials, exports, pipeline locks or writes. Errors fail closed at caller."""
-    refresh_unit, market_unit = (systemd_unit(name) for name in UNITS)
+    observation_started = time.monotonic()
+    if min(min_free_bytes, max_source_age_seconds, max_backup_age_seconds) <= 0:
+        raise ValueError("invalid observation threshold")
+    units = systemd_units(UNITS, PROPERTIES)
+    refresh_unit, market_unit, backup_unit = (units[name] for name in UNITS)
     refresh_pending, refresh_stopped = pending_state(paths.refresh, "pending-run.json", False)
     market_pending, market_stopped = pending_state(paths.market, "pending-market-run.json", True)
     if not job_healthy(market_unit, market_pending, market_stopped):
@@ -168,6 +304,18 @@ def collect(
     )
     if not job_healthy(refresh_unit, None if market_child else refresh_pending, refresh_stopped):
         return "job_attention"
+    if not job_healthy(backup_unit, None, None):
+        return "backup_attention"
+    if not timers_healthy(systemd_units(TIMERS, TIMER_PROPERTIES), market_unit):
+        return "scheduler_attention"
+    if not backup_healthy(
+        paths.backup,
+        backup_unit,
+        now,
+        max_backup_age_seconds,
+        observation_started=observation_started,
+    ):
+        return "backup_attention"
     market_success, _ = read_document(
         paths.market / "last-market-success.json", max_bytes=MAX_MARKET_RECEIPT_BYTES
     )

@@ -5,6 +5,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from nla_catalog_gateway.operational_health import (
+    MAX_BACKUP_AGE_SECONDS,
     MAX_SOURCE_AGE_SECONDS,
     MIN_FREE_BYTES,
     REASONS,
@@ -16,21 +17,23 @@ from nla_catalog_gateway.operational_health import (
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    for name in ("refresh-root", "market-root", "store", "output"):
+    for name in ("refresh-root", "market-root", "store", "backup-root", "output"):
         parser.add_argument("--" + name, required=True, type=Path)
     parser.add_argument("--min-free-bytes", type=int, default=MIN_FREE_BYTES)
     parser.add_argument("--max-source-age-seconds", type=int, default=MAX_SOURCE_AGE_SECONDS)
+    parser.add_argument("--max-backup-age-seconds", type=int, default=MAX_BACKUP_AGE_SECONDS)
     args = parser.parse_args(argv)
     now = datetime.now(UTC)
     reason = "observation_unknown"
     try:
-        if args.min_free_bytes <= 0 or args.max_source_age_seconds <= 0:
+        if min(args.min_free_bytes, args.max_source_age_seconds, args.max_backup_age_seconds) <= 0:
             raise ValueError("invalid disk threshold")
         reason = collect(
-            ObserverPaths(args.refresh_root, args.market_root, args.store),
+            ObserverPaths(args.refresh_root, args.market_root, args.store, args.backup_root),
             now=now,
             min_free_bytes=args.min_free_bytes,
             max_source_age_seconds=args.max_source_age_seconds,
+            max_backup_age_seconds=args.max_backup_age_seconds,
         )
     except Exception:
         reason = "observation_unknown"

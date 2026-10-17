@@ -4,6 +4,7 @@ import asyncio
 import hashlib
 import http.client
 import json
+import os
 import runpy
 import stat
 import subprocess
@@ -20,6 +21,7 @@ from nla_catalog_gateway import operational_health as health
 NOW = datetime(2026, 10, 15, 12, tzinfo=UTC)
 RUN = "20261015t110000z-1234abcd"
 MARKET_RUN = "market-20261015t110000z-1234abcd"
+BACKUP_JOB = "backup-" + "1" * 32
 
 
 def dump(path, value):
@@ -35,13 +37,71 @@ def unit(**overrides):
         "Result": "success",
         "ExecMainStatus": "0",
         "Job": "",
+        "ExecMainStartTimestamp": "@" + str(int(NOW.timestamp()) - 3600),
         **overrides,
     }
 
 
+def timer(**overrides):
+    return {
+        "LoadState": "loaded",
+        "ActiveState": "active",
+        "SubState": "waiting",
+        "Result": "success",
+        "UnitFileState": "enabled",
+        **overrides,
+    }
+
+
+def systemd_output(names, value):
+    return "\n\n".join(
+        "Id=" + name + "\n" + "\n".join(key + "=" + item for key, item in value(name).items())
+        for name in names
+    )
+
+
+def mock_units(monkeypatch, service=lambda name: unit(), timers=lambda name: timer()):
+    monkeypatch.setattr(
+        health,
+        "systemd_units",
+        lambda names, properties: {
+            name: (timers(name) if name.endswith(".timer") else service(name)) for name in names
+        },
+    )
+
+
+def backup_receipt(paths, **overrides):
+    return {
+        "schemaVersion": 1,
+        "jobId": BACKUP_JOB,
+        "status": "complete",
+        "startedAt": "2026-10-15T10:00:00.012345+00:00",
+        "checkpointCreatedAt": "2026-10-15T10:00:01.012345+00:00",
+        "snapshotTime": "2026-10-15T10:10:00.123456789Z",
+        "finishedAt": "2026-10-15T11:00:00.012345+00:00",
+        "snapshotId": "b" * 64,
+        "checkpointManifestSha256": "c" * 64,
+        "snapshotPaths": [str(paths.backup / "jobs" / BACKUP_JOB / "checkpoint")],
+        "integrityMode": "read-data",
+        "integrityStatus": "passed",
+        **overrides,
+    }
+
+
+def write_backup(paths, **overrides):
+    receipt = backup_receipt(paths, **overrides)
+    dump(paths.backup / "last-success.json", receipt)
+    dump(paths.backup / "receipts" / (BACKUP_JOB + ".json"), receipt)
+    return receipt
+
+
 @pytest.fixture
 def state(tmp_path, monkeypatch):
-    paths = health.ObserverPaths(tmp_path / "refresh", tmp_path / "market", tmp_path / "store")
+    paths = health.ObserverPaths(
+        tmp_path / "refresh", tmp_path / "market", tmp_path / "store", tmp_path / "backup"
+    )
+    (paths.backup / "jobs").mkdir(parents=True)
+    write_backup(paths)
     pointer = {"currentManifestSha256": "a" * 64}
     dump(paths.store / "activation.v1.json", pointer)
     receipt = {
@@ -55,7 +115,7 @@ def state(tmp_path, monkeypatch):
     }
     dump(paths.refresh / "last-success.json", receipt)
     dump(paths.market / "last-market-success.json", {"status": "draft_cycle_complete"})
-    monkeypatch.setattr(health, "systemd_unit", lambda name: unit())
+    mock_units(monkeypatch)
     monkeypatch.setattr(
         health.shutil, "disk_usage", lambda path: SimpleNamespace(free=health.MIN_FREE_BYTES)
     )
@@ -133,10 +193,9 @@ def test_collector_healthy_with_old_process_absent(state):
 @pytest.mark.parametrize("target", health.UNITS)
 def test_unit_failure_never_masked_by_old_success(state, monkeypatch, target):
     paths, _, _ = state
-    monkeypatch.setattr(
-        health, "systemd_unit", lambda name: unit(Result="exit-code") if name == target else unit()
-    )
-    assert health.collect(paths, now=NOW) == "job_attention"
+    mock_units(monkeypatch, lambda name: unit(Result="exit-code") if name == target else unit())
+    expected = "backup_attention" if target == health.UNITS[2] else "job_attention"
+    assert health.collect(paths, now=NOW) == expected
 
 
 @pytest.mark.parametrize("market", [True, False])
@@ -147,7 +206,7 @@ def test_pending_inactive_and_stopped_are_attention(state, monkeypatch, market):
     name = MARKET_RUN if market else RUN
     dump(root / filename, {"run": name})
     assert health.collect(paths, now=NOW) == "job_attention"
-    monkeypatch.setattr(health, "systemd_unit", lambda name: unit(ActiveState="activating"))
+    mock_units(monkeypatch, lambda name: unit(ActiveState="activating"))
     assert health.collect(paths, now=NOW) == "healthy"
     dump(root / name / "stopped.json", {"private": "never-log-this"})
     assert health.collect(paths, now=NOW) == "job_attention"
@@ -176,7 +235,7 @@ def test_low_disk_and_runtime_unavailable(state, monkeypatch):
 @pytest.mark.parametrize("candidate", [None, "other-run", RUN])
 def test_activation_receipt_race(state, monkeypatch, candidate):
     paths, _, receipt = state
-    monkeypatch.setattr(health, "systemd_unit", lambda name: unit(ActiveState="active"))
+    mock_units(monkeypatch, lambda name: unit(ActiveState="active"))
     dump(paths.refresh / "pending-run.json", {"run": RUN})
     dump(paths.refresh / "last-success.json", {**receipt, "manifestSha256": "b" * 64})
     if candidate is not None:
@@ -239,19 +298,23 @@ def test_systemctl_fixed_readonly_contract(monkeypatch):
 
     def run(argv, **kwargs):
         calls.append((argv, kwargs))
-        return SimpleNamespace(stdout="\n".join(key + "=" + value for key, value in unit().items()))
+        return SimpleNamespace(stdout=systemd_output(health.UNITS, lambda name: unit()))
 
     monkeypatch.setattr(health.subprocess, "run", run)
-    assert health.systemd_unit(health.UNITS[0]) == unit()
+    assert health.systemd_units(health.UNITS, health.PROPERTIES) == {
+        name: unit() for name in health.UNITS
+    }
     argv, kwargs = calls[0]
-    assert argv[:3] == ["/usr/bin/systemctl", "show", "nla-catalog-refresh.service"]
+    assert argv[:5] == ["/usr/bin/systemctl", "show", *health.UNITS]
+    assert "--timestamp=unix" in argv
+    assert "--property=Id," + ",".join(health.PROPERTIES) in argv
     assert kwargs["timeout"] == 3 and kwargs["check"] and kwargs["capture_output"]
     assert set(kwargs["env"]) == {"PATH", "LC_ALL"}
     monkeypatch.setattr(
         health.subprocess, "run", lambda *a, **k: SimpleNamespace(stdout="x" * 4097)
     )
     with pytest.raises(ValueError, match="invalid service observation"):
-        health.systemd_unit(health.UNITS[0])
+        health.systemd_units((health.UNITS[0],), health.PROPERTIES)
 
 
 @pytest.mark.parametrize(
@@ -367,6 +430,8 @@ def observer_args(tmp_path):
         str(tmp_path / "market"),
         "--store",
         str(tmp_path / "store"),
+        "--backup-root",
+        str(tmp_path / "backup"),
         "--output",
         str(tmp_path / "health.json"),
     ]
@@ -382,7 +447,13 @@ def test_collector_cli_only_logs_enum(tmp_path, monkeypatch, capsys, reason):
 
 
 @pytest.mark.parametrize(
-    "extra", [[], ["--min-free-bytes", "0"], ["--max-source-age-seconds", "0"]]
+    "extra",
+    [
+        [],
+        ["--min-free-bytes", "0"],
+        ["--max-source-age-seconds", "0"],
+        ["--max-backup-age-seconds", "0"],
+    ],
 )
 def test_collector_failure_failclosed_valuefree(tmp_path, monkeypatch, capsys, extra):
     def fail(*args, **kwargs):
@@ -441,12 +512,9 @@ def test_script_entrypoints(tmp_path, monkeypatch):
 @pytest.mark.parametrize("job", ["", "0", "123"])
 def test_systemd_255_show_job_scalar_contract(monkeypatch, job):
     # v255 systemctl-show.c prints the (0, /) no-job D-Bus tuple as empty.
-    captured = (
-        "LoadState=loaded\nActiveState=inactive\nSubState=dead\n"
-        "Result=success\nExecMainStatus=0\nJob=" + job + "\n"
-    )
+    captured = systemd_output((health.UNITS[0],), lambda name: unit(Job=job))
     monkeypatch.setattr(health.subprocess, "run", lambda *a, **k: SimpleNamespace(stdout=captured))
-    observed = health.systemd_unit(health.UNITS[0])
+    observed = health.systemd_units((health.UNITS[0],), health.PROPERTIES)[health.UNITS[0]]
     assert health.job_healthy(observed, None, None)
     assert health.job_running(observed) is (job == "123")
     assert health.job_healthy(observed, {"run": RUN}, None) is (job == "123")
@@ -467,16 +535,14 @@ def test_market_parent_owns_nested_refresh_pending(
     paths, _, _ = state
     dump(paths.refresh / "pending-run.json", {"run": RUN, "startedAt": refresh_time})
     dump(paths.market / "pending-market-run.json", {"run": MARKET_RUN, "startedAt": market_time})
-    monkeypatch.setattr(
-        health,
-        "systemd_unit",
+    mock_units(
+        monkeypatch,
         lambda name: unit(ActiveState=market_state) if name == health.UNITS[1] else unit(),
     )
     assert health.collect(paths, now=NOW) == expected
     if expected == "healthy":
-        monkeypatch.setattr(
-            health,
-            "systemd_unit",
+        mock_units(
+            monkeypatch,
             lambda name: (
                 unit(ActiveState=market_state)
                 if name == health.UNITS[1]
@@ -520,3 +586,279 @@ def test_head_matches_get_status_without_body(tmp_path, age, expected):
     assert get[0]["headers"] == head[0]["headers"]
     assert head[1]["body"] == b""
     assert request(app, method="HEAD", path="/unknown")[1]["body"] == b""
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"schemaVersion": True},
+        {"schemaVersion": 2},
+        {"jobId": None},
+        {"jobId": "../credentials"},
+        {"status": "failed"},
+        {"status": "skipped_busy"},
+        {"integrityMode": "metadata"},
+        {"integrityStatus": "failed"},
+        {"snapshotId": "shortid"},
+        {"snapshotId": int("1" * 64)},
+        {"checkpointManifestSha256": int("1" * 64)},
+        {"checkpointManifestSha256": "not-a-sha"},
+        {"snapshotPaths": ["/another/job/checkpoint"]},
+        {"startedAt": "2026-10-15T10:00:02+00:00"},
+        {"snapshotTime": "2026-10-15T09:59:00+00:00"},
+        {"finishedAt": "2026-10-15T10:00:00+00:00"},
+        {"finishedAt": "2026-10-15T12:00:01+00:00"},
+    ],
+)
+def test_backup_evidence_rejected(state, change):
+    paths, _, _ = state
+    write_backup(paths, **change)
+    assert health.collect(paths, now=NOW) == "backup_attention"
+
+
+@pytest.mark.parametrize("age,expected", [(0, True), (93599, True), (93600, False), (-1, False)])
+def test_backup_freshness_uses_checkpoint_not_finish(state, age, expected):
+    paths, _, _ = state
+    captured = NOW - timedelta(seconds=age)
+    stamp = captured.isoformat()
+    write_backup(
+        paths,
+        startedAt=stamp,
+        checkpointCreatedAt=stamp,
+        snapshotTime=stamp,
+        finishedAt=max(captured, NOW).isoformat(),
+    )
+    assert (
+        health.backup_healthy(paths.backup, unit(), NOW, health.MAX_BACKUP_AGE_SECONDS) is expected
+    )
+    if age > 0:
+        assert not health.backup_healthy(paths.backup, unit(), NOW, 1)
+
+
+@pytest.mark.parametrize(
+    "field", ["startedAt", "checkpointCreatedAt", "snapshotTime", "finishedAt"]
+)
+@pytest.mark.parametrize("value", ["malformed", "2026-10-15T10:00:01", None])
+def test_invalid_backup_timestamp_fails_closed(state, field, value):
+    paths, _, _ = state
+    write_backup(paths, **{field: value})
+    with pytest.raises((ValueError, TypeError)):
+        health.collect(paths, now=NOW)
+
+
+@pytest.mark.parametrize("target", ["last-success.json", "receipts/" + BACKUP_JOB + ".json"])
+def test_missing_or_malformed_backup_receipt(state, target):
+    paths, _, _ = state
+    path = paths.backup / target
+    path.unlink()
+    with pytest.raises(FileNotFoundError):
+        health.collect(paths, now=NOW)
+    path.write_text("not-json")
+    with pytest.raises(ValueError):
+        health.collect(paths, now=NOW)
+
+
+def test_backup_immutable_receipt_must_match(state):
+    paths, _, _ = state
+    dump(
+        paths.backup / "receipts" / (BACKUP_JOB + ".json"),
+        backup_receipt(paths, snapshotId="d" * 64),
+    )
+    assert health.collect(paths, now=NOW) == "backup_attention"
+
+
+@pytest.mark.parametrize(
+    "active,job", [("inactive", ""), ("active", ""), ("activating", ""), ("inactive", "123")]
+)
+def test_backup_running_or_queued_does_not_extend_checkpoint_age(state, monkeypatch, active, job):
+    paths, _, _ = state
+    mock_units(monkeypatch, lambda name: unit(ActiveState=active, Job=job))
+    assert health.collect(paths, now=NOW) == "healthy"
+    assert health.collect(paths, now=NOW + timedelta(hours=27)) == "backup_attention"
+
+
+@pytest.mark.parametrize(
+    "active,job,expected",
+    [
+        ("active", "", "healthy"),
+        ("activating", "", "healthy"),
+        ("inactive", "", "backup_attention"),
+        ("inactive", "123", "backup_attention"),
+    ],
+)
+def test_backup_live_staging_and_inactive_leftovers(state, monkeypatch, active, job, expected):
+    paths, _, _ = state
+    directory = paths.backup / "jobs" / ("backup-" + "2" * 32)
+    directory.mkdir()
+    os.utime(directory, (NOW.timestamp() - 60, NOW.timestamp() - 60))
+    mock_units(monkeypatch, lambda name: unit(ActiveState=active, Job=job))
+    assert health.collect(paths, now=NOW) == expected
+    # A terminal failed receipt always wins, even while the service appears live.
+    dump(paths.backup / "receipts" / (directory.name + ".json"), {"status": "failed"})
+    assert health.collect(paths, now=NOW) == "backup_attention"
+
+
+@pytest.mark.parametrize(
+    "case", ["two", "unsafe", "file", "old", "future", "timestamp", "jobs-file"]
+)
+def test_retained_or_unsafe_staging_fails_closed(state, monkeypatch, case):
+    paths, _, _ = state
+    jobs = paths.backup / "jobs"
+    if case == "jobs-file":
+        jobs.rmdir()
+        jobs.write_text("private")
+    else:
+        directory = jobs / ("unexpected" if case == "unsafe" else "backup-" + "2" * 32)
+        if case == "file":
+            directory.write_text("private")
+        else:
+            directory.mkdir()
+            offset = -7200 if case == "old" else (1 if case == "future" else -60)
+            os.utime(directory, (NOW.timestamp() + offset, NOW.timestamp() + offset))
+        if case == "two":
+            (jobs / ("backup-" + "3" * 32)).mkdir()
+    mock_units(
+        monkeypatch,
+        lambda name: unit(
+            ActiveState="active",
+            **({"ExecMainStartTimestamp": "n/a"} if case == "timestamp" else {}),
+        ),
+    )
+    assert health.collect(paths, now=NOW) == "backup_attention"
+
+
+@pytest.mark.parametrize("target", health.TIMERS)
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"UnitFileState": "disabled"},
+        {"UnitFileState": "enabled-runtime"},
+        {"LoadState": "not-found"},
+        {"ActiveState": "inactive", "SubState": "dead"},
+        {"Result": "resources"},
+        {"SubState": "failed"},
+    ],
+)
+def test_disabled_or_failed_scheduler(state, monkeypatch, target, change):
+    paths, _, _ = state
+    mock_units(monkeypatch, timers=lambda name: timer(**change) if name == target else timer())
+    assert health.collect(paths, now=NOW) == "scheduler_attention"
+
+
+@pytest.mark.parametrize(
+    "market_active,expected",
+    [("inactive", "scheduler_attention"), ("active", "healthy"), ("activating", "healthy")],
+)
+def test_market_can_temporarily_pause_enabled_refresh_timer(
+    state, monkeypatch, market_active, expected
+):
+    paths, _, _ = state
+    mock_units(
+        monkeypatch,
+        lambda name: unit(ActiveState=market_active) if name == health.UNITS[1] else unit(),
+        lambda name: (
+            timer(ActiveState="inactive", SubState="dead")
+            if name == health.TIMERS[0]
+            else timer(SubState="running")
+        ),
+    )
+    assert health.collect(paths, now=NOW) == expected
+
+
+@pytest.mark.parametrize(
+    "case", ["duplicate-id", "unexpected-id", "duplicate-key", "missing-property", "missing-unit"]
+)
+def test_batched_systemctl_rejects_ambiguous_metadata(monkeypatch, case):
+    names = health.UNITS
+    output = systemd_output(names, lambda name: unit())
+    if case == "duplicate-id":
+        output += "\n\n" + systemd_output((names[0],), lambda name: unit())
+    elif case == "unexpected-id":
+        output = output.replace(names[0], "unexpected.service")
+    elif case == "duplicate-key":
+        output += "\nJob="
+    elif case == "missing-property":
+        output = output.replace("Job=\n", "", 1)
+    else:
+        output = systemd_output(names[:2], lambda name: unit())
+    monkeypatch.setattr(health.subprocess, "run", lambda *a, **k: SimpleNamespace(stdout=output))
+    with pytest.raises(ValueError, match="invalid service observation"):
+        health.systemd_units(names, health.PROPERTIES)
+
+
+@pytest.mark.parametrize(
+    "threshold", ["min_free_bytes", "max_source_age_seconds", "max_backup_age_seconds"]
+)
+def test_direct_collector_thresholds_fail_closed(state, threshold):
+    paths, _, _ = state
+    with pytest.raises(ValueError, match="invalid observation threshold"):
+        health.collect(paths, now=NOW, **{threshold: 0})
+
+
+def test_cli_requires_backup_root_and_threads_thresholds(tmp_path, monkeypatch):
+    captured = []
+    monkeypatch.setattr(
+        observe, "collect", lambda paths, **kwargs: captured.append((paths, kwargs)) or "healthy"
+    )
+    assert observe.main([*observer_args(tmp_path), "--max-backup-age-seconds", "1234"]) == 0
+    assert captured[0][0].backup == tmp_path / "backup"
+    assert captured[0][1]["max_backup_age_seconds"] == 1234
+    args = observer_args(tmp_path)
+    index = args.index("--backup-root")
+    del args[index : index + 2]
+    with pytest.raises(SystemExit) as result:
+        observe.main(args)
+    assert result.value.code == 2
+
+
+@pytest.mark.parametrize(
+    "case,expected",
+    [
+        ("staging", "healthy"),
+        ("completion", "healthy"),
+        ("receipt-read-completion", "healthy"),
+        ("future-staging", "backup_attention"),
+        ("future-completion", "backup_attention"),
+        ("future-receipt-read-completion", "backup_attention"),
+        ("stale", "backup_attention"),
+    ],
+)
+def test_backup_comparison_clock_advances_during_reads(state, monkeypatch, case, expected):
+    paths, _, _ = state
+    elapsed = [100.0]
+    monkeypatch.setattr(health, "time", SimpleNamespace(monotonic=lambda: elapsed[0]))
+    mock_units(monkeypatch)
+    original_metadata = health.systemd_units
+    original_read = health.read_document
+
+    def publish_completion(seconds):
+        write_backup(paths, finishedAt=(NOW + timedelta(seconds=seconds)).isoformat())
+
+    def metadata(names, properties):
+        elapsed[0] += 2
+        if names == health.TIMERS:
+            if "staging" in case:
+                directory = paths.backup / "jobs" / ("backup-" + "2" * 32)
+                directory.mkdir()
+                delta = 5 if case.startswith("future") else 3
+                stamp = NOW.timestamp() + delta
+                os.utime(directory, (stamp, stamp))
+            elif case in ("completion", "future-completion"):
+                publish_completion(5 if case.startswith("future") else 3)
+            elif case == "stale":
+                stamp = (NOW - timedelta(seconds=93599)).isoformat()
+                write_backup(paths, startedAt=stamp, checkpointCreatedAt=stamp, snapshotTime=stamp)
+        values = original_metadata(names, properties)
+        if names == health.UNITS and "staging" in case:
+            values[health.UNITS[2]]["ActiveState"] = "activating"
+        return values
+
+    def read(path, **kwargs):
+        if path == paths.backup / "last-success.json" and "receipt-read" in case:
+            elapsed[0] += 1
+            publish_completion(6 if case.startswith("future") else 4.5)
+        return original_read(path, **kwargs)
+
+    monkeypatch.setattr(health, "systemd_units", metadata)
+    monkeypatch.setattr(health, "read_document", read)
+    assert health.collect(paths, now=NOW) == expected

@@ -23,6 +23,37 @@ are disabled. It cannot select an input path from a request.
   least 6 GiB free on `/`. Both thresholds are explicit configurable collector
   arguments. Source age uses the verified receipt's `sourceStartedAt`, never
   activation time, job start or observation time.
+- Backup coverage is mandatory: the collector requires an explicit backup root
+  and checks `nla-backup-offsite.service`, its timer, `last-success.json` and the
+  exact `receipts/<jobId>.json` selected by a strictly validated
+  `backup-<32 lowercase hex>` identifier. Both bounded regular-file documents must
+  agree. Schema 1, complete status, full snapshot/manifest SHA-256 identifiers,
+  the expected checkpoint path, `integrityMode=read-data` and
+  `integrityStatus=passed` are required. Native timezone-aware ISO/RFC3339
+  timestamps must satisfy start <= checkpoint capture <= snapshot <= finish <=
+  observation. Missing or malformed evidence fails closed.
+- Backup freshness is measured from `checkpointCreatedAt`, never observation,
+  finish or upload time. The configurable default is strictly less than 26 hours
+  (daily 01:00 UTC schedule plus two hours for detection grace); this is an alert
+  threshold, not an RPO guarantee. Running or queued jobs never extend this age.
+  The latest successful receipt cannot hide a failed backup service.
+  Evidence comparisons advance the supplied observation time by elapsed
+  monotonic time after metadata/receipt/staging reads, so a normal start or
+  completion during collection does not appear future-dated. The published
+  `checkedAt` stays at collection start; this never extends its 90-second TTL.
+- All three existing scheduler timers must be loaded, permanently enabled,
+  successful and active (waiting/running). The sole pause exception is the
+  enabled refresh timer being inactive/dead during an active/activating market
+  service: the existing market template stops it in `ExecStartPre` and restarts
+  it in `ExecStopPost`. An inactive or disabled timer otherwise needs attention.
+- The backup `jobs` directory is inspected only until empty, one entry or two
+  entries are established; receipt directories are never scanned. Idle/queued
+  staging leftovers, unsafe entry names/types, multiple staging entries or a
+  staged job with an existing terminal receipt need attention. A lone active job
+  is allowed only with a directory modification time between the current
+  service start and observation. This rejects older retained staging; filesystem
+  timestamps are a limited temporal check, not proof of invocation identity.
+  No staging is removed and no backup command or configuration file is opened.
 - A healthy refresh receipt must match the active manifest and SHA-256 of the
   exact active pointer bytes. Three bounded coherent reads also consider a
   matching pending run's `completed.json` while `last-success.json` catches up.
@@ -44,8 +75,11 @@ are disabled. It cannot select an input path from a request.
   deferred metadata. Receipts exceeding the cap fail closed for operator
   inspection. Stopped receipt existence signals attention without parsing its
   potentially large payload. Linux nonblocking and no-follow open flags reject
-  FIFO/symlink reads. systemctl uses fixed properties,
-  a three second subprocess timeout and no shell; readiness uses one second per
+  FIFO/symlink reads. systemctl uses two fixed metadata batches (three services,
+  then three timers), fixed properties including `Id`, `UnitFileState` and
+  `ExecMainStartTimestamp`, `--timestamp=unix`, a three second timeout per batch
+  and no shell. Missing/duplicate/unexpected units or properties fail closed.
+  Readiness uses one second per
   fixed loopback port. The collector has a 20 second systemd deadline.
 
 Collector journal output contains only `OPERATIONAL_HEALTH:` plus one of:
@@ -58,6 +92,8 @@ Collector journal output contains only `OPERATIONAL_HEALTH:` plus one of:
 | `low_disk` | Root filesystem has less than the configured reserve. |
 | `runtime_unavailable` | Neither loopback runtime returned readiness 200. |
 | `source_stale_or_unverified` | Source old/future, receipt mismatch or pointer transition. |
+| `backup_attention` | Failed backup service, unverified/stale checkpoint or retained/unsafe staging. |
+| `scheduler_attention` | Required timer disabled, inactive, failed or unknown. |
 | `observation_unknown` | Read, parse, subprocess or other observation error. |
 
 Codes contain no paths, identifiers, receipt values or exception text. Inspect
@@ -69,7 +105,7 @@ UptimeRobot defaults to HEAD and can retry GET, so both are supported explicitly
 ## Review and future deployment gate
 
 Render `.in` placeholders with reviewed canonical absolute paths to the pinned
-observer package, its Python interpreter, refresh root, importer root and catalog
+observer package, its Python interpreter, refresh root, importer root, backup root and catalog
 store. The HTTP package/interpreter must be installed outside the three blocked
 private data directories and outside `/home`. Do not add Shopify, SMTP or other
 credentials to either process. The observer package must not be the production
@@ -95,7 +131,7 @@ HTTP service and optional route; it does not change catalog pointers, jobs or da
 These templates have not been installed or validated against a live systemd host.
 
 This signal does **not** measure customer-facing 5xx spikes, latency, rate limits,
-CPU/memory metrics, or prove that a scheduled timer is enabled. It cannot establish
+CPU/memory metrics. It cannot establish
 external DNS/TLS health without an external monitor. Those issue #13 requirements
 and actual alert delivery/activation remain separate acceptance work. Do not close
 issue #13 on the basis of this local change.
@@ -124,12 +160,29 @@ Shopify or a live runtime. Run the repository foundation commands before review.
   [timer](https://raw.githubusercontent.com/systemd/systemd/v255/man/systemd.timer.xml),
   [resource controls](https://raw.githubusercontent.com/systemd/systemd/v255/man/systemd.resource-control.xml),
   [Job scalar printer](https://raw.githubusercontent.com/systemd/systemd/v255/src/systemctl/systemctl-show.c).
+  The `show` command supports multiple units and selected scalar properties;
+  `--timestamp=unix` is supported since v251. Timer enablement uses permanent
+  `enabled` rather than transient `enabled-runtime`. The
+  [systemd D-Bus contracts](https://raw.githubusercontent.com/systemd/systemd/v255/man/org.freedesktop.systemd1.xml)
+  document timer results and unit/service properties.
   freedesktop HTML was unavailable; versioned upstream XML supplies the contract.
 - Python 3.12 official documentation:
   [subprocess](https://docs.python.org/3.12/library/subprocess.html),
   [HTTPConnection](https://docs.python.org/3.12/library/http.client.html),
   [disk_usage](https://docs.python.org/3.12/library/shutil.html#shutil.disk_usage),
   [os](https://docs.python.org/3.12/library/os.html).
+  [datetime](https://docs.python.org/3.12/library/datetime.html) supplies
+  timezone-aware native backup/restic receipt parsing.
+  [time.monotonic](https://docs.python.org/3.12/library/time.html#time.monotonic)
+  supplies elapsed observation time independently of wall-clock adjustments.
+
+The backup receipt format was inspected read-only in `scripts/backup_offsite.py`
+at `b56ca95`: the immutable per-job receipt is published before `last-success`,
+successful staging is removed before complete status, and failed staging is
+retained. This observer does not import or execute that backup module. It relies
+on the existing backup's recorded integrity result; it does not independently
+verify remote availability or demonstrate a restore. The first scheduled run
+and effective external alert delivery still require separate operational evidence.
 
 - [UptimeRobot HTTP method behavior](https://help.uptimerobot.com/en/articles/11358466-how-to-debug-a-monitor-showing-as-down-in-uptimerobot):
   HEAD first and optional GET retry; supported only on the separate `/opsz` route.
