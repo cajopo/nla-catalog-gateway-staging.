@@ -379,9 +379,31 @@ snapshot `ffa29faf98aecfc61a39c2ad52f9bc69803a3b479e2cc877fa7a87297ef43cf8`,
 ricevuta `ce6018583f3d7369d36f97d9a09bf453748a60f8575f4ed8fad49ebad148b4e6`.
 La configurazione attiva `54a376a4…` include le tre unità installate e il nuovo
 Caddyfile `ef4c3fa2…`; il timer backup è enabled/waiting dopo `read-data` PASS.
-La sonda non copre ancora errori/anzianità del backup o abilitazione dei timer.
-Per i controlli eseguiti, il rollback del primo tentativo e i limiti del recapito
+Alla verifica delle 08:18 del 17 ottobre, questa versione non copriva ancora
+errori/anzianità backup o abilitazione timer; la copertura è stata aggiunta e
+installata nel rollout PR #114 riportato sotto. Per l'attivazione iniziale,
+il rollback del primo tentativo e i limiti del recapito
 vedere [attivazione health](evidence/OPERATIONAL-HEALTH-2026-10-15.md).
+
+### Osservabilità backup aggiornata — PR #114, 17 ottobre
+
+Il collector è installato nel package `/opt/nla-operational-observer-319ca0b`
+con nuova unità e pin di cattura backup. Installazione, compile/import, unità,
+due osservazioni healthy e GET/HEAD loopback/pubblico sono PASS. Il controllo
+allerta su service
+failure, confronto di `last-success` con ricevuta immutabile per-job e
+validazione dei campi snapshot (senza interrogazione remota), checkpoint oltre
+26 h, staging residuo limitato, e timer market,
+refresh e backup abilitati/attivi. La soglia checkpoint è un trigger di allarme,
+non un RPO. È consentita la pausa refresh controllata dal market; HTTP mantiene
+risposta generica. La lettura usa elapsed monotonic per evitare allarmi se il
+backup si completa durante il controllo; mtime è solo evidenza di tempo, non
+ownership del processo. La cattura del 17 ottobre alle 08:18 resta l'ultima
+verificata e non include il nuovo observer (`backedUp=false`). Timer successivo
+previsto il 18 ottobre alle 01:00 UTC e non ancora osservato. Dopo la cattura,
+verificare identità e pin senza avviare un backup manuale. Email/UptimeRobot
+restano da verificare.
+Pin, hash, controlli e limiti: [evidenza health/backup](evidence/BACKUP-HEALTH-2026-10-17.md).
 
 ## Decisioni e obiettivi da chiudere
 

@@ -11,8 +11,51 @@ da un'autorizzazione del titolare già presente.
 
 ## Checkpoint di consegna — 17 ottobre
 
-PR #101: checkpoint documentale `ef53db3`, CI `39017228273` e CodeQL
-`39017228183` riusciti. PR #112 (`8657aaa`) e #113 (`b56ca95`) sono ora
+### Health backup — aggiornamento finale 09:28 UTC
+
+PR #114, head `319ca0ba046715b769eda97af3e18fad906d6bc2`, pubblicato alle
+09:14 UTC. Il codice copre gli errori del servizio backup, la corrispondenza
+fra `last-success` e ricevuta immutabile per-job, validazione dei campi d'identità
+snapshot senza interrogazione remota, checkpoint più vecchi di
+26 h (soglia alert, non RPO), staging residuo limitato e timer market/refresh/
+backup abilitati e attivi; mantiene la pausa refresh controllata dal market.
+La risposta HTTP resta generica. Il tempo trascorso monotonic evita falsi
+allarmi durante una lettura in cui il backup termina; mtime è solo prova
+temporale, non ownership di processo. Test mirati: 158, statement/branch 100%
+sui tre moduli health; review indipendente PASS; Ruff, format e preflight
+219 file PASS; controllo documentale finale preflight 129 file PASS. Il precedente build locale isolato non riuscito perché Python
+3.13 locale è distribuito con MySQL Shell e il venv generato non disponeva di SSL.
+CI finale `39020355673` e CodeQL `39020355686` SUCCESS; tutti e quattro i job e
+tutti gli step PASS, zero skip. Python 3.12: 4.244 passati, 100% statement/branch,
+516,90 s; Python 3.13: 4.244 passati, 100% statement/branch, 652,61 s, un warning.
+Preflight 219 e build isolato CI PASS su entrambe le versioni. Il build isolato CI
+Python 3.12 è terminato alle 09:23:21 UTC. Hash `a91d22…` dell'entry
+`operational_health.py` nel wheel, dopo normalizzazione LF, coincide con il
+commit congelato. Esecuzione del collector in memoria, read-only e senza
+scritture di stato native, alle 09:17:08.775623 UTC: PASS, ricevuta SHA
+`902b0b26ce5753bc22f19cb8dd1008622bb5c776294d5182ec08d56498d9e4b5`.
+
+Rollout completato del package `/opt/nla-operational-observer-319ca0b`, nuova
+unità e pin di cattura backup; HTTP, Caddy e pipeline restano invariati. Due
+osservazioni healthy alle 09:26:51 e 09:27:21 UTC; GET/HEAD `/opsz` loopback e
+pubblico 200/no-store, compile/import Python 3.12 e `systemd-analyze verify`
+PASS. Azioni: stop observer timer, daemon-reload, start service e timer. Nessun
+rollback. HTTP resta versione `59a74e6`, PID `526219`, invocation
+`279cba19456d46f2a254b20377da8ef7`; pointer
+`43476f7e8babe20362039ac21c56ebc6793c606eea9133326f1877fc7b30fd5a` invariato.
+Non è stato creato un backup manuale. Il backup delle 08:18 e snapshot
+`ffa29faf98aecfc61a39c2ad52f9bc69803a3b479e2cc877fa7a87297ef43cf8` restano
+gli ultimi verificati; `backedUp=false` per il nuovo observer. Timer successivo
+18 ottobre 01:00 UTC, non osservato. Verifica finale read-only 09:28:04.384413 UTC:
+13.244.923.904 byte liberi, market/refresh/backup `inactive/success`, timer
+abilitati/attivi/in attesa; observer healthy, timer enabled.
+[Evidenza dettagliata](evidence/BACKUP-HEALTH-2026-10-17.md).
+
+PR #101: ultimo checkpoint documentale precedente a questo delta
+`9c525102e864432aba0246fbb8fc0f2f797ebe17`,
+CI `39019065894` e CodeQL `39019065861` verdi. Il checkpoint precedente
+`ef53db3` con CI `39017228273` e CodeQL `39017228183` resta storico. PR #112
+(`8657aaa`) e #113 (`b56ca95`) sono ora
 pronte per la revisione e non fuse; i rispettivi controlli sono verdi.
 La descrizione #112 include il primo ciclo market ordinario riuscito dopo il fix.
 L'attivazione health del 17 ottobre è riuscita entro le 08:18 UTC: `/opsz`
@@ -21,9 +64,10 @@ Config backup `54a376a4…`, Caddy `ef4c3fa2…`, timer backup nuovamente abilit
 Il controllo delle 08:18:54 UTC registra 13.247.131.648 byte liberi e pipeline
 riuscite; il primo tentativo era stato annullato con rollback verificato prima
 di cambiare Caddy. [Prove e limiti](evidence/OPERATIONAL-HEALTH-2026-10-15.md).
-L'attivazione non prova il recapito UptimeRobot o la copertura di errori del backup.
-La PR #114 (`59a74e6`) è ora pronta per la revisione, con CI/CodeQL verdi e
-descrizione aggiornata all'attivazione. Nessuna PR residua è stata fusa.
+Alla verifica delle 08:18 l'attivazione non provava il recapito UptimeRobot o la
+copertura di errori backup; il rollout successivo è documentato sopra.
+La PR #114 (`59a74e6`) era pronta per la revisione a quel checkpoint; il nuovo
+head è registrato sopra. Nessuna PR residua è stata fusa.
 
 Il controllo PC delle 07:51:06 UTC registra 506.658.816 byte di RAM libera
 e pipe Docker Desktop assente al controllo: niente prova pesante locale,
@@ -31,8 +75,9 @@ niente variazioni a container o limiti. Il recupero su host vuoto resta aperto
 per risorse insufficienti; non è in attesa di un nuovo consenso di Jacopo.
 La documentazione e le prove dei checkpoint precedenti sotto restano storiche.
 Il successivo tentativo Computer Use del 17 ottobre ha negato l'accesso tecnico
-a Chrome prima di leggere la dashboard: monitor e recapito restano non verificati,
-senza nuove richieste di consenso e senza aggirare il blocco.
+a Chrome prima di leggere la dashboard: monitor e recapito restano non verificati.
+D-023 registra il consenso e non va ripetuto; l'esito è un limite tecnico,
+non una mancanza di autorizzazione.
 Inventario Backblaze delle 08:50 UTC completato: quattro snapshot e copia
 manuale presenti, 622.179.661 byte; nessuna cancellazione o lifecycle attivata.
 Conservare tutte le copie attuali. [Prove e proposta retention](evidence/CLOUD-RETENTION-2026-10-17.md).

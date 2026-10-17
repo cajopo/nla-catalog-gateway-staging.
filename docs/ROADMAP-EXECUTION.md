@@ -36,9 +36,26 @@ enabled/waiting per il 18 ottobre alle 01:00 UTC (`Persistent=no`); la prima
 esecuzione automatica non è ancora osservata. Restore isolati `current` e
 `previous` PASS; host vuoto non provato (`emptyHostRecoveryProven=false`, immagine
 già residente). Runtime live e health `/opsz` operativi; configurazione health inclusa
-nel backup. Restano verifica del recapito e copertura dei fallimenti backup. Lo staging del job fallito
+nel backup. Alla verifica delle 08:18 del 17 ottobre restavano da coprire errori/
+anzianità backup; il rollout PR #114 ha aggiunto questa copertura. Recapito email
+ancora da verificare. Lo staging del job fallito
 del 16 ottobre è stato rimosso esattamente dopo quarantine e review indipendente.
-[Evidenza](evidence/BACKUP-AUTOMATION-2026-10-15.md).
+[Evidenza storica](evidence/BACKUP-AUTOMATION-2026-10-15.md). Il 17 ottobre
+la PR #114 (head `319ca0ba046715b769eda97af3e18fad906d6bc2`, pubblicato 09:14 UTC)
+aggiunge al codice l'osservabilità di failure backup, confronto fra `last-success`
+e ricevuta immutabile per-job, validazione dei campi snapshot (senza interrogazione
+remota), checkpoint <26 h, staging residuo e timer abilitati/attivi.
+La soglia 26 h è un alert di freschezza, non un RPO. L'esecuzione in memoria,
+read-only e senza scritture di stato native alle 09:17:08.775623 UTC è PASS;
+rollout riuscito: package `/opt/nla-operational-observer-319ca0b` e nuova unità
+installati; due osservazioni healthy e GET/HEAD loopback e pubblico PASS.
+La verifica read-only delle 09:28:04.384413 UTC registra 13.244.923.904 byte
+liberi e market/refresh/backup inattivi con esito success; i relativi timer,
+come il nuovo observer timer, sono enabled/active/waiting. Nessun backup manuale:
+il backup delle 08:18 e lo snapshot `ffa29f…` restano gli ultimi verificati,
+e il nuovo observer non è ancora incluso. Il prossimo timer è previsto alle
+01:00 UTC del 18 ottobre e non è ancora osservato. Recapito email
+non verificato. [Evidenza health/backup](evidence/BACKUP-HEALTH-2026-10-17.md).
 
 
 ## Stato GitHub verificato — 16 ottobre
@@ -65,11 +82,11 @@ non attesta CI nuova; i risultati CI delle nuove PR sono nelle evidenze dedicate
 | Priorità | Attività | Responsabile della fase | Criterio di accettazione | Vincolo |
 | --- | --- | --- | --- | --- |
 | P1 | Consolidare la documentazione e registrare i limiti delle prove | PM Codex | Stato, roadmap, decisioni e fonti coerenti; cronologia preservata; controlli documentali ripetibili | Questo intervento; #34 resta aperta fino alla consegna prevista |
-| P1 | Completare le garanzie operative e chi interviene in caso di errore | PM; Jacopo referente iniziale degli alert | Jacopo ha confermato email ricevuta/attivata e login; health `/opsz` attiva e verificata, proxy e inventario backup aggiornati. [Stato e prove](evidence/OPERATIONAL-HEALTH-2026-10-15.md) | Monitor UptimeRobot non verificato: il 17 ottobre Computer Use ha negato accesso tecnico a Chrome, dopo il precedente errore URL. Consenso del titolare già presente; recapito non collaudato e copertura dei fallimenti backup ancora assente |
+| P1 | Completare le garanzie operative e chi interviene in caso di errore | PM; Jacopo referente iniziale degli alert | `/opsz` operativo; PR #114 installata e verificata. [Stato e prove](evidence/BACKUP-HEALTH-2026-10-17.md) | Observer installato; prima cattura automatica della nuova versione non ancora osservata. UptimeRobot e recapito non verificati. D-023 registra già il consenso; limite tecnico Chrome non è consenso mancante |
 | P1 | Mantenere lo spazio VPS | PM per verifica; retention ordinaria sulla VPS | Pulizia legacy 3,65 GB verificata; retention refresh 3 ottobre completata, corrente/precedente e reference protetti; controllo Codex ogni 48 ore attivo | Riserva 6 GiB solo pre-cattura; nessuna garanzia sul picco. [Prove](evidence/RETENTION-2026-09-30.md), [incidente](evidence/INCIDENT-2026-10-03.md) |
 | P1 | Chiudere i residui GitHub con review e controlli sul head finale | Autori dei workstream e reviewer indipendenti | Consegna principale #108 fusa il 4 ottobre; #100 e #101 aperte; #112, #113 e #114 pronte per la revisione. CI e CodeQL verdi sui head pubblicati registrati nell'[handoff](PM-HANDOFF.md) | Nessun merge dei residui attestato; ogni nuovo commit documentale richiede i propri controlli. Code review e CI non sostituiscono i gate operativi |
 | P2 | Completare la certificazione QA della release | QA indipendente da assegnare | Fixture Chrome/Firefox/WebKit 21/21 per motore; axe qualificato; errore HTTP del cursore provato e 40 richieste di carico passate sulla copia restaurata; restano Shopify E2E/mobile/a11y/guasto-freschezza/carico produzione | [Prova e limiti](evidence/RECOVERY-LINUX-2026-09-30.md); riutilizzare prove valide, sessione negozio da sbloccare |
-| P1 | Completare recupero fuori VPS | PM, operatore continuativo da assegnare | Backup completo dopo attivazione health del 17 ottobre, gate `read-data` PASS; restore isolati `current`/`previous` PASS; runtime di test chiuso e live operativo; staging fallito del 16 ottobre rimosso dopo review; [prove](evidence/BACKUP-AUTOMATION-2026-10-15.md) | Host vuoto non provato perché immagine preesistente; RAM PC insufficiente al controllo del 17 ottobre. Timer abilitato, prima esecuzione automatica da osservare. Restano margine disco, conservazione cloud e custodia indipendente della password |
+| P1 | Completare recupero fuori VPS | PM, operatore continuativo da assegnare | Backup completo dopo attivazione health, gate `read-data` PASS; restore isolati `current`/`previous` PASS; nuovo observer installato e healthy; [prove](evidence/BACKUP-HEALTH-2026-10-17.md) | Prima cattura che includa il nuovo observer non ancora osservata; prossimo timer 18 ottobre 01:00 UTC. Host vuoto non provato; restano margine disco, conservazione cloud, recapito alert e custodia indipendente della password |
 | P2 | Valutare il lancio pubblico | Jacopo decide; PM prepara il pacchetto | Decisione su rimozione password, rischi residui e gestione operativa | Nessuna autorizzazione attuale alla rimozione password |
 | P3 | Migliorare filtri e ordinamenti | Workstream #10, da pianificare | Contratto dati/UX approvato e prove su campioni verificati | Lingua, condizione, finish e altri sort non sono dichiarati disponibili |
 | P3 | Progettare “Altre stampe di questa carta” | PM per fattibilità; autore da assegnare | Identità canonica affidabile, gruppo completo, link Shopify, preview tastiera/mobile | È autorizzata solo la documentazione |

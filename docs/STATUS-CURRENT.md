@@ -62,7 +62,23 @@ attivo, enabled per le 01 UTC con prossimo trigger il 18 ottobre alle 01 UTC;
 la prima esecuzione automatica non è ancora stata osservata. Il restore da host
 vuoto resta non provato perché l'immagine era già residente. Il runtime live è
 operativo; la sonda `/opsz` è attiva, verificata e inclusa nella copertura del backup.
-Il recapito email resta da verificare. [Prove e limiti](evidence/BACKUP-AUTOMATION-2026-10-15.md).
+Il collector health aggiornato è nella PR #114, head
+`319ca0ba046715b769eda97af3e18fad906d6bc2`, pubblicato alle 09:14 UTC.
+La verifica read-only in memoria delle 09:17:08.775623 UTC è PASS; il codice è destinato a controllare
+failure backup, corrispondenza fra `last-success` e ricevuta immutabile per-job,
+validazione dei campi d'identità snapshot (senza interrogazione remota), freschezza
+checkpoint <26 h (soglia di alert, non RPO), staging residuo e timer market/
+refresh/backup abilitati/attivi. Ammette la pausa refresh deliberata dal market.
+Il collector mantiene risposta HTTP generica; elapsed monotonic evita falsi
+allarmi se un backup termina durante la lettura. mtime è solo evidenza temporale,
+non prova ownership di un processo. Il rollout del nuovo observer è riuscito
+alle 09:26 UTC; due osservazioni healthy e il controllo read-only delle
+09:28:04.384413 UTC confermano servizio e timer attivi. Il backup delle 08:18
+resta l'ultimo e non include il nuovo observer; la cattura automatica del
+18 ottobre alle 01:00 UTC è da osservare. Recapito email/UptimeRobot non
+verificato. [Evidenza health e
+backup](evidence/BACKUP-HEALTH-2026-10-17.md); stato precedente e limiti
+[qui](evidence/BACKUP-AUTOMATION-2026-10-15.md).
 PR #113 e #114 hanno i controlli riportati nell'[handoff PM](PM-HANDOFF.md).
 Il precedente checkpoint documentale pubblicato della PR #101 era `4cae6c7c6c84a00a64c3ca286eba1b4963bea643`, con CI `38920068601` e CodeQL `38920068523` riusciti il 16 ottobre. Il nuovo head e i controlli del delta attuale sono da seguire nei metadati della PR #101.
 La [verifica operativa del 30 settembre](evidence/MAINTENANCE-2026-09-30.md)
@@ -88,11 +104,11 @@ installati, offline sul PC. Il ciclo Shopify effettivo resta da collaudare.
 | Suggerimenti | Nomi distinti e dinamici per le singole, confinati al gioco | Prove browser del 28 e 29 settembre |
 | Filtri | Famiglia, disponibilità, espansione/rarità per le singole e stato URL | Fotografia e prove browser |
 | Presentazione | Immagini, SOLD OUT rosso, prezzi assenti/zero omessi nell'interfaccia; acquisto nativo Shopify | [QA della home e del carrello](workstreams/ws-10-home-browser-20260928.md) |
-| Aggiornamenti — ultimo stato VPS, 17 ottobre | Alle 08:18:54 UTC refresh e market `inactive/success`; pointer `43476…`, generazioni `3fbd719c` / `5b22aed7` invariate; 13.247.131.648 byte liberi | [Evidenza backup](evidence/BACKUP-AUTOMATION-2026-10-15.md); storico: [incidente](evidence/INCIDENT-2026-10-03.md) |
+| Aggiornamenti — ultimo stato VPS, 17 ottobre | Verifica 09:28:04.384413 UTC, dopo rollout 09:26–09:27: market/refresh/backup `inactive/success`, pointer invariato; 13.244.923.904 byte liberi | [Health/backup](evidence/BACKUP-HEALTH-2026-10-17.md); storico: [incidente](evidence/INCIDENT-2026-10-03.md) |
 | Refresh e market — storico 3 ottobre | Run `20261003t073240z-3f7384f8` exit 0; freshness e smoke PASS; dataset `5152b3c3…`. Questo è un esito storico, non lo stato corrente | [Incidente](evidence/INCIDENT-2026-10-03.md) |
 | Retention e spazio VPS — 17 ottobre | Quarantena, controllo indipendente e rimozione esatta del vecchio staging `971c`: 743 file, 2.126.986.835 byte; 13.247.131.648 byte liberi dopo il backup health | [Pulizia e retention](evidence/BACKUP-AUTOMATION-2026-10-15.md); storico 30 settembre: [retention](evidence/RETENTION-2026-09-30.md) |
-| Backup e recupero | Backup completo dopo attivazione health, gate `read-data` PASS e timer abilitato; prima esecuzione automatica ancora da osservare. Restore isolati `current`/`previous` PASS; host vuoto non provato. Runtime live operativo | [Backup e restore](evidence/BACKUP-AUTOMATION-2026-10-15.md); prove storiche: [Backblaze 3 ottobre](evidence/BACKBLAZE-2026-10-03.md), [checkpoint PC](evidence/BACKUP-PC-2026-10-03.md), [PC](evidence/RECOVERY-PC-2026-10-01.md), [reference](evidence/REFERENCE-RECOVERY-2026-10-01.md), [Linux](evidence/RECOVERY-LINUX-2026-09-30.md) |
-| Salute operativa | `/opsz` GET/HEAD, collector e timer attivi, verifiche catalogo passate; monitora market/refresh, freschezza e spazio. Recapito esterno e copertura backup ancora da completare | [Attivazione health](evidence/OPERATIONAL-HEALTH-2026-10-15.md) |
+| Backup e recupero | Backup completo più recente `919aed…`, gate `read-data` PASS; timer abilitato. Restore isolati `current`/`previous` PASS; host vuoto non provato. Nuovo observer attivo ma non incluso nel backup più recente; prima cattura automatica da osservare | [Health/backup 17 ottobre](evidence/BACKUP-HEALTH-2026-10-17.md); [backup e restore](evidence/BACKUP-AUTOMATION-2026-10-15.md) |
+| Salute operativa | Nuovo observer installato e healthy; check nativo, endpoint GET/HEAD e timer PASS. Risposta HTTP generica invariata. Recapito esterno non verificato | [Health/backup 17 ottobre](evidence/BACKUP-HEALTH-2026-10-17.md) |
 | QA componente | Matrice 21/21 in Chrome, Firefox e WebKit; smoke touch 390×844 e retry dopo 503 simulato sulla fixture; axe zero violazioni, un incomplete di contrasto valutato manualmente nello stato coperto | Solo fixture congelata; non certifica Shopify/mobile reale, Safari/iOS, screen reader, outage gateway o freschezza. Dettagli: [QA](evidence/MAINTENANCE-2026-09-30.md#qa-sul-sorgente-congelato); ricevuta privata in `../output/nla-recovery/20260930/evidence/qa-touch-down-final/index.json` |
 | Sicurezza | Confine Shopify App Proxy autenticato; gateway e refresh in sola lettura | Architettura #17 e prove del servizio |
 | Tema | 175195881740 principale; 175194898700 conservato per ripristino; password attiva | [Ricevute del passaggio](workstreams/ws-12-release-readiness-20260929.md) |
