@@ -307,9 +307,9 @@ derivato dall'hash e lo riscarica in un nuovo file. Non usarla come backup
 periodico dei dati correnti. Il restore usa una copia invariata di
 `restore_offline.py`, hash dell'archivio atteso e destinazione nuova.
 
-Questa prova chiude la scelta della destinazione e la prima copia cloud dei
-dati. Restano scheduler sulla VPS, gestione errori, conservazione, copertura
-di configurazione/immagini/accessi e recupero completo del servizio.
+Questa prova ha chiuso la scelta della destinazione e la prima copia cloud dei
+dati. Il successivo servizio cifrato sulla VPS, descritto sotto, cattura anche
+configurazione e immagini. Restano conservazione e recupero completo su host nuovo.
 Il bucket non ha regole lifecycle; nessuna scadenza delle copie è stata impostata.
 
 ## Backup cifrato: pilota verificato il 15 ottobre
@@ -337,33 +337,40 @@ Eseguire come proprietario con Windows PowerShell tramite percorso completo,
 senza indebolire ACL. Le ricevute precedenti restano conservate.
 
 La prova pilota non catturava i dati correnti della VPS. La successiva prima
-cattura completa cifrata è descritta sotto; restano custodia della password,
-scheduler e prove dei fallimenti prima di dichiarare il backup automatico.
+cattura completa cifrata e lo scheduler attivo dal 17 ottobre sono descritti
+sotto; restano custodia indipendente della password e verifica del primo ciclo automatico.
 Nessuna rimozione cloud, policy di retention o modifica lifecycle è stata attivata.
 
 Il codice del nuovo servizio è nella PR #113, con CI Linux e review indipendente
 passate. Anche la prova sintetica nel sandbox systemd reale è passata: lettura
 del ledger WAL riuscita, scrittura ai sorgenti respinta, unità e fixture proprie
 rimosse. [Versione, pin e limiti](evidence/BACKUP-AUTOMATION-2026-10-15.md).
-Jacopo ha autorizzato il trasferimento delle credenziali (D-021). Il backup
-corrente valido resta il job del 15 ottobre alle 13:30:23 UTC (`read-data` PASS).
-Il 16 ottobre il job avviato alle 11:38:34.037255 UTC è terminato alle
-11:39:01.617282 UTC con `checkpoint_failed`, prima del trasferimento; circa 2,14 GB
-di staging sono stati conservati. La configurazione v2 `d5d65f` con sorgente
-`929c7b0` e servizio `804` è installata. Il primo tentativo di attivazione era
-stato fermato in admission senza avviare il job. Il timer è disabilitato. Il
-diagnostico v2 PASS alle 12:22:50 UTC ha verificato 743/744 file attesi (manifest
-mancante); la causa resta non stabilita. Non riavviare né pulire lo staging durante
-la diagnosi; consultare l'[evidenza aggiornata](evidence/BACKUP-AUTOMATION-2026-10-15.md).
+Jacopo ha autorizzato il trasferimento delle credenziali (D-021). Il 17 ottobre
+la versione `b56ca95` ha completato il nuovo job
+`backup-c121a380661d4bbfa6b6c0c5de1a09b4`, con controllo `read-data` PASS,
+ricevuta per-job coincidente con `last-success` e staging del job rimosso.
+`nla-backup-offsite.timer` è abilitato e attivo: ogni giorno alle **01:00 UTC**,
+`Persistent=no`; prima scadenza osservata 18 ottobre 01:00 UTC. L'attivazione
+non prova ancora l'esecuzione del primo ciclo automatico.
+
+Il difetto corretto confrontava i montaggi Docker dipendendo dall'ordine della
+lista, che può cambiare senza modifiche ai montaggi. Il comportamento è stato
+riprodotto sulla VPS; l'istante preciso del precedente errore `971c` resta non
+osservato. Il relativo payload fallito è stato prima messo in quarantena,
+verificato con il catalogo operativo e revisionato indipendentemente, poi rimosso:
+743 file, 2.126.986.835 byte. Ricevuta di errore e prove restano conservate.
+Alle 07:16 UTC il controllo finale rilevava 13.249.085.440 byte liberi, market e
+refresh riusciti, puntatore e generazioni protette invariati. Versioni, hash,
+limiti di capacità e ricevute sono nell'[evidenza aggiornata](evidence/BACKUP-AUTOMATION-2026-10-15.md).
 
 ## Decisioni e obiettivi da chiudere
 
 | Voce | Situazione | Proposta verificabile |
 | --- | --- | --- |
 | Destinazione durevole | Backblaze scelto dal proprietario il 3 ottobre; prima copia nel bucket privato, download e restore dati verificati | Scelta e primo trasferimento conclusi; restano copertura completa e conservazione delle copie. [Prova Backblaze](evidence/BACKBLAZE-2026-10-03.md) |
-| Backup automatico e retention | Backup valido del 15 ottobre; job del 16 ottobre avviato e fallito `checkpoint_failed` prima del trasferimento; staging conservato, timer disabilitato | Diagnosi in corso; non riavviare il job né rimuovere lo staging. Restano margine disco, conservazione e prova di capacità |
+| Backup automatico e retention | Nuovo backup completo e verificato il 17 ottobre; timer abilitato alle 01:00 UTC; payload del precedente tentativo fallito rimosso dopo quarantena e review | Osservare il primo ciclo automatico; completare conservazione cloud e gestione della crescita. Il margine verificato usa riserve derivate dai carichi osservati, non un limite massimo futuro |
 | Credenziali e reference | Reference completa e configurazione restaurata accettate offline; credenziali/certificati esclusi | Collaudare il ciclo refresh/importer con accessi recuperati; definire conservazione cifrata e recupero degli accessi, senza segreti in Git/documenti |
-| RPO | Nessun RPO garantito dal backup manuale | Proposta iniziale: massimo 24 ore per copie fuori host, coerente con tolleranza del catalogo; richiede scheduler e prova dei fallimenti |
+| RPO | Scheduler giornaliero attivo; primo ciclo automatico e recapito degli errori ancora da verificare | Proposta iniziale: massimo 24 ore per copie fuori host, coerente con tolleranza del catalogo; non è ancora una garanzia operativa |
 | RTO | Restore dati PC: 49,826 s; copia riscaricata da Backblaze: 61,970 s; reference storico: 23,164 s. Questi tempi escludono trasferimenti e avvio del runtime; nessun RTO completo certificato | Budget proposto: 2 ore su host Linux già pronto, escluso provisioning/DNS; serve prova completa con immagine/credenziali, oggi non garantito. [Prova Backblaze](evidence/BACKBLAZE-2026-10-03.md) |
 | Alert e reperibilità | Jacopo ha confermato email ricevuta/attivata e login alla dashboard; configurazione del monitor e recapito non verificati per blocco della verifica URL in Computer Use | Verificare stato, metodo, intervallo e contatto del monitor; concordare una prova di recapito e completare la copertura refresh/freschezza. [Stato e limiti](evidence/OPERATIONAL-HEALTH-2026-10-15.md) |
 | Recupero trigger persi | `Persistent=no` osservato | Valutare `Persistent=yes` e prova isolata dopo verifica dei vincoli di locking/overlap; nessun timer cambiato ora |

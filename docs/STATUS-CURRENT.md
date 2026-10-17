@@ -1,6 +1,6 @@
 # Stato attuale del progetto NLA
 
-Aggiornamento operativo del 16 ottobre 2026; fotografia generale del 3 ottobre.
+Aggiornamento operativo del 17 ottobre 2026; fotografia generale del 3 ottobre.
 PM della fase: Codex, incaricato da Jacopo.
 Workstream documentale [#34](https://github.com/cajopo/nla-catalog-gateway-staging./issues/34), roadmap [#3](https://github.com/cajopo/nla-catalog-gateway-staging./issues/3).
 
@@ -52,19 +52,18 @@ contiene inventario, limiti delle prove, versioni e riconciliazione con GitHub.
 Il 15 ottobre è riuscita anche la [prova di backup cifrato S3](evidence/BACKUP-ENCRYPTION-2026-10-15.md):
 checkpoint del 3 ottobre trasferito, controllato integralmente e recuperato su PC
 con hash identico. Era la prova sul checkpoint storico; il successivo primo
-backup completo corrente è descritto sotto. Scheduler, conservazione e custodia
-indipendente delle chiavi restano da completare.
+backup completo corrente è descritto sotto. Restano verifica del primo ciclo
+automatico, conservazione e custodia indipendente delle chiavi.
 Il codice del backup automatico è nella [PR #113](https://github.com/cajopo/nla-catalog-gateway-staging./pull/113).
-Il backup corrente valido resta il job del 15 ottobre alle 13:30:23 UTC
-(`read-data` PASS). I restore isolati `current` e `previous` sono PASS; il recupero
-da host vuoto non è provato perché l'immagine era già residente. Il 16 ottobre un
-primo tentativo si è fermato in admission senza start; il job successivo è partito
-alle 11:38:34 UTC e ha fallito `checkpoint_failed` alle 11:39:01 prima del
-trasferimento. Staging circa 2,14 GB conservato per diagnosi; timer disabilitato.
-Pulizia del restore completata; runtime di test chiuso, live operativo e solo il
-componente health è inerte. [Prove e limiti](evidence/BACKUP-AUTOMATION-2026-10-15.md).
-PR #113 e #114 hanno i controlli riportati nell'[handoff PM](PM-HANDOFF.md). Il
-Il precedente checkpoint documentale pubblicato della PR #101 era `b6ab98e618b0867f875b97ccf6d6854359a826d0`, con CI `38819024906` e CodeQL `38819025033` completati con esito positivo alle 22:56 UTC. Il head finale e i controlli del delta attuale sono da seguire nei metadati della PR #101.
+Il backup completo più recente è del 17 ottobre alle 07:16 UTC: job
+`backup-c121a380661d4bbfa6b6c0c5de1a09b4`, `read-data` e gate PASS, snapshot
+`bd249a0d8064bd950a2ef6ddb37eb9329c36eec2101491884d0c8cd794e42963`. Timer
+attivo, enabled per le 01 UTC con prossimo trigger il 18 ottobre alle 01 UTC;
+la prima esecuzione automatica non è ancora stata osservata. Il restore da host
+vuoto resta non provato perché l'immagine era già residente. Il runtime live è
+operativo, il componente health resta inerte. [Prove e limiti](evidence/BACKUP-AUTOMATION-2026-10-15.md).
+PR #113 e #114 hanno i controlli riportati nell'[handoff PM](PM-HANDOFF.md).
+Il precedente checkpoint documentale pubblicato della PR #101 era `4cae6c7c6c84a00a64c3ca286eba1b4963bea643`, con CI `38920068601` e CodeQL `38920068523` riusciti il 16 ottobre. Il nuovo head e i controlli del delta attuale sono da seguire nei metadati della PR #101.
 La [verifica operativa del 30 settembre](evidence/MAINTENANCE-2026-09-30.md)
 aggiunge stato VPS, cicli, prima copia fuori host e prove browser. Il successivo
 [recupero Linux isolato](evidence/RECOVERY-LINUX-2026-09-30.md) verifica dati,
@@ -88,10 +87,10 @@ installati, offline sul PC. Il ciclo Shopify effettivo resta da collaudare.
 | Suggerimenti | Nomi distinti e dinamici per le singole, confinati al gioco | Prove browser del 28 e 29 settembre |
 | Filtri | Famiglia, disponibilità, espansione/rarità per le singole e stato URL | Fotografia e prove browser |
 | Presentazione | Immagini, SOLD OUT rosso, prezzi assenti/zero omessi nell'interfaccia; acquisto nativo Shopify | [QA della home e del carrello](workstreams/ws-10-home-browser-20260928.md) |
-| Aggiornamenti — ultimo stato VPS, 16 ottobre | Ultima osservazione alle 11:45 UTC: refresh e market `inactive/success`; sorgente acquisita alle 03:00 UTC; pointer `6e1b…`, current `4cbb2053`, previous `49521`. Lo staging trattenuto per diagnosi ha portato lo spazio libero a 11.655.643.136 byte | Stato live invariato nella lettura; [evidenza backup](evidence/BACKUP-AUTOMATION-2026-10-15.md); storico: [incidente](evidence/INCIDENT-2026-10-03.md) |
+| Aggiornamenti — ultimo stato VPS, 17 ottobre | Alle 07:16 UTC refresh e market `inactive/success`; pointer `43476…`, generazioni `3fbd719c` / `5b22aed7` invariate; 13.249.085.440 byte liberi | [Evidenza backup](evidence/BACKUP-AUTOMATION-2026-10-15.md); storico: [incidente](evidence/INCIDENT-2026-10-03.md) |
 | Refresh e market — storico 3 ottobre | Run `20261003t073240z-3f7384f8` exit 0; freshness e smoke PASS; dataset `5152b3c3…`. Questo è un esito storico, non lo stato corrente | [Incidente](evidence/INCIDENT-2026-10-03.md) |
-| Retention e spazio VPS — 16 ottobre | Dopo la pulizia delle copie restore, alle 11:21:55 UTC: 13.793.955.840 byte liberi, pointer e generazioni protette invariati, piano di retention completato; il finalizer ha agito solo sui 643 file e 72 directory, senza rimuovere container. Alle 11:45, con staging backup conservato, 11.655.643.136 byte liberi. Questi valori hanno istanti e condizioni distinti | [Pulizia e retention](evidence/BACKUP-AUTOMATION-2026-10-15.md); storico 30 settembre: [retention](evidence/RETENTION-2026-09-30.md) |
-| Backup e recupero | Backup valido del 15 ottobre; restore isolati VPS `current` e `previous` PASS; host vuoto non provato. Job del 16 ottobre avviato e fallito `checkpoint_failed` prima del trasferimento; staging conservato, timer disabilitato. Runtime di test chiuso, live operativo; componente health inerte. Pulizia finale copie test completata | [Backup e restore](evidence/BACKUP-AUTOMATION-2026-10-15.md); prove storiche: [Backblaze 3 ottobre](evidence/BACKBLAZE-2026-10-03.md), [checkpoint PC](evidence/BACKUP-PC-2026-10-03.md), [PC](evidence/RECOVERY-PC-2026-10-01.md), [reference](evidence/REFERENCE-RECOVERY-2026-10-01.md), [Linux](evidence/RECOVERY-LINUX-2026-09-30.md) |
+| Retention e spazio VPS — 17 ottobre | Quarantena, controllo indipendente e rimozione esatta del vecchio staging `971c`: 743 file, 2.126.986.835 byte; 13.249.085.440 byte liberi al controllo finale | [Pulizia e retention](evidence/BACKUP-AUTOMATION-2026-10-15.md); storico 30 settembre: [retention](evidence/RETENTION-2026-09-30.md) |
+| Backup e recupero | Backup completo del 17 ottobre, gate `read-data` PASS e timer abilitato; prima esecuzione automatica ancora da osservare. Restore isolati `current`/`previous` PASS; host vuoto non provato. Componente health inerte; runtime live operativo | [Backup e restore](evidence/BACKUP-AUTOMATION-2026-10-15.md); prove storiche: [Backblaze 3 ottobre](evidence/BACKBLAZE-2026-10-03.md), [checkpoint PC](evidence/BACKUP-PC-2026-10-03.md), [PC](evidence/RECOVERY-PC-2026-10-01.md), [reference](evidence/REFERENCE-RECOVERY-2026-10-01.md), [Linux](evidence/RECOVERY-LINUX-2026-09-30.md) |
 | QA componente | Matrice 21/21 in Chrome, Firefox e WebKit; smoke touch 390×844 e retry dopo 503 simulato sulla fixture; axe zero violazioni, un incomplete di contrasto valutato manualmente nello stato coperto | Solo fixture congelata; non certifica Shopify/mobile reale, Safari/iOS, screen reader, outage gateway o freschezza. Dettagli: [QA](evidence/MAINTENANCE-2026-09-30.md#qa-sul-sorgente-congelato); ricevuta privata in `../output/nla-recovery/20260930/evidence/qa-touch-down-final/index.json` |
 | Sicurezza | Confine Shopify App Proxy autenticato; gateway e refresh in sola lettura | Architettura #17 e prove del servizio |
 | Tema | 175195881740 principale; 175194898700 conservato per ripristino; password attiva | [Ricevute del passaggio](workstreams/ws-12-release-readiness-20260929.md) |
@@ -106,12 +105,12 @@ installati, offline sul PC. Il ciclo Shopify effettivo resta da collaudare.
   consegna e controlli sul relativo commit; resta la riconciliazione delle issue.
 - Certificazione completa della release: matrice browser/accessibilità/carico
   e prove di recupero legate alla stessa versione.
-- Completare backup automatico e recupero del servizio: backup valido del 15 ottobre,
-  restore isolati VPS `current`/`previous` PASS ([evidenza](evidence/BACKUP-AUTOMATION-2026-10-15.md)).
-  Host vuoto non provato perché l'immagine era preesistente; runtime di test chiuso e live
-  operativo. Timer backup disabilitato, componente health inerte. Il job del 16 ottobre
-  è fallito `checkpoint_failed` prima del trasferimento; staging conservato e diagnosi
-  alla validazione finale. Restano margine disco, conservazione cloud e custodia chiave.
+- Completare backup automatico e recupero del servizio: backup completo del 17 ottobre,
+  gate `read-data` PASS e timer enabled/waiting; prima esecuzione automatica da osservare
+  ([evidenza](evidence/BACKUP-AUTOMATION-2026-10-15.md)). Restore VPS `current`/`previous`
+  PASS, host vuoto non provato perché l'immagine era preesistente; runtime di test chiuso,
+  live operativo e componente health inerte. Restano margine disco, conservazione cloud,
+  custodia chiave e prova della prima esecuzione automatica.
   Il preflight memoria PC del 3 ottobre (2.378.674.176 byte, sotto il minimo
   2.415.919.104) e il seed fermo descrivono quella prova storica PC, non il restore
   VPS. Restano inoltre il ciclo reale runtime/refresh/importer e la verifica di

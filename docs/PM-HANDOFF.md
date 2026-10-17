@@ -1,6 +1,6 @@
 # Passaggio di consegne PM NLA
 
-Aggiornato il 16 ottobre 2026. Jacopo ha affidato a Codex il ruolo PM di questa
+Aggiornato il 17 ottobre 2026. Jacopo ha affidato a Codex il ruolo PM di questa
 fase. Riferimenti: master #3, manutenzione documentale #34, architettura #17 e
 tassonomia #19, consultati prima dell'intervento.
 
@@ -189,13 +189,17 @@ principale #108.
 
 ## Regole per il prossimo intervento
 
-Il backup corrente valido resta quello del 15 ottobre alle 13:30:23 UTC, con
-`read-data` PASS. Il 16 ottobre un primo tentativo di attivazione è stato fermato
-in admission senza avviare il job; un secondo job è partito alle 11:38:34.037255
-UTC e si è chiuso alle 11:39:01.617282 UTC (27,580 s) con `checkpoint_failed`,
-prima del trasferimento. Lo staging di circa 2,14 GB resta conservato per la
-diagnosi; timer disabilitato. Non ripetere il job o rimuovere lo staging finché
-la diagnosi è aperta. [Dettagli e ricevute](evidence/BACKUP-AUTOMATION-2026-10-15.md).
+Il backup del 17 ottobre alle 07:16 UTC è completo: job
+`backup-c121a380661d4bbfa6b6c0c5de1a09b4`, ricevuta
+`8bd4cfe334ee34e91358e5416940e3cecc8d3018a3968561e0936b4775f2d64d`, snapshot
+`bd249a0d8064bd950a2ef6ddb37eb9329c36eec2101491884d0c8cd794e42963`;
+`read-data`, ricevuta per-job=last-success e servizio riuscito. Il timer è
+enabled/waiting per il prossimo trigger del 18 ottobre alle 01:00 UTC
+(`Persistent=no`); la prima esecuzione automatica non è ancora stata osservata.
+La quarantine/review e la rimozione esatta dello staging fallito `971c` sono
+concluse; il vecchio job non è stato ripetuto. Spazio libero finale 13.249.085.440 byte;
+refresh/market e pointer/generazioni protette invariati. Il restore da host vuoto
+non è provato; health resta inerte. [Dettagli e ricevute](evidence/BACKUP-AUTOMATION-2026-10-15.md).
 
 La PR #114 resta un candidato di codice, non una modifica al monitor o un
 deployment; lo stato dei gate e la prova read-only sono riportati sopra.
@@ -366,15 +370,10 @@ senza riscritture e non costituisce una nuova istruzione operativa.
 Il restore isolato è terminato in 35.62632 s e la verifica guarded read-only è PASS su tutti i file e i tre database SQLite. Snapshot `f11005053ed6d498a312c7be84181ee40f28f6947a82dc349ef91319267a70bb` (dimensione logica ripristinata 2.126.224.845 byte; `resticVerify=true`); verifica del 16 ottobre 09:30 con snapshot current `ed078…` e previous `fd665…`. Questa evidenza supera lo stato precedente “restore non avviato” limitatamente al recupero e alla verifica dello snapshot: alla verifica delle 09:30 il caricamento dell'archivio non era ancora stato eseguito; la presenza dell'immagine sul nodo è distinta; il successivo runtime di test è stato avviato, verificato e chiuso, mentre il runtime live continua operativo. Il controllo live delle 09:24:36 è distinto: pointer `6e1b…`, current `4cbb2053`, previous `49521`, refresh e market `inactive/success`, 11.665.154.048 byte liberi. Non confondere il pointer live con quello dello snapshot restaurato. Dettagli e ricevute: [evidenza backup e restore](evidence/BACKUP-AUTOMATION-2026-10-15.md).
 
 Il drill applicativo del 16 ottobre ha chiuso PASS i ruoli `current` e `previous`;
-`emptyHostRecoveryProven=false` perché l'immagine era già residente. La pulizia finale
-delle copie isolate del restore ha rimosso esattamente 643 file, 72 directory e
-3.930.589.037 byte, conservando lo snapshot. I due container di test erano già chiusi prima della pulizia; il finalizer non ha rimosso container.
-Alle 11:21:55 UTC erano liberi 13.793.955.840 byte e il controllo retention
-confermava le generazioni protette invariate. Il runtime di test è chiuso, il live
-resta operativo, il componente health è inerte e il timer backup disabilitato.
-
-Per il backup, il job valido resta quello del 15 ottobre delle 13:30:23 UTC. Dopo
-un primo tentativo fermato in admission senza start, il job del 16 ottobre partito
-alle 11:38:34.037255 UTC è terminato alle 11:39:01.617282 UTC (27,580 s) con
-`checkpoint_failed`, prima del trasferimento. Lo staging di circa 2,14 GB resta
-conservato per diagnosi; timer disabilitato. [Dettagli e ricevute](evidence/BACKUP-AUTOMATION-2026-10-15.md).
+`emptyHostRecoveryProven=false` perché l'immagine era già residente. La pulizia
+finale delle copie isolate del restore ha rimosso esattamente 643 file, 72 directory
+e 3.930.589.037 byte, conservando lo snapshot; il runtime di test è chiuso e il live
+resta operativo. Il successivo backup completo del 17 ottobre è PASS e il timer è
+enabled/waiting per il 18 ottobre alle 01:00 UTC; la prima esecuzione automatica resta
+da osservare. Il componente health è inerte. Per job, ricevute e storico dei fallimenti,
+vedere [dettagli backup](evidence/BACKUP-AUTOMATION-2026-10-15.md).

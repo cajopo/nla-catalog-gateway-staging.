@@ -1,6 +1,6 @@
 # Roadmap della manutenzione NLA
 
-Aggiornata il 16 ottobre 2026, sotto la roadmap #3 e il workstream PM #34.
+Aggiornata il 17 ottobre 2026, sotto la roadmap #3 e il workstream PM #34.
 La fase di bootstrap è chiusa operativamente. Questa roadmap ordina manutenzione,
 consolidamento e possibili sviluppi. L'obiettivo di manutenzione autorizza
 verifiche e preparazione reversibile; MAIN/password, GitHub e decisioni riservate
@@ -16,7 +16,7 @@ eseguito il 29 settembre alle 19:20 Europe/Rome. Password attiva e PowerTools in
 La [fotografia](evidence/STATE-2026-09-30.md) definisce il punto di partenza.
 Non occorre ripetere bootstrap, acquisizioni, cicli terminali o audit già accettati.
 
-## Delta operativo — 15–16 ottobre
+## Delta operativo — 15–17 ottobre
 
 La correzione market è stata applicata il 15 ottobre alle 10:17:47 UTC e verificata
 alle 10:18:11 UTC. Dopo la correzione, i cicli market del 15 ottobre alle 14:00 UTC
@@ -28,15 +28,16 @@ draft con CI verde. [Evidenza](evidence/MARKET-SOURCE-2026-10-15.md).
 I risultati CI/CodeQL e lo stato runtime del 3 ottobre sono storici. Il ciclo market e i controlli live del 15–16 ottobre sono riportati sopra; restano aperte le lacune backup/recupero, QA completa e verifica del monitor UptimeRobot.
 
 La [prova cifrata S3 del 15 ottobre](evidence/BACKUP-ENCRYPTION-2026-10-15.md)
-ha verificato il checkpoint storico del 3 ottobre. Il backup corrente valido resta
-quello del 15 ottobre alle 13:30:23 UTC (`read-data` PASS); i restore isolati dei
-ruoli `current` e `previous` sono PASS. L'immagine era già residente prima del
-loader: `emptyHostRecoveryProven=false`. Il runtime di test è stato avviato,
-verificato e chiuso; il runtime live continua operativo. Pulizia copie isolate
-completata. Il timer backup è disabilitato e il solo componente health è inerte.
-Il job del 16 ottobre partito alle 11:38:34 UTC è terminato alle 11:39:01 con
-`checkpoint_failed` prima del trasferimento; staging di circa 2,14 GB conservato
-per diagnosi. [Evidenza](evidence/BACKUP-AUTOMATION-2026-10-15.md).
+ha verificato il checkpoint storico del 3 ottobre. Il backup completo più recente
+è il job `backup-c121a380661d4bbfa6b6c0c5de1a09b4` del 17 ottobre alle 07:16 UTC,
+con `read-data` e gate PASS, snapshot
+`bd249a0d8064bd950a2ef6ddb37eb9329c36eec2101491884d0c8cd794e42963`. Il timer è
+enabled/waiting per il 18 ottobre alle 01:00 UTC (`Persistent=no`); la prima
+esecuzione automatica non è ancora osservata. Restore isolati `current` e
+`previous` PASS; host vuoto non provato (`emptyHostRecoveryProven=false`, immagine
+già residente). Runtime live operativo e health inerte. Lo staging del job fallito
+del 16 ottobre è stato rimosso esattamente dopo quarantine e review indipendente.
+[Evidenza](evidence/BACKUP-AUTOMATION-2026-10-15.md).
 
 
 ## Stato GitHub verificato — 16 ottobre
@@ -66,7 +67,7 @@ non attesta CI nuova; i risultati CI delle nuove PR sono nelle evidenze dedicate
 | P1 | Mantenere lo spazio VPS | PM per verifica; retention ordinaria sulla VPS | Pulizia legacy 3,65 GB verificata; retention refresh 3 ottobre completata, corrente/precedente e reference protetti; controllo Codex ogni 48 ore attivo | Riserva 6 GiB solo pre-cattura; nessuna garanzia sul picco. [Prove](evidence/RETENTION-2026-09-30.md), [incidente](evidence/INCIDENT-2026-10-03.md) |
 | P1 | Chiudere i residui GitHub con review e controlli sul head finale | Autori dei workstream e reviewer indipendenti | Consegna principale #108 fusa il 4 ottobre; #100 e #101 aperte; #112, #113 e #114 draft. CI e CodeQL verdi sui head pubblicati #101, #113 e #114 registrati nell'[handoff](PM-HANDOFF.md) | Nessun merge dei residui attestato; aggiornamenti locali sugli alert ancora da consegnare. Code review e CI non sostituiscono i gate operativi |
 | P2 | Completare la certificazione QA della release | QA indipendente da assegnare | Fixture Chrome/Firefox/WebKit 21/21 per motore; axe qualificato; errore HTTP del cursore provato e 40 richieste di carico passate sulla copia restaurata; restano Shopify E2E/mobile/a11y/guasto-freschezza/carico produzione | [Prova e limiti](evidence/RECOVERY-LINUX-2026-09-30.md); riutilizzare prove valide, sessione negozio da sbloccare |
-| P1 | Completare recupero fuori VPS | PM, operatore continuativo da assegnare | Backup valido del 15 ottobre; restore isolati VPS `current`/`previous` PASS; runtime di test chiuso e live operativo; pulizia finale delle copie isolate completata; [prove](evidence/BACKUP-AUTOMATION-2026-10-15.md) | Host vuoto non provato perché immagine preesistente. Timer backup disabilitato; componente health inerte. Job del 16 ottobre fallito `checkpoint_failed` prima del trasferimento, staging conservato e diagnosi in corso. Restano margine disco, conservazione e custodia indipendente della password; health non coperto dallo snapshot precedente |
+| P1 | Completare recupero fuori VPS | PM, operatore continuativo da assegnare | Backup completo del 17 ottobre, gate `read-data` PASS; restore isolati `current`/`previous` PASS; runtime di test chiuso e live operativo; staging fallito del 16 ottobre rimosso dopo review; [prove](evidence/BACKUP-AUTOMATION-2026-10-15.md) | Host vuoto non provato perché immagine preesistente. Timer abilitato, prima esecuzione automatica da osservare; componente health inerte. Restano margine disco, conservazione e custodia indipendente della password; pacchetto health inerte incluso nella cattura; una futura attivazione richiede aggiornare inventario e backup |
 | P2 | Valutare il lancio pubblico | Jacopo decide; PM prepara il pacchetto | Decisione su rimozione password, rischi residui e gestione operativa | Nessuna autorizzazione attuale alla rimozione password |
 | P3 | Migliorare filtri e ordinamenti | Workstream #10, da pianificare | Contratto dati/UX approvato e prove su campioni verificati | Lingua, condizione, finish e altri sort non sono dichiarati disponibili |
 | P3 | Progettare “Altre stampe di questa carta” | PM per fattibilità; autore da assegnare | Identità canonica affidabile, gruppo completo, link Shopify, preview tastiera/mobile | È autorizzata solo la documentazione |

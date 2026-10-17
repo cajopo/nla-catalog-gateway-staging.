@@ -319,9 +319,13 @@ pending-state wording; they do not broaden the gateway's read-only boundary.
   senza avviare il job; un successivo job avviato alle 11:38:34 UTC è terminato
   alle 11:39:01 UTC con `checkpoint_failed`, prima del trasferimento. Il timer
   resta disabilitato; la configurazione v2 `d5d65f` con sorgente `929c7b0` e servizio `804` è installata; lo staging di circa 2,14 GB resta conservato per diagnosi.
-- Limiti: margine disco per trasferimenti lunghi/falliti, custodia indipendente
-  della password, retention cloud e alert email restano aperti. L'ultimo backup
-  valido è il job delle 13:30:23 UTC del 15 ottobre. [Evidenza](evidence/BACKUP-AUTOMATION-2026-10-15.md).
+- Aggiornamento 17 ottobre: correzione `b56ca95` installata, nuovo backup completo
+  e verificato `read-data`; timer abilitato alle 01:00 UTC, prima scadenza osservata
+  18 ottobre. Il payload fallito è stato rimosso dopo quarantena, verifica funzionale
+  e review indipendente; le prove sono conservate.
+- Limiti: primo ciclo automatico ancora da osservare, crescita oltre i carichi
+  usati per la riserva disco, custodia indipendente della password, retention
+  cloud e alert email restano aperti. [Evidenza](evidence/BACKUP-AUTOMATION-2026-10-15.md).
 
 ## D-022 — Attivazione UptimeRobot e referente iniziale
 
