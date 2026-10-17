@@ -80,9 +80,10 @@ Non esiste una prova di recapito degli alert. `OnFailure` è vuoto nelle unità
 NLA e non risultano unità o nomi di file cron NLA per monitor fra quelli censiti.
 Il monitor esterno proposto e la sua attivazione sono descritti sotto. Una futura prova dovrà
 inviare un messaggio identificabile al destinatario autorizzato, conservarne
-esito e ricezione e verificare deduplicazione. È stata autorizzata e richiesta
-la sola email di attivazione UptimeRobot; nessun messaggio di prova di guasto
-è stato inviato.
+esito e ricezione e verificare deduplicazione. L'email di attivazione UptimeRobot
+è stata ricevuta e confermata; il collaudo degli alert resta da eseguire.
+Per le autorizzazioni correnti vale D-023: non riaprire decisioni già prese.
+Non simulare guasti sul servizio attivo per provocare una notifica.
 
 Per la scelta del proprietario, il pacchetto minimo proposto segnala servizio
 irraggiungibile, refresh fallito e sorgente oltre 24 ore. Un guasto va confermato
@@ -124,8 +125,9 @@ passaggi storici completati. Non reinviare l'email né una richiesta di attivazi
 Ricevuta privata in `output/nla-recovery/20260930/alert-activation-20261015T134927Z-f53333c3/receipt.json`.
 Resta da verificare il monitor con metodo GET esplicito: [UptimeRobot usa HEAD di default e GET al retry](https://help.uptimerobot.com/en/articles/11358466-how-to-debug-a-monitor-showing-as-down-in-uptimerobot),
 mentre `/readyz` ha risposto GET 200 e HEAD 404 alla sonda read-only del 15 ottobre.
-L'ispezione della dashboard è stata fermata da Computer Use per il blocco tecnico
-della policy sull'URL; l'autorizzazione del titolare non manca ([D-022](DECISIONS.md#d-022--attivazione-uptimerobot-e-referente-iniziale),
+L'ispezione della dashboard è stata fermata inizialmente dalla verifica URL;
+il 17 ottobre Computer Use ha negato l'accesso all'app Google Chrome prima
+della lettura della pagina. L'autorizzazione del titolare non manca ([D-022](DECISIONS.md#d-022--attivazione-uptimerobot-e-referente-iniziale),
 [D-023](DECISIONS.md#d-023--continuità-operativa-entro-lobiettivo-autorizzato)).
 Proseguire entro lo scope autorizzato senza ripetere richieste di consenso; non
 reinviare l'email. Il monitor e la prova di alert non sono dichiarati verificati.
@@ -137,11 +139,10 @@ alle 17:06 UTC. Questo è un controllo singolo, non un monitor configurato.
 
 Il 15 ottobre alle 16:20–16:21 UTC il pacchetto health è stato preparato sulla
 VPS: 101 file verificati, unità validate e import Python eseguiti senza privilegi.
-Servizi e `/opsz` restano da attivare. Prima di intervenire, seguire i gate e i
-pin in [preparazione degli alert](evidence/OPERATIONAL-HEALTH-2026-10-15.md):
-attendere pipeline idle, validare il proxy, predisporre rollback e aggiornare
-insieme l'inventario backup. Non reinstallare il pacchetto già preparato e non
-riutilizzare un tentativo parziale. La prova di recapito resta distinta.
+La successiva attivazione del 17 ottobre è riuscita: servizi, `/opsz`, proxy
+e inclusione nel backup sono verificati. Seguire lo stato finale e i pin in
+[prove degli alert](evidence/OPERATIONAL-HEALTH-2026-10-15.md), senza ripetere
+l'attivazione già conclusa. La prova di recapito resta distinta.
 
 ## Retention e controllo ogni 48 ore
 
@@ -231,10 +232,11 @@ la memoria disponibile dopo il seed era 2.090.254.336 byte, sotto la soglia di
 2.415.919.104 byte. Docker Desktop è ora attivo (Engine 29.7.2, Linux/amd64,
 4 CPU, 3.001.667.584 byte RAM); la misura successiva era ancora sotto soglia.
 Il volume nominato e il container seed arrestato sono preservati per ripresa;
-nessun runtime applicativo è stato creato o avviato. Non fare reset, cambiare
-limiti o cancellare dati senza decisione e review. È pendente la scelta asincrona
-di Jacopo fra preparare un riavvio concordato con 4 GB per Docker Desktop o
-rinviare; nessuna impostazione è stata modificata.
+nessun runtime applicativo è stato creato o avviato. Questi sono dati storici:
+il controllo del 17 ottobre registra 506.658.816 byte di RAM libera e pipe
+Docker Desktop assente. Il blocco corrente è la disponibilità di risorse,
+non un nuovo consenso dopo D-023. Nessuna impostazione è stata modificata;
+preservare dati e applicazioni durante l'eventuale preparazione della prova.
 
 Nuova prova PC del 3 ottobre: checkpoint copiato alle 10:11:07 UTC
 (222.535.954 byte, SHA-256
@@ -245,8 +247,8 @@ ledger con 4.180 draft attempts e 4.180 draft publications. Checkpoint/seed del
 30 settembre invariati. Questa acquisizione non è atomica tra catalogo e ledger,
 non è backup automatico/durevole e non certifica RTO completo. Preflight memoria
 alle 09:58:17: 2.378.674.176 byte disponibili, sotto il minimo 2.415.919.104;
-limiti invariati, seed fermo, nessun nuovo container avviato. Decisioni del
-proprietario ancora pendenti. Vedi [evidenza](evidence/BACKUP-PC-2026-10-03.md).
+limiti invariati, seed fermo, nessun nuovo container avviato. La misura corrente
+e il blocco di risorse sono nell'[evidenza](evidence/BACKUP-PC-2026-10-03.md).
 
 Il precedente [drill sulla VPS](evidence/RECOVERY-LINUX-2026-09-30.md) ha superato restore
 dati, ammissione del gateway e prove HTTP/carico limitato sulla stessa VPS,
@@ -256,10 +258,11 @@ Il tempo include validazione integrale; non usarlo come garanzia RTO né dedurre
 capacità di produzione dal piccolo carico loopback. Usare nuovi percorsi,
 identità e ricevute per nuove prove; verificare risorse prima dell'avvio e
 conservare anche i fallimenti. Un nuovo tentativo richiede diagnosi, preflight
-e review; evitare aumenti automatici dei limiti o riavvii in sequenza.
+e review tecnica indipendente, senza una nuova richiesta di consenso al
+titolare; evitare aumenti automatici dei limiti o riavvii in sequenza.
 
-Per completare il drill PC, attendere la decisione pendente e ripetere il
-preflight delle risorse prima di creare un runtime isolato; non riavviare
+Per completare il drill PC, verificare risorse sufficienti prima di creare
+un runtime isolato; non riavviare
 automaticamente il seed già concluso. Le prove positive richieste per un eventuale
 runtime non sono ancora state eseguite. Restano da collaudare il recupero
 operativo su host nuovo, credenziali, TLS/DNS/App
@@ -340,6 +343,12 @@ La prova pilota non catturava i dati correnti della VPS. La successiva prima
 cattura completa cifrata e lo scheduler attivo dal 17 ottobre sono descritti
 sotto; restano custodia indipendente della password e verifica del primo ciclo automatico.
 Nessuna rimozione cloud, policy di retention o modifica lifecycle è stata attivata.
+
+L'[inventario cloud del 17 ottobre](evidence/CLOUD-RETENTION-2026-10-17.md)
+conferma quattro snapshot e la copia manuale, 622.179.661 byte complessivi negli
+upload completati. Conservare queste copie; zero candidati alla rimozione ora.
+La proposta di rotazione e i vincoli di raggruppamento restic sono nell'evidenza;
+non usare il default per percorso, perché ogni job ha un percorso diverso.
 
 Il codice del nuovo servizio è nella PR #113, con CI Linux e review indipendente
 passate. Anche la prova sintetica nel sandbox systemd reale è passata: lettura

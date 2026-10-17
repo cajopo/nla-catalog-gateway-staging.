@@ -299,9 +299,10 @@ pending-state wording; they do not broaden the gateway's read-only boundary.
   modificabile nella configurazione, senza inserirlo nel codice o nei documenti
   pubblicati. La scelta e' registrata in privato in
   `output/nla-recovery/20260930/alert-recipient-20261015.json`.
-- Limiti: confermare un indirizzo non dimostra la consegna e non autorizza un
-  messaggio di prova. Servizio, referente operativo e collaudo restano distinti.
-  Preparare il recapito concreto prima della richiesta finale di autorizzazione.
+- Limiti al momento della scelta: il solo indirizzo non dimostrava la consegna
+  né autorizzava messaggi di prova. Per le successive autorizzazioni usare
+  D-022 e D-023, senza riproporre una richiesta già superata; la prova di
+  recapito resta necessaria.
 
 ## D-021 — Credenziali del backup sulla VPS
 
@@ -341,9 +342,9 @@ pending-state wording; they do not broaden the gateway's read-only boundary.
   La verifica del monitor resta da completare: Computer Use ha interrotto
   l'accesso perché non poteva accertare l'URL del browser per applicare la
   propria policy. È un limite tecnico distinto dall'autorizzazione del titolare.
-- Limiti: questa autorizzazione riguarda l'email di attivazione e il monitor
-  proposto; non autorizza simulazioni di guasto sul servizio o altri messaggi
-  di prova. Refresh fallito e dati oltre 24 ore richiedono copertura ulteriore.
+- Limiti della richiesta iniziale: riguardava l'email di attivazione e il monitor
+  proposto. Per proseguire vale la successiva D-023; non simulare guasti sul
+  servizio attivo. Refresh fallito e dati oltre 24 ore richiedono copertura ulteriore.
   [Procedura e fonte ufficiale](OPERATIONS-RUNBOOK.md).
 
 ## D-023 — Continuità operativa entro l'obiettivo autorizzato
@@ -354,6 +355,8 @@ pending-state wording; they do not broaden the gateway's read-only boundary.
 - Decisione: proseguire autonomamente il lavoro già compreso nell'obiettivo
   operativo NLA e nelle autorizzazioni precedenti. Non riproporre al titolare
   le stesse decisioni, né trattare ogni comando o verifica come un nuovo consenso.
+  Il collaudo previsto degli alert al recapito già scelto rientra nell'obiettivo;
+  non estendere destinatari o servizi e non provocare guasti sul servizio attivo.
   Raggruppare le operazioni revisionate in procedure concrete; quando disponibile,
   usare un'autorizzazione tecnica persistente limitata alla procedura del progetto.
 - Esecuzione: restano richiesti controlli tecnici, prove riproducibili e review

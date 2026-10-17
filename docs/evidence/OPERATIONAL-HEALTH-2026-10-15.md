@@ -14,6 +14,13 @@ L'ispezione della dashboard è stata fermata da Computer Use perché non poteva
 verificare l'URL corrente su Windows. La conferma del proprietario è registrata;
 stato, metodo HTTP, intervallo e contatto del monitor non sono ancora verificati
 direttamente. Non reinviare l'attivazione senza una nuova necessità.
+
+Il nuovo tentativo del 17 ottobre ha elencato le finestre disponibili, ma
+`get_window_state` ha restituito «Computer Use was not approved to use Google
+Chrome». Nessuna pagina letta o azione eseguita nella dashboard. È un blocco
+tecnico dell'accesso all'app, distinto dal precedente errore di verifica URL
+e dall'autorizzazione persistente del proprietario (D-023). Non aggirarlo tramite
+lettura di sessioni, cookie o credenziali del browser.
 Il destinatario è modificabile; il recapito degli alert resta da collaudare.
 
 Il controllo iniziale di `/readyz` copre la raggiungibilità. Il nuovo componente

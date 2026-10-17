@@ -11,8 +11,8 @@ da un'autorizzazione del titolare già presente.
 
 ## Checkpoint di consegna — 17 ottobre
 
-PR #101: checkpoint documentale `e5851e2`, CI `39013921899` e CodeQL
-`39013921898` riusciti. PR #112 (`8657aaa`) e #113 (`b56ca95`) sono ora
+PR #101: checkpoint documentale `ef53db3`, CI `39017228273` e CodeQL
+`39017228183` riusciti. PR #112 (`8657aaa`) e #113 (`b56ca95`) sono ora
 pronte per la revisione e non fuse; i rispettivi controlli sono verdi.
 La descrizione #112 include il primo ciclo market ordinario riuscito dopo il fix.
 L'attivazione health del 17 ottobre è riuscita entro le 08:18 UTC: `/opsz`
@@ -30,6 +30,12 @@ e pipe Docker Desktop assente al controllo: niente prova pesante locale,
 niente variazioni a container o limiti. Il recupero su host vuoto resta aperto
 per risorse insufficienti; non è in attesa di un nuovo consenso di Jacopo.
 La documentazione e le prove dei checkpoint precedenti sotto restano storiche.
+Il successivo tentativo Computer Use del 17 ottobre ha negato l'accesso tecnico
+a Chrome prima di leggere la dashboard: monitor e recapito restano non verificati,
+senza nuove richieste di consenso e senza aggirare il blocco.
+Inventario Backblaze delle 08:50 UTC completato: quattro snapshot e copia
+manuale presenti, 622.179.661 byte; nessuna cancellazione o lifecycle attivata.
+Conservare tutte le copie attuali. [Prove e proposta retention](evidence/CLOUD-RETENTION-2026-10-17.md).
 
 ## Punto di partenza
 

@@ -124,8 +124,9 @@ installati, offline sul PC. Il ciclo Shopify effettivo resta da collaudare.
   recupero di configurazione, credenziali e certificati inclusi nella cattura.
 - Alert e obiettivi di recupero. Jacopo ha confermato ricezione dell'email,
   attivazione e accesso alla dashboard. Il monitor UptimeRobot resta da verificare:
-  la lettura UI è stata fermata dal blocco tecnico URL di Computer Use, non per
-  consenso mancante. Metodo, intervallo e contatto non sono verificati; la sonda
+  la lettura UI è stata fermata prima dalla verifica URL e, il 17 ottobre,
+  dall'accesso tecnico a Chrome negato da Computer Use. Non manca il consenso
+  del titolare. Metodo, intervallo e contatto non sono verificati; la sonda
   `/readyz` ha mostrato GET 200 e HEAD 404. Non reinviare email/attivazione.
   [D-022 e procedura](DECISIONS.md#d-022--attivazione-uptimerobot-e-referente-iniziale).
 - Funzioni ulteriori: ordinamenti diversi dal GID, filtri lingua/condizione/finish,
