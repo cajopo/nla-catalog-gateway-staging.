@@ -22,20 +22,21 @@ La correzione market è stata applicata il 15 ottobre alle 10:17:47 UTC e verifi
 alle 10:18:11 UTC. Dopo la correzione, i cicli market del 15 ottobre alle 14:00 UTC
 e del 16 ottobre alle 02:00 UTC sono terminati con successo; l'ultima sorgente è
 stata acquisita alle 03:00 UTC. Alle 11:45 UTC refresh e market risultavano
-`inactive/success`, con pointer/generazioni protette invariati. La PR #112 resta
-draft con CI verde. [Evidenza](evidence/MARKET-SOURCE-2026-10-15.md).
+`inactive/success`, con pointer/generazioni protette invariati. La PR #112 è ora
+pronta per la revisione, con CI verde. [Evidenza](evidence/MARKET-SOURCE-2026-10-15.md).
 
 I risultati CI/CodeQL e lo stato runtime del 3 ottobre sono storici. Il ciclo market e i controlli live del 15–16 ottobre sono riportati sopra; restano aperte le lacune backup/recupero, QA completa e verifica del monitor UptimeRobot.
 
 La [prova cifrata S3 del 15 ottobre](evidence/BACKUP-ENCRYPTION-2026-10-15.md)
 ha verificato il checkpoint storico del 3 ottobre. Il backup completo più recente
-è il job `backup-c121a380661d4bbfa6b6c0c5de1a09b4` del 17 ottobre alle 07:16 UTC,
+è il job `backup-919aeddea561432c9da028bd7e3ff6e8`, verificato entro le 08:18 UTC del 17 ottobre,
 con `read-data` e gate PASS, snapshot
-`bd249a0d8064bd950a2ef6ddb37eb9329c36eec2101491884d0c8cd794e42963`. Il timer è
+`ffa29faf98aecfc61a39c2ad52f9bc69803a3b479e2cc877fa7a87297ef43cf8`. Il timer è
 enabled/waiting per il 18 ottobre alle 01:00 UTC (`Persistent=no`); la prima
 esecuzione automatica non è ancora osservata. Restore isolati `current` e
 `previous` PASS; host vuoto non provato (`emptyHostRecoveryProven=false`, immagine
-già residente). Runtime live operativo e health inerte. Lo staging del job fallito
+già residente). Runtime live e health `/opsz` operativi; configurazione health inclusa
+nel backup. Restano verifica del recapito e copertura dei fallimenti backup. Lo staging del job fallito
 del 16 ottobre è stato rimosso esattamente dopo quarantine e review indipendente.
 [Evidenza](evidence/BACKUP-AUTOMATION-2026-10-15.md).
 
@@ -54,8 +55,9 @@ Prima di questa revisione documentale, PR #101 era aperta, non draft e non fusa,
 Il precedente head #101 `6913748dc1513b29c084db522865386067db241a` è storico.
 Il nuovo commit documentale e i suoi controlli sono identificati nella PR #101;
 non usare i risultati del precedente head per attestare questa revisione.
-PR #112 e #113 sono draft e non fuse secondo le rispettive evidenze market e
-backup. I residui #100, #101, #112 e #113 non sono fusi. La lettura dei metadati
+Al checkpoint del 16 ottobre PR #112 e #113 erano draft. Il 17 ottobre #112,
+#113 e #114 sono state rese pronte per la revisione, con CI/CodeQL verdi e prove
+operative documentate; restano non fuse, insieme a #100 e #101. La lettura dei metadati
 non attesta CI nuova; i risultati CI delle nuove PR sono nelle evidenze dedicate. Il checkpoint documentale pubblicato precedente della PR #101 era `b6ab98e618b0867f875b97ccf6d6854359a826d0`, con CI `38819024906` e CodeQL `38819025033` completati con esito positivo alle 22:56 UTC. Il head finale e i controlli del delta attuale sono da seguire nei metadati della PR #101.
 
 ## Ordine di lavoro proposto
@@ -63,11 +65,11 @@ non attesta CI nuova; i risultati CI delle nuove PR sono nelle evidenze dedicate
 | Priorità | Attività | Responsabile della fase | Criterio di accettazione | Vincolo |
 | --- | --- | --- | --- | --- |
 | P1 | Consolidare la documentazione e registrare i limiti delle prove | PM Codex | Stato, roadmap, decisioni e fonti coerenti; cronologia preservata; controlli documentali ripetibili | Questo intervento; #34 resta aperta fino alla consegna prevista |
-| P1 | Completare le garanzie operative e chi interviene in caso di errore | PM; Jacopo referente iniziale degli alert | Jacopo ha confermato email ricevuta/attivata e login; pacchetto health preparato e verificato ma inerte. [Stato e prove](evidence/OPERATIONAL-HEALTH-2026-10-15.md) | Monitor UptimeRobot non verificato per blocco della verifica URL in Computer Use; proxy e inventario backup non aggiornati, recapito non collaudato |
+| P1 | Completare le garanzie operative e chi interviene in caso di errore | PM; Jacopo referente iniziale degli alert | Jacopo ha confermato email ricevuta/attivata e login; health `/opsz` attiva e verificata, proxy e inventario backup aggiornati. [Stato e prove](evidence/OPERATIONAL-HEALTH-2026-10-15.md) | Monitor UptimeRobot non verificato per blocco della verifica URL in Computer Use; recapito non collaudato e copertura dei fallimenti backup ancora assente |
 | P1 | Mantenere lo spazio VPS | PM per verifica; retention ordinaria sulla VPS | Pulizia legacy 3,65 GB verificata; retention refresh 3 ottobre completata, corrente/precedente e reference protetti; controllo Codex ogni 48 ore attivo | Riserva 6 GiB solo pre-cattura; nessuna garanzia sul picco. [Prove](evidence/RETENTION-2026-09-30.md), [incidente](evidence/INCIDENT-2026-10-03.md) |
-| P1 | Chiudere i residui GitHub con review e controlli sul head finale | Autori dei workstream e reviewer indipendenti | Consegna principale #108 fusa il 4 ottobre; #100 e #101 aperte; #112, #113 e #114 draft. CI e CodeQL verdi sui head pubblicati #101, #113 e #114 registrati nell'[handoff](PM-HANDOFF.md) | Nessun merge dei residui attestato; aggiornamenti locali sugli alert ancora da consegnare. Code review e CI non sostituiscono i gate operativi |
+| P1 | Chiudere i residui GitHub con review e controlli sul head finale | Autori dei workstream e reviewer indipendenti | Consegna principale #108 fusa il 4 ottobre; #100 e #101 aperte; #112, #113 e #114 pronte per la revisione. CI e CodeQL verdi sui head pubblicati registrati nell'[handoff](PM-HANDOFF.md) | Nessun merge dei residui attestato; ogni nuovo commit documentale richiede i propri controlli. Code review e CI non sostituiscono i gate operativi |
 | P2 | Completare la certificazione QA della release | QA indipendente da assegnare | Fixture Chrome/Firefox/WebKit 21/21 per motore; axe qualificato; errore HTTP del cursore provato e 40 richieste di carico passate sulla copia restaurata; restano Shopify E2E/mobile/a11y/guasto-freschezza/carico produzione | [Prova e limiti](evidence/RECOVERY-LINUX-2026-09-30.md); riutilizzare prove valide, sessione negozio da sbloccare |
-| P1 | Completare recupero fuori VPS | PM, operatore continuativo da assegnare | Backup completo del 17 ottobre, gate `read-data` PASS; restore isolati `current`/`previous` PASS; runtime di test chiuso e live operativo; staging fallito del 16 ottobre rimosso dopo review; [prove](evidence/BACKUP-AUTOMATION-2026-10-15.md) | Host vuoto non provato perché immagine preesistente. Timer abilitato, prima esecuzione automatica da osservare; componente health inerte. Restano margine disco, conservazione e custodia indipendente della password; pacchetto health inerte incluso nella cattura; una futura attivazione richiede aggiornare inventario e backup |
+| P1 | Completare recupero fuori VPS | PM, operatore continuativo da assegnare | Backup completo dopo attivazione health del 17 ottobre, gate `read-data` PASS; restore isolati `current`/`previous` PASS; runtime di test chiuso e live operativo; staging fallito del 16 ottobre rimosso dopo review; [prove](evidence/BACKUP-AUTOMATION-2026-10-15.md) | Host vuoto non provato perché immagine preesistente; RAM PC insufficiente al controllo del 17 ottobre. Timer abilitato, prima esecuzione automatica da osservare. Restano margine disco, conservazione cloud e custodia indipendente della password |
 | P2 | Valutare il lancio pubblico | Jacopo decide; PM prepara il pacchetto | Decisione su rimozione password, rischi residui e gestione operativa | Nessuna autorizzazione attuale alla rimozione password |
 | P3 | Migliorare filtri e ordinamenti | Workstream #10, da pianificare | Contratto dati/UX approvato e prove su campioni verificati | Lingua, condizione, finish e altri sort non sono dichiarati disponibili |
 | P3 | Progettare “Altre stampe di questa carta” | PM per fattibilità; autore da assegnare | Identità canonica affidabile, gruppo completo, link Shopify, preview tastiera/mobile | È autorizzata solo la documentazione |

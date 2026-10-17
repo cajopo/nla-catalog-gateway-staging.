@@ -55,13 +55,14 @@ con hash identico. Era la prova sul checkpoint storico; il successivo primo
 backup completo corrente è descritto sotto. Restano verifica del primo ciclo
 automatico, conservazione e custodia indipendente delle chiavi.
 Il codice del backup automatico è nella [PR #113](https://github.com/cajopo/nla-catalog-gateway-staging./pull/113).
-Il backup completo più recente è del 17 ottobre alle 07:16 UTC: job
-`backup-c121a380661d4bbfa6b6c0c5de1a09b4`, `read-data` e gate PASS, snapshot
-`bd249a0d8064bd950a2ef6ddb37eb9329c36eec2101491884d0c8cd794e42963`. Timer
+Il backup completo più recente è del 17 ottobre, verificato entro le 08:18 UTC: job
+`backup-919aeddea561432c9da028bd7e3ff6e8`, `read-data` e gate PASS, snapshot
+`ffa29faf98aecfc61a39c2ad52f9bc69803a3b479e2cc877fa7a87297ef43cf8`. Timer
 attivo, enabled per le 01 UTC con prossimo trigger il 18 ottobre alle 01 UTC;
 la prima esecuzione automatica non è ancora stata osservata. Il restore da host
 vuoto resta non provato perché l'immagine era già residente. Il runtime live è
-operativo, il componente health resta inerte. [Prove e limiti](evidence/BACKUP-AUTOMATION-2026-10-15.md).
+operativo; la sonda `/opsz` è attiva, verificata e inclusa nella copertura del backup.
+Il recapito email resta da verificare. [Prove e limiti](evidence/BACKUP-AUTOMATION-2026-10-15.md).
 PR #113 e #114 hanno i controlli riportati nell'[handoff PM](PM-HANDOFF.md).
 Il precedente checkpoint documentale pubblicato della PR #101 era `4cae6c7c6c84a00a64c3ca286eba1b4963bea643`, con CI `38920068601` e CodeQL `38920068523` riusciti il 16 ottobre. Il nuovo head e i controlli del delta attuale sono da seguire nei metadati della PR #101.
 La [verifica operativa del 30 settembre](evidence/MAINTENANCE-2026-09-30.md)
@@ -87,10 +88,11 @@ installati, offline sul PC. Il ciclo Shopify effettivo resta da collaudare.
 | Suggerimenti | Nomi distinti e dinamici per le singole, confinati al gioco | Prove browser del 28 e 29 settembre |
 | Filtri | Famiglia, disponibilità, espansione/rarità per le singole e stato URL | Fotografia e prove browser |
 | Presentazione | Immagini, SOLD OUT rosso, prezzi assenti/zero omessi nell'interfaccia; acquisto nativo Shopify | [QA della home e del carrello](workstreams/ws-10-home-browser-20260928.md) |
-| Aggiornamenti — ultimo stato VPS, 17 ottobre | Alle 07:16 UTC refresh e market `inactive/success`; pointer `43476…`, generazioni `3fbd719c` / `5b22aed7` invariate; 13.249.085.440 byte liberi | [Evidenza backup](evidence/BACKUP-AUTOMATION-2026-10-15.md); storico: [incidente](evidence/INCIDENT-2026-10-03.md) |
+| Aggiornamenti — ultimo stato VPS, 17 ottobre | Alle 08:18:54 UTC refresh e market `inactive/success`; pointer `43476…`, generazioni `3fbd719c` / `5b22aed7` invariate; 13.247.131.648 byte liberi | [Evidenza backup](evidence/BACKUP-AUTOMATION-2026-10-15.md); storico: [incidente](evidence/INCIDENT-2026-10-03.md) |
 | Refresh e market — storico 3 ottobre | Run `20261003t073240z-3f7384f8` exit 0; freshness e smoke PASS; dataset `5152b3c3…`. Questo è un esito storico, non lo stato corrente | [Incidente](evidence/INCIDENT-2026-10-03.md) |
-| Retention e spazio VPS — 17 ottobre | Quarantena, controllo indipendente e rimozione esatta del vecchio staging `971c`: 743 file, 2.126.986.835 byte; 13.249.085.440 byte liberi al controllo finale | [Pulizia e retention](evidence/BACKUP-AUTOMATION-2026-10-15.md); storico 30 settembre: [retention](evidence/RETENTION-2026-09-30.md) |
-| Backup e recupero | Backup completo del 17 ottobre, gate `read-data` PASS e timer abilitato; prima esecuzione automatica ancora da osservare. Restore isolati `current`/`previous` PASS; host vuoto non provato. Componente health inerte; runtime live operativo | [Backup e restore](evidence/BACKUP-AUTOMATION-2026-10-15.md); prove storiche: [Backblaze 3 ottobre](evidence/BACKBLAZE-2026-10-03.md), [checkpoint PC](evidence/BACKUP-PC-2026-10-03.md), [PC](evidence/RECOVERY-PC-2026-10-01.md), [reference](evidence/REFERENCE-RECOVERY-2026-10-01.md), [Linux](evidence/RECOVERY-LINUX-2026-09-30.md) |
+| Retention e spazio VPS — 17 ottobre | Quarantena, controllo indipendente e rimozione esatta del vecchio staging `971c`: 743 file, 2.126.986.835 byte; 13.247.131.648 byte liberi dopo il backup health | [Pulizia e retention](evidence/BACKUP-AUTOMATION-2026-10-15.md); storico 30 settembre: [retention](evidence/RETENTION-2026-09-30.md) |
+| Backup e recupero | Backup completo dopo attivazione health, gate `read-data` PASS e timer abilitato; prima esecuzione automatica ancora da osservare. Restore isolati `current`/`previous` PASS; host vuoto non provato. Runtime live operativo | [Backup e restore](evidence/BACKUP-AUTOMATION-2026-10-15.md); prove storiche: [Backblaze 3 ottobre](evidence/BACKBLAZE-2026-10-03.md), [checkpoint PC](evidence/BACKUP-PC-2026-10-03.md), [PC](evidence/RECOVERY-PC-2026-10-01.md), [reference](evidence/REFERENCE-RECOVERY-2026-10-01.md), [Linux](evidence/RECOVERY-LINUX-2026-09-30.md) |
+| Salute operativa | `/opsz` GET/HEAD, collector e timer attivi, verifiche catalogo passate; monitora market/refresh, freschezza e spazio. Recapito esterno e copertura backup ancora da completare | [Attivazione health](evidence/OPERATIONAL-HEALTH-2026-10-15.md) |
 | QA componente | Matrice 21/21 in Chrome, Firefox e WebKit; smoke touch 390×844 e retry dopo 503 simulato sulla fixture; axe zero violazioni, un incomplete di contrasto valutato manualmente nello stato coperto | Solo fixture congelata; non certifica Shopify/mobile reale, Safari/iOS, screen reader, outage gateway o freschezza. Dettagli: [QA](evidence/MAINTENANCE-2026-09-30.md#qa-sul-sorgente-congelato); ricevuta privata in `../output/nla-recovery/20260930/evidence/qa-touch-down-final/index.json` |
 | Sicurezza | Confine Shopify App Proxy autenticato; gateway e refresh in sola lettura | Architettura #17 e prove del servizio |
 | Tema | 175195881740 principale; 175194898700 conservato per ripristino; password attiva | [Ricevute del passaggio](workstreams/ws-12-release-readiness-20260929.md) |
@@ -100,20 +102,25 @@ installati, offline sul PC. Il ciclo Shopify effettivo resta da collaudare.
 - Completare la consegna delle correzioni successive e della documentazione:
   l'integrazione principale della PR #108 è fusa dal 4 ottobre in `90f4f49`;
   le PR #100 (recovery), #101 (PM), #112 (market), #113 (backup) e #114
-  (health operativa #13) restano non fuse. #101 aveva CI e CodeQL verdi sul checkpoint documentale precedente `b6ab98e618b0867f875b97ccf6d6854359a826d0` (CI `38819024906`, CodeQL `38819025033`); il head finale e i controlli del delta attuale sono da seguire nei metadati PR #101; #113 e #114 hanno review indipendenti e CI/CodeQL passati
-  sui rispettivi head. Il delta documentale locale sugli alert richiederà
-  consegna e controlli sul relativo commit; resta la riconciliazione delle issue.
+  (health operativa #13) restano non fuse. #112 e #113 sono pronte per la
+  revisione, con CI e CodeQL verdi rispettivamente su `8657aaa` e `b56ca95`;
+  #114 è anch'essa pronta su `59a74e6`, con controlli verdi e sonda attivata. #101 ha
+  CI `39013921899` e CodeQL `39013921898` riusciti sul checkpoint `e5851e2`;
+  i successivi aggiornamenti documentali richiedono i propri controlli.
+  Restano la riconciliazione delle issue e l'integrazione delle PR.
 - Certificazione completa della release: matrice browser/accessibilità/carico
   e prove di recupero legate alla stessa versione.
 - Completare backup automatico e recupero del servizio: backup completo del 17 ottobre,
   gate `read-data` PASS e timer enabled/waiting; prima esecuzione automatica da osservare
   ([evidenza](evidence/BACKUP-AUTOMATION-2026-10-15.md)). Restore VPS `current`/`previous`
   PASS, host vuoto non provato perché l'immagine era preesistente; runtime di test chiuso,
-  live operativo e componente health inerte. Restano margine disco, conservazione cloud,
+  live operativo e componente health attivo e incluso nel backup. Restano margine disco, conservazione cloud,
   custodia chiave e prova della prima esecuzione automatica.
-  Il preflight memoria PC del 3 ottobre (2.378.674.176 byte, sotto il minimo
-  2.415.919.104) e il seed fermo descrivono quella prova storica PC, non il restore
-  VPS. Restano inoltre il ciclo reale runtime/refresh/importer e la verifica di
+  Il controllo PC del 17 ottobre alle 07:51:06 UTC rileva 506.658.816 byte
+  di RAM disponibile; la pipe Docker Desktop non è presente al controllo.
+  La prova locale su host vuoto resta sospesa per risorse insufficienti,
+  senza attendere un nuovo consenso. Restano inoltre il ciclo reale
+  runtime/refresh/importer e la verifica di
   recupero di configurazione, credenziali e certificati inclusi nella cattura.
 - Alert e obiettivi di recupero. Jacopo ha confermato ricezione dell'email,
   attivazione e accesso alla dashboard. Il monitor UptimeRobot resta da verificare:

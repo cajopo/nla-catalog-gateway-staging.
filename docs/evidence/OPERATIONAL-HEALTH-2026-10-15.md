@@ -1,4 +1,4 @@
-# Preparazione degli alert operativi — 15 ottobre 2026
+# Alert operativi — preparazione del 15 e attivazione del 17 ottobre 2026
 
 Workstream #13, candidato [PR #114](https://github.com/cajopo/nla-catalog-gateway-staging./pull/114)
 al commit `59a74e60edd967dc27e65fd95ac2a390eb619961`. Questa evidenza distingue
@@ -17,11 +17,14 @@ direttamente. Non reinviare l'attivazione senza una nuova necessità.
 Il destinatario è modificabile; il recapito degli alert resta da collaudare.
 
 Il controllo iniziale di `/readyz` copre la raggiungibilità. Il nuovo componente
-propone `/opsz`: il collector legge lo stato dei processi, le ricevute, la
+espone `/opsz`, attivato il 17 ottobre: il collector legge lo stato dei processi, le ricevute, la
 freschezza del catalogo e lo spazio disponibile; un processo separato espone
 solo un esito generico. Una lettura scaduta oltre 90 secondi produce 503.
 Un refresh in corso non è automaticamente un errore. Restano fuori da questa
 copertura la frequenza dei 5xx, la latenza, CPU/memoria e l'abilitazione dei timer.
+Il collector `59a74e6` controlla market e refresh, ma non fallimenti o anzianità
+del backup. Il limite di 90 secondi riguarda l'osservazione del collector, non
+l'età del backup: questa copertura resta un lavoro separato.
 L'endpoint e il codice da soli non costituiscono una catena di alert verificata.
 
 ## Preparazione riproducibile
@@ -89,14 +92,92 @@ Non è stata richiesta la validazione con provisioning e non è stata applicata
 alcuna configurazione. Questa validazione ulteriore, finestra idle, rollback
 e verifica delle rotte restano necessari prima di cambiare il proxy in esercizio.
 
-L'inventario del backup installato fissa l'hash del Caddyfile precedente e non
-include il nuovo componente. Prima di attivarlo occorre coordinare l'aggiunta
-dei 101 file e delle tre unità con il nuovo hash Caddy. Il delta proposto
+Al 15 ottobre l'inventario installato fissava l'hash del Caddyfile precedente e
+non includeva il nuovo componente. La proposta allora preparata coordinava
+l'aggiunta dei 101 file e delle tre unità con il nuovo hash Caddy. Il delta storico
 `health-backup-delta.json` ha SHA-256
 `ae6319b00475d129815f936f015bf272d55e11bc27cb7e941d6346eb9f3790b3`;
 non è stato applicato. Lo stato temporaneo sotto `/run` viene rigenerato e non
 è un dato di recupero. Il primo snapshot corrente già verificato su Backblaze
-precede il nuovo componente; non attribuirgli questa copertura.
+precedeva il nuovo componente; non attribuirgli questa copertura.
+
+## Contratto nativo verificato — 17 ottobre 2026
+
+La sonda in lettura delle 07:46:59 UTC è PASS: Caddy `v2.11.4`, container edge
+`5d6fcb2d76c545df10c099dea208016aa9beb084022be0282d03d614973df87b`, immagine
+`af555904a0961945f16bb323a501457b13a4f7e9bde969b145b97da80b38ecbe`.
+Il processo usa UID/GID `10002:10002`, rete host e filesystem radice in sola
+lettura. Il Caddyfile è un bind del singolo file, in sola lettura; `/config` e
+`/data` sono bind scrivibili dei due alberi dedicati sotto
+`/var/lib/nla-staging-edge/`. `StopSignal` e `StopTimeout` non sono impostati:
+la sonda riporta `null`, senza inventare valori.
+
+Risultato SHA-256 `ac2153f863def7436b76f0f542959872e34f495e2f0d71d024bda9acf0fb62e1`,
+prova privata `recovery-draft/reviewed-health-inspect-20261017T074657Z-a1ba9d67de874d1f945778df15d520de`.
+La prima sonda si era fermata nel comando inspect; la revisione successiva
+gestisce i campi Docker opzionali. Il primo errore non è attribuito a un campo
+specifico, poiché quella ricevuta non conservava tale informazione.
+
+Market, refresh e backup risultano inattivi con esito positivo. Il timer backup
+è abilitato e attende il 18 ottobre alle 01:00 UTC. Le tre unità health risultano
+ancora `not-found`: non sono state attivate né è stato cambiato il proxy.
+La configurazione backup corrente `f17ba531…` e lo snapshot verificato del
+17 ottobre includono già i 101 file del pacchetto inerte e il codice `b56ca95`.
+La futura attivazione richiede soltanto aggiungere le tre unità installate e
+aggiornare il pin Caddy, quindi eseguire un nuovo backup verificato. Il delta
+storico `ae6319…` non va applicato alla nuova base senza riconciliazione.
+
+## Avvio HTTP: tentativo del 17 ottobre
+
+Nel primo tentativo è mancata l'attesa tra avvio del processo e disponibilità
+HTTP: l'operazione del 17 ottobre, iniziata alle 08:05:58 UTC,
+si è fermato in `loopback-health` con `ConnectionRefusedError`. Nessuna validazione
+o modifica Caddy e nessun backup erano ancora iniziati; rollback verificato.
+Prova privata `reviewed-health-activate-20261017T080558Z-d49c8271925a499d8e697b0e7512c691`.
+
+La diagnostica successiva, in sola lettura, ha SHA-256
+`ea7dee46c5d72dc4bba3590cf88efc3f7aabc6f8629d89282d6d95f2ca4b455e`:
+i tre avvii systemd sono riusciti; il server è stato avviato alle 08:06:05.446783
+UTC; il rollback ne ha richiesto lo stop alle 08:06:06.249972 UTC, senza un evento di uscita,
+errore o riavvio precedente. Il segnale 15 sull'observer appartiene al rollback.
+La unità `Type=exec` conferma l'esecuzione del processo, non l'apertura del
+listener; la procedura controllava HTTP immediatamente senza attenderlo.
+I log applicativi sono disabilitati: non si attribuisce un traceback inesistente
+al processo. Queste prove motivano una correzione circoscritta della readiness,
+con attesa limitata e controlli invariati, prima di un nuovo tentativo.
+
+## Attivazione e backup verificati — 17 ottobre, 08:18 UTC
+
+Il secondo tentativo, con helper `8c018b175a49e649209aa9ac322b37533aa742955e210194019ddb521357c95b`,
+è riuscito. Il delta aggiunge solo l'attesa HTTP limitata con controllo di PID,
+invocazione e assenza di riavvii; risposte errate, osservazioni non sane e arresti
+restano bloccanti. Tredici test sintetici e la review indipendente sono passati.
+
+Sono attive le tre unità del pacchetto `59a74e6`: server loopback, observer e
+timer. Il server e il timer sono abilitati. Il batch ha verificato due osservazioni
+sane distinte, GET/HEAD `/opsz` 200 con `no-store`, la validazione Caddy con
+provisioning, il nuovo hash e inode effettivamente montati dopo il riavvio del
+solo edge e dieci richieste autenticate al catalogo. `/readyz` conserva GET 200
+e HEAD 404. Pointer, generazioni corrente/precedente e pipeline sono preservati.
+
+Il Caddyfile attivo è `ef4c3fa2e611798e6d42f50962b1b9ddfb9ef27ea5d7494ea406b3a499dd73b9`.
+La configurazione backup attiva è `54a376a48a83e4dced5d81251b7e68ca99c6bc0804a3b44992361488ed2b6190`:
+rispetto a `f17ba531…` aggiunge solo le tre unità installate e aggiorna il pin Caddy.
+Il nuovo job `backup-919aeddea561432c9da028bd7e3ff6e8` è completo, con `read-data`
+PASS e ricevuta per-job identica a `last-success`; staging vuoto e servizio
+riuscito. Solo dopo questi controlli il timer backup è tornato enabled/waiting
+per il 18 ottobre alle 01:00 UTC. Non è ancora una prova del ciclo automatico.
+
+Risultato attivazione SHA-256 `fc16f0a161eecafa570b057e5f27b8ee204680e6516648838cadc4ac8852ffb4`;
+prova privata `reviewed-health-activate-20261017T081704Z-a8739425feb740ab85edcf2300302123`.
+Controllo finale alle 08:18:54.384365 UTC: 13.247.131.648 byte liberi, market e
+refresh `success`, retention completata senza residui pianificati; SHA-256
+`7540b405998f541770ce453071d001da5f9c655b75aabc9e999d9987a571a3f1`.
+Snapshot e ricevuta completa nell'[evidenza backup](BACKUP-AUTOMATION-2026-10-15.md).
+
+Il monitor esterno può usare `/opsz` per includere refresh e freschezza, anche
+con HEAD. Configurazione e recapito UptimeRobot restano non verificati; la sonda
+non controlla ancora fallimenti o anzianità del backup, né l'abilitazione dei timer.
 
 ## Contratti consultati
 

@@ -281,3 +281,33 @@ La recovery locale è in `recovery-draft/reviewed-backup-recover-20261017T071214
 Al controllo finale erano liberi 13.249.085.440 byte; market e refresh erano `success`, il pointer `43476…` e le generazioni `3fbd719c` / `5b22aed7` erano invariati. Gli esiti falliti del 16 ottobre e il vecchio stato con timer disabilitato restano nella cronologia, non descrivono lo stato corrente. Il componente health è ancora inerte; il restore su host vuoto, la conservazione cloud e la QA completa restano aperti.
 
 Il checkpoint documentale pubblicato precedente della PR #101 era `b6ab98e618b0867f875b97ccf6d6854359a826d0`, con CI `38819024906` e CodeQL `38819025033` completed/success alle 22:56 UTC. Il head finale e i controlli del delta attuale sono da seguire nei metadati della PR #101.
+
+## Backup dopo attivazione health — 17 ottobre, 08:18 UTC
+
+L'ultimo backup verificato è ora `backup-919aeddea561432c9da028bd7e3ff6e8`,
+creato dopo l'[attivazione della sonda](OPERATIONAL-HEALTH-2026-10-15.md).
+Il codice resta `b56ca95`; la configurazione attiva è
+`54a376a48a83e4dced5d81251b7e68ca99c6bc0804a3b44992361488ed2b6190`.
+Il delta da `f17ba531…` aggiunge solo le tre unità health installate e aggiorna
+il pin Caddy a `ef4c3fa2…`; nessun altro contenuto viene rimosso dalla copertura.
+
+- Ricevuta SHA-256: `ce6018583f3d7369d36f97d9a09bf453748a60f8575f4ed8fad49ebad148b4e6`.
+- Snapshot: `ffa29faf98aecfc61a39c2ad52f9bc69803a3b479e2cc877fa7a87297ef43cf8`.
+- Manifest checkpoint: `8baedc6e59f7f1959d79bbe4925c3a9bb3e54be27c234b00c55aec5c6045adb0`.
+- Risultato attivazione: `fc16f0a161eecafa570b057e5f27b8ee204680e6516648838cadc4ac8852ffb4`.
+- Retention finale: `7540b405998f541770ce453071d001da5f9c655b75aabc9e999d9987a571a3f1`.
+
+Gate completi: nuova ricevuta `complete`, `read-data` PASS, uguaglianza esatta
+per-job/last-success, directory job vuota e servizio riuscito. Il timer è stato
+riabilitato soltanto dopo il backup; attende il 18 ottobre alle 01:00 UTC.
+La review indipendente ha verificato localmente il wrapper effettivamente
+trasmesso, helper/config esatti, stdout, result e codici d'uscita: si basa sulle
+attestazioni del codice revisionato, senza una seconda acquisizione dei file
+remoti. Evidenza privata `reviewed-health-activate-20261017T081704Z-a8739425feb740ab85edcf2300302123`.
+
+Alle 08:18:54.384365 UTC restavano 13.247.131.648 byte liberi, market e refresh
+inattivi con `success`, pointer `43476…` e generazioni `3fbd719c`/`5b22aed7`
+invariati; nessun residuo della retention pianificata. La health è ora operativa.
+Restano da provare primo ciclo automatico, host vuoto, custodia indipendente,
+conservazione cloud e recapito degli alert; la sonda non verifica ancora
+fallimento o anzianità del backup. I precedenti snapshot restano conservati.

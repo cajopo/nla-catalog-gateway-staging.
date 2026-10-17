@@ -9,6 +9,28 @@ non ripetere richieste di consenso già risolte: [decisione D-023](DECISIONS.md#
 Raggruppare i passaggi revisionati; distinguere un vincolo tecnico dell'ambiente
 da un'autorizzazione del titolare già presente.
 
+## Checkpoint di consegna — 17 ottobre
+
+PR #101: checkpoint documentale `e5851e2`, CI `39013921899` e CodeQL
+`39013921898` riusciti. PR #112 (`8657aaa`) e #113 (`b56ca95`) sono ora
+pronte per la revisione e non fuse; i rispettivi controlli sono verdi.
+La descrizione #112 include il primo ciclo market ordinario riuscito dopo il fix.
+L'attivazione health del 17 ottobre è riuscita entro le 08:18 UTC: `/opsz`
+verificato, catalogo preservato e nuovo backup `919aed…` completo con `read-data`.
+Config backup `54a376a4…`, Caddy `ef4c3fa2…`, timer backup nuovamente abilitato.
+Il controllo delle 08:18:54 UTC registra 13.247.131.648 byte liberi e pipeline
+riuscite; il primo tentativo era stato annullato con rollback verificato prima
+di cambiare Caddy. [Prove e limiti](evidence/OPERATIONAL-HEALTH-2026-10-15.md).
+L'attivazione non prova il recapito UptimeRobot o la copertura di errori del backup.
+La PR #114 (`59a74e6`) è ora pronta per la revisione, con CI/CodeQL verdi e
+descrizione aggiornata all'attivazione. Nessuna PR residua è stata fusa.
+
+Il controllo PC delle 07:51:06 UTC registra 506.658.816 byte di RAM libera
+e pipe Docker Desktop assente al controllo: niente prova pesante locale,
+niente variazioni a container o limiti. Il recupero su host vuoto resta aperto
+per risorse insufficienti; non è in attesa di un nuovo consenso di Jacopo.
+La documentazione e le prove dei checkpoint precedenti sotto restano storiche.
+
 ## Punto di partenza
 
 L'obiettivo operativo della chat «Esegui bootstrap e audit NLA» è concluso.
@@ -375,5 +397,6 @@ finale delle copie isolate del restore ha rimosso esattamente 643 file, 72 direc
 e 3.930.589.037 byte, conservando lo snapshot; il runtime di test è chiuso e il live
 resta operativo. Il successivo backup completo del 17 ottobre è PASS e il timer è
 enabled/waiting per il 18 ottobre alle 01:00 UTC; la prima esecuzione automatica resta
-da osservare. Il componente health è inerte. Per job, ricevute e storico dei fallimenti,
+da osservare. Il successivo backup dopo attivazione health è `919aed…`, verificato
+entro le 08:18 UTC del 17 ottobre; il componente è ora attivo. Per job, ricevute e storico dei fallimenti,
 vedere [dettagli backup](evidence/BACKUP-AUTOMATION-2026-10-15.md).

@@ -363,16 +363,27 @@ Alle 07:16 UTC il controllo finale rilevava 13.249.085.440 byte liberi, market e
 refresh riusciti, puntatore e generazioni protette invariati. Versioni, hash,
 limiti di capacità e ricevute sono nell'[evidenza aggiornata](evidence/BACKUP-AUTOMATION-2026-10-15.md).
 
+Alle 08:18 UTC la sonda operativa è stata attivata: GET/HEAD
+`https://catalog-staging.nextlevelarena.it/opsz` restituiscono l'esito generico
+della salute operativa. Il backup più recente è ora `backup-919aeddea561432c9da028bd7e3ff6e8`,
+snapshot `ffa29faf98aecfc61a39c2ad52f9bc69803a3b479e2cc877fa7a87297ef43cf8`,
+ricevuta `ce6018583f3d7369d36f97d9a09bf453748a60f8575f4ed8fad49ebad148b4e6`.
+La configurazione attiva `54a376a4…` include le tre unità installate e il nuovo
+Caddyfile `ef4c3fa2…`; il timer backup è enabled/waiting dopo `read-data` PASS.
+La sonda non copre ancora errori/anzianità del backup o abilitazione dei timer.
+Per i controlli eseguiti, il rollback del primo tentativo e i limiti del recapito
+vedere [attivazione health](evidence/OPERATIONAL-HEALTH-2026-10-15.md).
+
 ## Decisioni e obiettivi da chiudere
 
 | Voce | Situazione | Proposta verificabile |
 | --- | --- | --- |
 | Destinazione durevole | Backblaze scelto dal proprietario il 3 ottobre; prima copia nel bucket privato, download e restore dati verificati | Scelta e primo trasferimento conclusi; restano copertura completa e conservazione delle copie. [Prova Backblaze](evidence/BACKBLAZE-2026-10-03.md) |
 | Backup automatico e retention | Nuovo backup completo e verificato il 17 ottobre; timer abilitato alle 01:00 UTC; payload del precedente tentativo fallito rimosso dopo quarantena e review | Osservare il primo ciclo automatico; completare conservazione cloud e gestione della crescita. Il margine verificato usa riserve derivate dai carichi osservati, non un limite massimo futuro |
-| Credenziali e reference | Reference completa e configurazione restaurata accettate offline; credenziali/certificati esclusi | Collaudare il ciclo refresh/importer con accessi recuperati; definire conservazione cifrata e recupero degli accessi, senza segreti in Git/documenti |
+| Credenziali e reference | La cattura cifrata completa include configurazione e credenziali; i checkpoint PC storici le escludevano. Reference e dati hanno superato le verifiche isolate | Collaudare l'intero recupero con accessi e certificati, conservare indipendentemente la password del repository; nessun segreto in Git/documenti |
 | RPO | Scheduler giornaliero attivo; primo ciclo automatico e recapito degli errori ancora da verificare | Proposta iniziale: massimo 24 ore per copie fuori host, coerente con tolleranza del catalogo; non è ancora una garanzia operativa |
 | RTO | Restore dati PC: 49,826 s; copia riscaricata da Backblaze: 61,970 s; reference storico: 23,164 s. Questi tempi escludono trasferimenti e avvio del runtime; nessun RTO completo certificato | Budget proposto: 2 ore su host Linux già pronto, escluso provisioning/DNS; serve prova completa con immagine/credenziali, oggi non garantito. [Prova Backblaze](evidence/BACKBLAZE-2026-10-03.md) |
-| Alert e reperibilità | Jacopo ha confermato email ricevuta/attivata e login alla dashboard; configurazione del monitor e recapito non verificati per blocco della verifica URL in Computer Use | Verificare stato, metodo, intervallo e contatto del monitor; concordare una prova di recapito e completare la copertura refresh/freschezza. [Stato e limiti](evidence/OPERATIONAL-HEALTH-2026-10-15.md) |
+| Alert e reperibilità | Jacopo è il referente iniziale e ha confermato email ricevuta/attivata e login; configurazione del monitor e recapito non verificati per blocco della verifica URL in Computer Use, non per consenso mancante | Verificare stato, metodo, intervallo, contatto e recapito del monitor; completare la copertura refresh/freschezza. [Stato e limiti](evidence/OPERATIONAL-HEALTH-2026-10-15.md) |
 | Recupero trigger persi | `Persistent=no` osservato | Valutare `Persistent=yes` e prova isolata dopo verifica dei vincoli di locking/overlap; nessun timer cambiato ora |
 
 Le proposte non sono SLA né assegnazioni implicite. PM e operatori conservano
