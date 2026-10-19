@@ -395,7 +395,7 @@ class CursorCodecV1:
         raw = canonical.to_json_bytes()
         if len(raw) > MAX_CONTRACT_BYTES:
             raise PaginationContractError("cursor context exceeds the byte limit")
-        message = (b"nla-search-v2\x00" if canonical.request.query not in (None, "") else b"") + raw
+        message = (b"nla-search-v3\x00" if canonical.request.query not in (None, "") else b"") + raw
         signature = hmac.new(self.secret, message, hashlib.sha256).digest()
         return f"{_url_encode(raw)}.{_url_encode(signature)}"
 
@@ -418,7 +418,7 @@ class CursorCodecV1:
         signature = _url_decode(parts[1])
         if len(raw) > MAX_CONTRACT_BYTES or len(signature) != hashlib.sha256().digest_size:
             raise InvalidCursorError("cursor token is invalid")
-        message = (b"nla-search-v2\x00" if expected_request.query not in (None, "") else b"") + raw
+        message = (b"nla-search-v3\x00" if expected_request.query not in (None, "") else b"") + raw
         expected_signature = hmac.new(self.secret, message, hashlib.sha256).digest()
         if not hmac.compare_digest(signature, expected_signature):
             raise InvalidCursorError("cursor token is invalid")

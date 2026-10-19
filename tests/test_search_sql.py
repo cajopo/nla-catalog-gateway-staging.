@@ -166,7 +166,8 @@ def test_sealed_subtype_filter_uses_the_shared_sql_path(tmp_path):
     assert _paginator(projection).fetch_page(absent).page.items == ()
 
 
-def test_search_cursors_bind_query_game_generation_and_new_semantics(projection):
+@pytest.mark.parametrize("old_domain", [b"", b"nla-search-v2\x00"])
+def test_search_cursors_bind_query_game_generation_and_new_semantics(projection, old_domain):
     paginator = _paginator(projection)
     selected = request("bolt", size=1)
     first = paginator.fetch_page(selected)
@@ -184,9 +185,9 @@ def test_search_cursors_bind_query_game_generation_and_new_semantics(projection)
         )
     context = first.page.next_cursor_context
     assert context is not None
-    assert context.request_context_dict()["searchSemanticsVersion"] == 2
+    assert context.request_context_dict()["searchSemanticsVersion"] == 3
     raw = context.to_json_bytes()
-    old_signature = hmac.new(HMAC_KEY, raw, hashlib.sha256).digest()
+    old_signature = hmac.new(HMAC_KEY, old_domain + raw, hashlib.sha256).digest()
     old_token = ".".join(
         base64.urlsafe_b64encode(part).decode().rstrip("=") for part in (raw, old_signature)
     )
