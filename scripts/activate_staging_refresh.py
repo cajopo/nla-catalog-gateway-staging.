@@ -221,29 +221,7 @@ def preflight(plan):
         assert directory.resolve() == directory and directory.is_dir()
         assert directory.stat().st_uid == 10001
         assert stat.S_IMODE(directory.stat().st_mode) == 0o700
-    # The locked coordinator publishes this terminal receipt only after its
-    # capture subprocess exits successfully. A separate per-run systemd unit is
-    # unnecessary; missing/ambiguous completion cannot produce this receipt.
-    receipt = json.loads(private_read(plan.capture / "operator-receipt.json"))
-    checkpoint = json.loads(private_read(plan.capture / "capture-checkpoint.v1.json"))
-    verified = json.loads(private_read(plan.capture / "runtime-verification-receipt.json"))
-    manifest = receipt["manifestSha256"]
-    assert manifest == plan.manifest
-    assert re.fullmatch("[0-9a-f]{64}", manifest)
-    assert receipt["status"] == "candidate-ready" and receipt["activeCatalogChanged"] is False
-    # Acquisition and packaging may use different revisions during recovery.
-    # Preserve the original acquisition pin; the verifier binds the producer below.
-    assert receipt["codeSha"] == checkpoint["identity"]["sourceCodeSha"]
-    assert re.fullmatch("[0-9a-f]{40}", receipt["codeSha"])
-    assert checkpoint["packageManifestSha256"] == manifest
-    assert checkpoint["summarySha256"] == verified["summarySha256"] == plan.summary
-    assert receipt["captureStartedAt"] == checkpoint["beforeObservedAt"] == plan.started
-    assert receipt["counts"] == checkpoint["beforeCounts"] == plan.counts
-    assert verified["status"] == "verified" and verified["runtimeBinding"] is True
-    assert verified["manifestSha256"] == manifest and verified["producerCodeSha"] == plan.new_code
-    assert (
-        verified["records"] == plan.counts["products"] and verified["activeCatalogChanged"] is False
-    )
+    manifest, source = capture_evidence(plan)
     verifier = inspect(plan.verifier)
     assert verifier["Image"] == plan.image and verifier["State"]["Status"] == "exited"
     assert verifier["State"]["ExitCode"] == 0 and not verifier["State"]["OOMKilled"]
@@ -274,6 +252,36 @@ def preflight(plan):
     assert values["NLA_APP_PROXY_BACKEND_PATH"] == "/proxy/catalog"
     before, pin = pointer(plan)
     assert pin == plan.old_pin and before["currentManifestSha256"] != manifest
+    destination = plan.store / "generations" / manifest
+    assert not destination.exists() and not destination.is_symlink()
+    return old, old_bytes, values, before, manifest, source, destination
+
+
+def capture_evidence(plan):
+    """Validate retained capture receipts and the sealed package without mutation."""
+    # The locked coordinator publishes this terminal receipt only after its
+    # capture subprocess exits successfully. A separate per-run systemd unit is
+    # unnecessary; missing/ambiguous completion cannot produce this receipt.
+    receipt = json.loads(private_read(plan.capture / "operator-receipt.json"))
+    checkpoint = json.loads(private_read(plan.capture / "capture-checkpoint.v1.json"))
+    verified = json.loads(private_read(plan.capture / "runtime-verification-receipt.json"))
+    manifest = receipt["manifestSha256"]
+    assert manifest == plan.manifest
+    assert re.fullmatch("[0-9a-f]{64}", manifest)
+    assert receipt["status"] == "candidate-ready" and receipt["activeCatalogChanged"] is False
+    # Acquisition and packaging may use different revisions during recovery.
+    # Preserve the original acquisition pin; the verifier binds the producer below.
+    assert receipt["codeSha"] == checkpoint["identity"]["sourceCodeSha"]
+    assert re.fullmatch("[0-9a-f]{40}", receipt["codeSha"])
+    assert checkpoint["packageManifestSha256"] == manifest
+    assert checkpoint["summarySha256"] == verified["summarySha256"] == plan.summary
+    assert receipt["captureStartedAt"] == checkpoint["beforeObservedAt"] == plan.started
+    assert receipt["counts"] == checkpoint["beforeCounts"] == plan.counts
+    assert verified["status"] == "verified" and verified["runtimeBinding"] is True
+    assert verified["manifestSha256"] == manifest and verified["producerCodeSha"] == plan.new_code
+    assert (
+        verified["records"] == plan.counts["products"] and verified["activeCatalogChanged"] is False
+    )
     source = plan.capture / "candidate"
     assert source.resolve() == source and source.is_dir()
     assert stat.S_IMODE(source.stat().st_mode) == 0o555
@@ -290,9 +298,7 @@ def preflight(plan):
         if name in artifacts:
             assert f.st_size == artifacts[name]["bytes"]
             assert digest(path) == artifacts[name]["sha256"]
-    destination = plan.store / "generations" / manifest
-    assert not destination.exists() and not destination.is_symlink()
-    return old, old_bytes, values, before, manifest, source, destination
+    return manifest, source
 
 
 def install(source, destination):
@@ -353,7 +359,11 @@ def create_runtime(plan, name, env_path, reference, expected_values, port):
         f"127.0.0.1:{port}:10000",
         plan.image,
     )
-    new = inspect(name)
+    return runtime_matches(plan, inspect(name), reference, expected_values, port)
+
+
+def runtime_matches(plan, new, reference, expected_values, port):
+    """Attest a created runtime, including an already-created recovery candidate."""
     assert new["Image"] == plan.image
     assert runtime_port(new) == port
     for key in ("User", "Entrypoint", "Cmd", "WorkingDir", "ExposedPorts"):
@@ -486,6 +496,15 @@ def apply(plan, checked):
     select(plan, "promote", plan.old_pin, manifest)
     if pointer(plan)[1] != new_pin:
         raise InspectBeforeRetry("promotion_pin_requires_inspection")
+    finish_promoted(plan, checked, new_id, new_pin)
+
+
+def finish_promoted(plan, checked, new_id, new_pin, *, rollback=True):
+    """Complete an attested promotion with the same forward and rollback handoff."""
+    old, old_bytes, values, before, manifest, _source, _destination = checked
+    old_port = runtime_port(old)
+    new_port = next(port for port in RUNTIME_PORTS if port != old_port)
+    new_env = plan.work / "candidate-runtime.env"
     committed = False
     try:
         note(plan, "DATASET_POINTER_PROMOTED")
@@ -502,6 +521,8 @@ def apply(plan, checked):
         retire(plan)
         note(plan, "ACTIVATED_READY_OLD_PACKAGE_AND_CONTAINER_RETAINED")
     except Exception:
+        if not rollback:
+            raise InspectBeforeRetry("recovery_handoff_requires_inspection") from None
         if committed:
             raise InspectBeforeRetry("committed_state_requires_inspection") from None
         if pointer(plan)[1] != new_pin:
