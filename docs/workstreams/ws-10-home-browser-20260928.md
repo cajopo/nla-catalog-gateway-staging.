@@ -1,5 +1,9 @@
 # Clone homepage consistency and real browser checks — 2026-09-28
 
+> Evidence retained from the private source preview on 30 September 2026. Statements
+> below describe their original observation dates. The [current project snapshot](../evidence/STATE-2026-09-30.md)
+> supersedes historical next-step and clone-role wording; no new execution is claimed.
+
 Issue #14; branch `agent/theme-metadata-filters`, parent `6215b92`.
 Only UNPUBLISHED clone `175195881740` (NLA — catalogo completo test) changed.
 MAIN, PowerTools and Shopify commercial data were not touched. No push or CI rerun.

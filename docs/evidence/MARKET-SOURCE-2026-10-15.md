@@ -55,8 +55,8 @@ Private evidence stays outside Git under
 `output/nla-recovery/20260930/evidence/market-failure-20261015/`:
 `diagnose_receipts_remote.result.json`, `source_failure_remote.result.json`,
 `probe_source_remote.result.json`, and `ledger_probe_remote.result.json`.
-The deployment receipt, independent review and full validation results belong in
-the pull request delivery record when available; no deployment is claimed here.
+Deployment, independent review and full validation are recorded below and in
+the pull request delivery record.
 
 ## Official contracts consulted
 
@@ -68,3 +68,57 @@ the pull request delivery record when available; no deployment is claimed here.
   [atomic replacement](https://docs.python.org/3.12/library/os.html#os.replace).
 - [systemctl v255](https://github.com/systemd/systemd/blob/v255/man/systemctl.xml):
   state inspection and `reset-failed`, separate from service start/restart.
+
+
+## Esito operativo verificato
+
+Applicazione completata il 15 ottobre 2026 alle 10:17:47 UTC; verifica finale
+10:18:11 UTC. Market sbloccato e inattivo in attesa del timer normale; nessun
+nuovo ciclo avviato. Il catalogo risponde HTTPS 200/ready. Ledger, puntatore,
+configurazione, ultima ricevuta e invocazione del refresh sono invariati.
+Timer market alle 14:00 UTC (16:00 Europe/Rome), refresh alle 15:00 UTC.
+
+Il fix del modulo di cattura è stato installato e verificato sul ciclo successivo.
+
+[PR #112](https://github.com/cajopo/nla-catalog-gateway-staging./pull/112) aperta
+in bozza, non fusa. [CI](https://github.com/cajopo/nla-catalog-gateway-staging./actions/runs/38718197954)
+verde: 4.108 test passati su Python 3.12 e 3.13, coverage completo 100%;
+Ruff, preflight (211 file), build, audit dipendenze e container passati.
+[CodeQL](https://github.com/cajopo/nla-catalog-gateway-staging./actions/runs/38718198059)
+verde. Python 3.13 segnala un ResourceWarning di connessione SQLite non chiusa
+nel test preesistente dei facet; non e' un test fallito o saltato.
+Due run Windows presentavano PermissionError intermittenti in fixture differenti:
+non sono stati indeboliti test o controlli, il gate completo e' quello Linux.
+
+Revisione indipendente di codice e helper approvata. Anche le prove sintetiche
+native Python 3.12.3 sulla VPS sono passate, senza richieste di rete.
+Il primo piano aveva rifiutato, prima di scrivere, l'UID 10001 del puntatore:
+il piano v2 verifica quell'UID soltanto per quel percorso esatto, coerente con
+il runtime, mantenendo UID 0 per gli altri file e tutti gli hash originali.
+
+Ulteriori ricevute private:
+repair-code-binding-v2.json, independent-recovery-review-v2.json,
+native_capture_proof_remote.result.json, repair_market_remote_plan_v2.result.json,
+repair_market_remote_apply_v2.result.json, post_repair_check_remote.result.json.
+Il helper v2 ha SHA256
+1c6824022a4a30df97e273294ec07f6264dc455ddb8b371b01827b53bb93c1b9;
+e' una procedura vincolata a questo incidente e non va riutilizzata su nuovi blocchi.
+
+## Primo ciclo completo dopo la correzione
+
+Run `market-20261015t140020z-69980f6a`, avviato alle 14:00:20 e terminato alle
+14:49:19 UTC del 15 ottobre con stato `draft_cycle_complete`. La cattura ha
+completato 2.438 espansioni e 257.154 blueprint; zero elementi differiti e
+zero tentativi selezionati, con `eligibleExhausted=true`. Il ciclo non ha
+selezionato stampe da importare. L'indice non è stato aggiornato perché non
+c'erano cambiamenti importer e l'indice esistente era fresco. Il successo non
+prova che sia stata esercitata una retry transitoria: non attribuire l'esito a
+quel percorso senza log che lo confermi.
+
+La ricevuta corrisponde byte per byte al ciclo; SHA-256 della ricevuta
+`3a723eab831cdba08e384660f820b16d1250924a6e35869eb1012d3477919a72`.
+La versione corretta della cattura installata è stata verificata sul ciclo.
+Alla verifica read-only delle 14:50:42 UTC entrambe le unità
+erano inattive e il refresh delle 15 UTC risultava pronto; spazio libero
+10.244.165.632 byte, generazioni corrente e precedente invariate. Il piano
+retention era completato senza elementi residui.

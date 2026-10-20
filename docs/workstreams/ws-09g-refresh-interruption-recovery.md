@@ -1,4 +1,4 @@
-﻿# WS-09: recover an interrupted catalog promotion (#13)
+ï»¿# WS-09: recover an interrupted catalog promotion (#13)
 
 The 1 October 2026 OpenSSL unattended upgrade invoked `needrestart`, which
 restarted `nla-market-catalog.service` while its nested catalog activation was
@@ -74,6 +74,15 @@ receipts with the unchanged ledger and recovered catalog receipt. Record
 The targeted suite reproduces interruption after the selector changes the pointer
 and before the coordinator records promotion. It verifies continuation using the
 same candidate and fail-closed behavior for changed receipts, resources, pointer,
-configuration and later-stage ambiguity. Full gate and VPS results are recorded
-below after execution. Private artifacts belong in the ignored recovery evidence
-folder, never in Git.
+configuration and later-stage ambiguity. On head `7ab94d3`, GitHub CI passed on
+Python 3.12 and 3.13 (3,885 tests and 100% coverage each), together with CodeQL.
+The independently reviewed recovery completed at 07:29:11 UTC on 3 October.
+Its original source timestamp remains 1 October; recovery alone does not establish
+current freshness. See the maintained [incident record](../evidence/INCIDENT-2026-10-03.md)
+for the separate ordinary refresh, functional checks and retention outcome.
+Private artifacts belong in the ignored recovery evidence folder, never in Git.
+
+The transient recovery unit also received an exact-name needrestart exclusion in
+`91-nla-incident-20261003.conf` before execution, independently reviewed and checked
+with Perl. This one-off guard did not replace or broaden the two normal-job
+exclusions; its hash and execution evidence are recorded in the incident.

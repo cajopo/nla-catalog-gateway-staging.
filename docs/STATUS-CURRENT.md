@@ -1,263 +1,233 @@
-# NLA catalog gateway — current status
+# Stato attuale del progetto NLA
 
-## Current acquisition candidate — 2026-09-18 (#89)
+Fotografia operativa aggiornata al 20 ottobre 2026. PM della fase: Codex,
+incaricato da Jacopo. Riferimenti: roadmap [#3](https://github.com/cajopo/nla-catalog-gateway-staging./issues/3),
+architettura #17, tassonomia #19 e manutenzione documentale #34.
 
-Merged #88 (`9fe7358`) supplies native Linux reconciliation. The next bounded
-slice acquires the existing two read-only Bulk exports on the VPS and reuses
-reconciliation/packaging, without a new service or automatic activation. Explicit
-checkpointed resume, independent counts and pinned canonical sources are required.
-See `workstreams/ws-07-vps-bulk-acquisition.md` for scope and verification status.
-Actual app credentials/installation, current source coverage and signed Shopify
-App Proxy proof remain separate; the full storefront goal and #11 remain open.
-Historical entries below do not supersede this current workstream.
+**Fase di manutenzione completata il 18 ottobre 2026 (100% dell'obiettivo
+autorizzato).** Garanzie operative e recupero verificati; ricevute anche le
+immagini della scheda prodotto mobile, che completano lo spot-check manuale
+PDP/carrello. La consegna GitHub è stata riattivata il 20 ottobre, separatamente
+dalla chiusura operativa ([D-030](DECISIONS.md#d-030--completare-la-consegna-github-nella-repository-pubblica)).
+[Verifica dei cinque requisiti e limiti](evidence/MAINTENANCE-CLOSURE-2026-10-18.md).
 
-## Current retained-cursor candidate — 2026-09-15 (#69)
+## Sito e priorità prima del lancio — 20 ottobre 2026
 
-- `agent/retained-cursor-generations` starts from packaging candidate `0621aed` (#67).
-- Valid signed cursors select their original verified generation after activation;
-  new searches use the active one. In-flight requests and key rotation are covered.
-- Eight bounded generation/codec slots; activation defers at capacity, never evicts a
-  valid cursor. Expiry frees memory only, not catalog files. Existing gates remain.
-- 257 distinct regressions pass, including the signed HTTP 30,001-product traversal;
-  runtime module line/branch coverage is 100%. Ruff (58 files), package build and
-  independent diff review pass. Preflight passes over 112 tracked files. Exact-head
-  CI remains required; final review SHA binding belongs in the delivery receipt.
-- Retention remains in-process: restart/replica continuity and real memory sizing
-  are explicitly open. Full #7 and the storefront goal are NOT complete.
-- No fresh real package, Shopify/PowerTools/theme write or deployment. Parent CI
-  timeout and the separate #68 workflow authorization gate are unchanged.
-- Details and reproducible commands: `docs/workstreams/ws-03b-retained-cursors.md`.
+Arena è pubblicato dal 19 ottobre: MAIN `210350735628`, precedente
+`175195881740` non pubblicato e conservato per rollback. Logo attuale mantenuto,
+stile Arena e accenti neon applicati; Jacopo ha confermato la visualizzazione
+corretta in incognito. La tipografia provvisoria del 18 ottobre è uno stato
+storico. Il negozio resta protetto da password.
+[Pubblicazione e prove](DECISIONS.md#d-028--stile-arena-pubblicato).
 
-## Current packaging simplification — 2026-09-15 (#67)
+Jacopo ha chiarito il 20 ottobre che prima del lancio pubblico vuole modifiche
+alla home, nuove funzionalità e nuove sezioni del sito non dedicate alla vendita.
+Sono tre workstream ancora da dettagliare, senza funzionalità, sezioni o scadenze
+già decise. Il lancio viene dopo il loro completamento e una decisione separata
+sulla password; Fase 2 chiusa e manutenzione ordinaria restano distinte.
+[Ordine di lavoro](ROADMAP-EXECUTION.md#ordine-di-lavoro-proposto) ·
+[Decisione](DECISIONS.md#d-029--home-funzionalità-e-sezioni-prima-del-lancio).
 
-- Branch `agent/staging-single-build` on source-metadata head `fbe3cfc` (#66).
-- Packaging builds once and retains the exact projection that passed every core
-  check. Standalone proofs remain ephemeral; failed proofs still remove output.
-- 122 focused tests pass; both changed implementation modules have 100% coverage.
-  Tests assert one build, unchanged file identity/fingerprint, rejection of bytes
-  changed after proof, and cleanup after proof/publication failures.
-- Independent review APPROVE (22 checks independently passed); 233 additional runtime,
-  sync-publication and activation regressions pass, including the 30,001-product HTTP
-  traversal. Ruff over all 57 Python files and package build pass; exact-head CI pending.
-- Parent #66 CodeQL passed but CI run `35018638110` was cancelled at the 15-minute
-  quality-job limit during the large search suite. Parent is not mergeable; no bypass.
-  No new real package or deployment.
-- Rechecked historical raw/reconciled/canonical temporary directories: no files.
-  The historical staging package and recovered original CSVs remain distinct inputs;
-  no stale package is relabeled as a current verified catalog.
-- Shopify read-only export inventory returned no bulk operations for the connected app
-  (not a claim about operations belonging to other apps); fresh acquisition remains open.
-- See `docs/workstreams/ws-09c-single-build-package.md`. Full storefront goal stays open.
+## Ricerca codici installata — 19 ottobre 2026
 
-## Current source metadata candidate — 2026-09-15 (#65)
+**Aggiornamento del 20 ottobre, 08:28 UTC:** il primo ciclo market successivo
+è completo e il refresh ordinario è terminato alle 06:07 UTC. Il manifest
+attivo corrisponde alla ricevuta; sorgente di circa quattro ore. La precedente
+segnalazione `market_incomplete` è superata: l'espansione rinviata il 19 ottobre
+aveva restituito HTTP 404 dalla fonte. `/readyz` è 200; `/opsz` resta 503, ora
+per `backup_attention`. Non dichiarare tutto UP. La diagnosi del 19 ottobre
+riportata sotto resta una prova storica.
+Alle 08:30 UTC è confermato il backup automatico odierno fallito
+(`checkpoint_failed`); ultimo backup completo il 19 ottobre alle 01:01 UTC.
+La causa interna del checkpoint resta da diagnosticare e correggere.
+[Verifica corrente](evidence/OPERATIONAL-CHECK-2026-10-20.md).
 
-- Branch `agent/source-card-codes`, parent `94d95ad` (#64) now CI/CodeQL green.
-- Original CSVs recovered outside Git; prior "awaiting CSV input" statements below
-  are superseded. All 291,787 public historical singles join by verified source ID.
-- Card metadata now reaches SQLite/public items; collector numbers feed scoped SQL
-  search/suggestions with sold-out records retained. No inferred printed-code aliases.
-- 485 focused tests pass, metadata module 100% covered; independent re-review APPROVE
-  after three fixes. All 332,667 real source rows parse; 30,001 collector-only results
-  traverse completely with sold-out inclusion. Exact-head CI remains required;
-  see `ws-01h-card-metadata.md`.
-- No current real-package acceptance, clone installation, sync/deploy or E2E completion.
+Su richiesta esplicita di Jacopo, installata la correzione locale `2c8c650`
+(`agent/card-code-search-115`): `FIN88` e `FIN-88` restituiscono la stessa carta,
+con suggerimenti e faccette coerenti. La stampa è esaurita e rimane esclusa
+con il filtro disponibili. Copertura aggregata Windows/Linux 100% su istruzioni
+e rami; 4.122 test Windows e 35 test nativi Linux passati, review indipendente.
 
-## Current clone UI candidate — 2026-09-15 (#14)
+Immagine effettiva `sha256:2231c268945bf3681c83b2f0fafa9ae71a0751e46972c963c205463fc2b24a22`,
+costruita sull'immagine `8a23ad08`/runtime `ed24a61` con soli quattro moduli aggiornati.
+Container `b89865e8...`, installazione registrata alle 21:05:56 UTC,
+prova finale alle 21:10:40 UTC. Fonte dati, pointer e ambiente accettato invariati;
+operatore/archive `881b9ca`, patch importer `8657aaa`, unità, Caddy, backup e monitor
+preservati. Modificato soltanto `image` nella configurazione del refresh futuro.
+Timer market 02/14 UTC e refresh 03/15 UTC attivi; nessun marker pendente.
+Al checkpoint del 19 ottobre il primo ciclo pianificato successivo non era
+ancora osservato; l'aggiornamento sopra registra la verifica del 20 ottobre.
 
-- `agent/theme-clone-integration` starts from `69f56a3` (#63), whose CI and CodeQL are green.
-- Local reusable Liquid header/page component: game selector, scoped adaptive suggestions,
-  sold-out visibility, keyset page navigation and explicit failure/restart states.
-- Real clone ID/UNPUBLISHED role and existing header/search checksums read; no upload or
-  Shopify mutation. Endpoint remains deliberately unconfigured pending real staging.
-- Official validation passed all seven Liquid/theme files; all 18 headless-browser fixture
-  checks pass. Three P2 state/focus findings and one P3 keyboard finding were corrected;
-  independent re-review APPROVE. No clone installation or real E2E is claimed.
-  Published as draft PR #64 on #63; implementation commit `0d0345c`.
-  Exact-head remote CI remains pending; see `ws-10-theme-clone.md`.
-- The architecture audit recommends targeted simplification, not a wholesale rewrite.
-  Full goal remains open: printed codes, images, real package, durable sync, deployment/E2E.
+**Attenzione operativa preesistente:** `/readyz` 200, `/opsz` GET/HEAD 503.
+Il collector segnalava `market_incomplete` già prima del deploy (20:00 e
+20:52:13 UTC). Ricevuta immutabile `draft_cycle_partial` del ciclo
+`market-20261019t140017z-be2a057f`, SHA256 `5fb4de9672fcc50d5194db59214ff5458985479d6764bc6631d8aae0ebc72096`.
+Non è un guasto introdotto dalla ricerca; non dichiarare il monitor UP.
+Esito market e monitor non sono stati modificati né è stato forzato un ciclo.
+Al checkpoint del 19 ottobre il problema market restava manutenzione separata.
 
-## Current runtime candidate — 2026-09-15 (#62)
+Ricevute VPS: `/opt/nla-staging/search-code-2c8c650/rollout/` e
+`/var/lib/nla-catalog-refresh/20261019t205146z-48551a72/`.
+[Metodo, prove, limiti e rollback](workstreams/ws-05-code-hyphen-search.md).
+Prove private PC nel worktree `C:\Users\umbri\.codex\worktrees\0072\nla-catalog-gateway-staging\output\card-code-search-20261019`.
+Al checkpoint del 19 ottobre non erano stati eseguiti push, PR o workflow GitHub.
+La consegna successiva è integrata tramite #116 il 20 ottobre, secondo D-030.
+Non rieseguire i due helper di installazione/finalizzazione una tantum.
 
-- Branch `agent/runtime-verified-output`, based on `162edb4` (#61). No merge/deployment.
-- The concrete authenticated service now relies on its verified generation gate, instead
-  of three unconditional static denials. Default/missing dependencies still fail closed.
-- Core proof schema v2 checks current SQL search/suggestions; obsolete proof reports are
-  rejected. Runtime assembly no longer builds unused search/facet/public-item copies.
-- Signed HTTP/ASGI and readiness tests exercise actual gates without activation overrides.
-  Independent review found and resolved one sampled-query-normalization P2. 368 focused
-  regressions pass; four changed modules have 100% coverage. The 30,001-product signed
-  service traversal passes without activation overrides. No real-package activation claimed.
-- The preceding `162edb4` is now fully CI/CodeQL green (runs `35006893228`/`35006893235`).
-- Printed codes, real package rebuild/acceptance, clone, durable sync, deployment and E2E
-  still remain. Source CSV location is still awaiting input. Shopify/PowerTools/MAIN untouched.
+## Stato operativo
 
-## Previous search checkpoint — 2026-09-15 (#60)
+- Il catalogo live resta operativo e in sola lettura verso Shopify. Shopify è
+  autoritativo per prodotti, varianti, prezzi, inventario, pagine, carrello e ordini.
+- L'ultimo controllo completo della retention del 17 ottobre alle 11:42:43 UTC conferma
+  market e refresh inattivi con esito success, timer attivi, ricevuta
+  e stato corrente coerenti, zero directory residue previste dalla retention e
+  solo due generazioni protette. Spazio libero VPS: 13.246.488.576 byte.
+  [Ricevuta retention](../output/nla-recovery/20260930/evidence/retention-periodic-20261017T114241Z-1b73631c/retention_periodic_check_remote.result.json)
+- Il primo backup automatico è riuscito il 18 ottobre, dalle 01:00:12 alle
+  01:01:33 UTC: circa 81 secondi, integrità `read-data` PASS. Il manifest remoto
+  dello snapshot `9fc4fe1…` include l'observer `319ca0b` con i pin attesi. Le copie
+  cloud sono protette; la rotazione automatica resta opzionale e inattiva.
+  [Primo backup automatico](evidence/BACKUP-SCHEDULED-2026-10-18.md)
+- Drill applicativo isolato chiuso: `current` PASS (04:42:55.573467–05:02:30.871598 UTC,
+  1.175,298131 s, 10 richieste) e `previous` PASS (05:03:13.812059–05:22:46.065102 UTC,
+  1.172,253043 s, 10 richieste). Entrambi chiusi 45m29s dopo il download; la pulizia
+  è esclusa da tale durata. Alle 05:26:27.145572 UTC sono stati rimossi 765 file e
+  104 directory (3.931.679.750 byte, solo percorsi restored/catalog); ricevuta
+  `deletion_complete` e journal `Deactivated successfully`. Spazio libero:
+  13.750.943.744 byte. Evidenze conservate. Proposta
+  RPO 36 h in esercizio regolare; RTO 2 h su Linux pronto con accessi disponibili.
+  [Checkpoint e limiti](evidence/RECOVERY-APPLICATION-2026-10-18.md)
+- La prova di carico controllato del 17 ottobre è completata: 54 richieste HTTPS
+  riuscite, massimo due concorrenti; è la prova limitata prevista e non misura la
+  capacità massima. Dopo cleanup, GET pubblico `/opsz` alle 05:29:06.024486 UTC
+  ha restituito HTTP 200, body `healthy`, in 0,604 s. I due runtime del drill
+  sono PASS e chiusi come sopra.
+  [Prova HTTPS](evidence/PUBLIC-GATEWAY-2026-10-17.md) ·
+  [Backup e restore](evidence/BACKUP-AUTOMATION-2026-10-15.md)
+- I materiali runtime e TLS recuperati dal backup hanno hash verificati,
+  handshake TLS e controlli negativi PASS in 18,806 secondi; il drill applicativo
+  successivo è documentato sopra. [Materiali](evidence/RECOVERY-MATERIALS-2026-10-18.md) ·
+  [Preparazione](evidence/RECOVERY-RESUME-2026-10-18.md)
+- Monitor UptimeRobot esistente configurato su `/opsz` e UP secondo conferma
+  di Jacopo; intervallo 5 minuti visibile nello screenshot prima del cambio URL.
+  Recapito TEST DOWN/UP verificato in Gmail alle 00:52 UTC; sonda indipendente
+  GET/HEAD `/opsz` 200 alle 01:13 UTC. Non ripetere attivazione, test email o
+  cambio URL. L'accesso tecnico a Chrome resta indisponibile per la QA Shopify;
+  l'ispezione diretta della configurazione dopo la modifica è distinta dalla
+  conferma del titolare. [Prova email e monitor](evidence/ALERT-DELIVERY-2026-10-18.md)
+- Il negozio resta protetto da password. Il tema Arena MAIN è `210350735628`;
+  il precedente `175195881740` è conservato per rollback.
+- Il 18 ottobre la lettura API del componente MAIN e dei testi italiani ha
+  confermato l'equivalenza con la fixture storica dopo normalizzazione delle
+  righe. Le prove del componente restano riutilizzabili; nessuna nuova prova
+  browser né equivalenza dell'intero tema è dichiarata.
+  PDP e carrello stretti sono documentati da immagini del proprietario, con
+  coerenza verificata indipendentemente. In quella prova font e dimensioni erano
+  provvisori; lo stile Arena pubblicato il 19 ottobre supera tale stato. Accessibilità completa e
+  down/stale live sono limiti di contesto, non gate originali dimostrati.
+  [Binding](evidence/QA-COMPONENT-BINDING-2026-10-18.md) ·
+  [Copertura e limiti QA](evidence/QA-REMAINING-2026-10-18.md)
+- Il drill, la pulizia isolata e le lacune QA applicabili della fase sono chiusi.
 
-- Main is `22787055bbfa676b6700af0611fe5530186d3d5e`; dependency PRs through #57
-  remain open. The search branch is `agent/search-name-code-v2`, based on #57
-  (`3c24e1db93be18c1df90ea5635bc7f93ae120c48`). No merge or deployment is claimed.
-- The current user goal requires literal substring matches in card name OR code,
-  scoped by game, including sold-out cards, complete pagination and adaptive suggestions.
-- In-progress code routes runtime search/stock-filter pagination through SQLite keyset,
-  replacing per-request Python search/facet/result scans. Schema v2 derives and verifies
-  normalized names, variant SKU/barcode codes and inventory facts from retained source records.
-- Printed collector codes are NOT yet covered by this adapter. They require the verified
-  CSV source join; do not equate SKU/barcode support with completion of the card-code goal.
-- Database suggestions share the search predicate. The optional HTTP suggestion envelope
-  is now implemented with explicit first-page opt-in (maximum ten groups), with signed-request
-  integration tests. The theme-clone UI is still missing; static output gates remain closed.
-- The configured `C:\\NLA_DATA` directory is currently absent. Inspected raw/canonical
-  source directories contained no files, but the September 7 staging package was recovered.
-  Fresh read-only SQL inventory found 291,787 public singles: Magic 122,530; Pokemon 71,604;
-  Yu-Gi-Oh 85,991; One Piece 11,662. All have SKU, none barcode. Sample SKUs concatenate
-  set/collector and internal suffixes, not necessarily printed-code punctuation. These are
-  coverage observations, not package reauthentication or real schema-v2 acceptance.
-- Focused verification: 66 pagination/search cases with 100% coverage of both modules,
-  149 runtime cases, 78 contract cases; large traversals executed separately. Independent
-  review approved after resolving one P2. Build, scoped Ruff and preflight pass. Full CI
-  remains pending; see `docs/workstreams/ws-05-name-code-search-v2.md` for exact limitations.
-  No Shopify, PowerTools, MAIN theme, provider or live mutation has occurred.
-- Follow-up: 198 runtime/suggestion/sync-publication regressions passed, runtime API at
-  100% coverage; opt-in compatibility fix approved independently. The preceding `ab0c26e`
-  has fully green CI/CodeQL (2,249 tests on Python 3.12). New-head CI remains required.
-  The 30,001-product HTTP traversal also passed, including sub-two-second search plus
-  suggestions together on the synthetic fixture. No real-catalog latency claim.
+## Cosa abbiamo
 
-The following September 1 snapshot is retained as history, NOT current repository state.
+| Area | Stato verificato | Evidenza |
+| --- | --- | --- |
+| Catalogo | Proiezione completa e navigazione oltre 25.000 prodotti, con conte e identità verificate | [Fotografia e inventario](evidence/STATE-2026-09-30.md) |
+| Ricerca | Gioco obbligatorio; singole per nome/codici verificati; sigillati e accessori per titolo commerciale; vista Tutto | [Ricerca per famiglia](workstreams/ws-05-family-search-v1.md) |
+| Suggerimenti | Nomi distinti e dinamici per singole, confinati al gioco | [QA/manutenzione](evidence/MAINTENANCE-2026-09-30.md) |
+| Filtri | Famiglia, disponibilità, espansione/rarità per singole e stato URL | [Fotografia e inventario](evidence/STATE-2026-09-30.md) |
+| Presentazione e carrello | Immagini, SOLD OUT rosso, prezzi assenti/zero omessi; carrello nativo Shopify | [QA home e carrello](workstreams/ws-10-home-browser-20260928.md) |
+| Tema | Arena MAIN `210350735628` dal 19 ottobre; precedente `175195881740` conservato per rollback; password attiva | [Pubblicazione Arena](DECISIONS.md#d-028--stile-arena-pubblicato) |
 
-## Historical snapshot
+## Codice e consegna: stati distinti
 
-Last verified: 2026-09-01T02:59:58+02:00
-Repository: `cajopo/nla-catalog-gateway-staging.`
+**Installato.** Il gateway live e le pipeline ordinarie restano operative. Il
+collector health `319ca0b` è installato e incluso nella prima cattura automatica
+del 18 ottobre, verificata tramite manifest remoto. GET/HEAD pubblici su `/opsz`
+erano 200 dopo quel backup; la verifica del 20 ottobre sopra riporta 503.
+Il backup installato resta al pin `b56ca95`.
 
-This document records observed state. Git, GitHub, reproducible tests, and fresh read-only
-data checks take precedence over older reports.
+**Locale.** Le preparazioni retention sono conservate solo nei worktree locali:
+planner `agent/offsite-backup-13` con commit precedente `aa2ffe5` e commit locale
+più recente `1d4cf53` (esecutore). Sono preparazioni opzionali: non occorre
+distribuire questi componenti per forza; la policy cloud resta inattiva.
+La suite generale sul ramo locale resta incompleta: 1.712 PASS, un errore
+intermittente Windows `WinError 5` al rename, zero skip. I test mirati successivi
+non hanno riprodotto né spiegato la causa. [Planner](evidence/RETENTION-PLANNER-2026-10-17.md) ·
+[Esecutore](evidence/RETENTION-EXECUTOR-2026-10-17.md)
 
-## Repository truth
+**GitHub/remoto — ripresa del 20 ottobre.** Jacopo ha reso pubblica la repository
+e autorizzato il completamento immediato, superando il rinvio D-024 e la sola
+cadenza D-027. I nuovi workflow eseguono regolarmente test e analisi.
+Le PR #100/#112/#113/#114, #26/#27/#109/#110, ricerca #116, CodeQL #111
+ed evidenza dati #118 sono integrate, dopo controlli verdi e revisione
+indipendente. #98 è chiusa perché superata da #111. La consegna finale comprende
+patch Arena #117 e documentazione #101; i metadati delle due PR riportano
+controlli finali e integrazione. La [ricevuta GitHub](evidence/GITHUB-DELIVERY-2026-10-20.md)
+collega SHA, verifiche e issue riconciliate.
+Il vecchio tentativo mattutino respinto è conservato come
+[checkpoint storico](evidence/GITHUB-WEEKLY-2026-10-20.md).
+Il completamento remoto non equivale a una nuova installazione sulla VPS.
 
-- Current branch: `agent/platform-ci`.
-- Remote Platform code candidate carried by this documentation revision:
-  `73f3f78819002ca21cea46be38b94d0eb874bb76`, tree
-  `a72a1c6016db2fcd8611ff5ae1ee770e5e394947`.
-- Local commit `db86bd356d4c356f6cc9674008dc9c5e5698ab79` has the same exact tree and is
-  the verified local equivalent, not a second code state.
-- `main`: `4e1c2a3e8e75c1d6f264e63a9b9c29e4f4bb8310`.
-- Pull request [#20](https://github.com/cajopo/nla-catalog-gateway-staging./pull/20) is
-  open, draft, unmerged, and based on `main`.
-- The only untracked path observed is the pre-existing local `.codex/` directory. It is
-  not part of the candidate revision and must not be committed.
-- No tracked Shopify snapshot, SQLite database, compressed catalog artifact, build output,
-  credential, or signed capability URL was found in the candidate tree.
+## Vincoli e lacune
 
-GitHub contains 17 issues and 8 pull requests. Pull requests #21 through #25 are real,
-closed without merge, and remain review material rather than completed work. Pull requests
-#26 through #28 do not exist.
+- Gateway e refresh restano read-only rispetto a Shopify. Non cambiare o
+  disconnettere TCG PowerTools. L'eccezione autorizzata è un importer separato
+  che crea solo stampe mancanti verificate, inizialmente draft, zero stock e
+  senza sovrascrivere prodotti esistenti; la pubblicazione automatica autorizzata
+  riguarda solo le sue carte verificate SOLD OUT. [Decisioni](DECISIONS.md)
+- Conservare gli identificatori Shopify GID e le identità PowerTools/Cardmarket/
+  CardTrader verificate. Mai identificare per solo titolo, inventare prezzi o
+  dettagli lingua/condizione/finish, né eliminare silenziosamente record
+  non classificati.
+- Drill recovery applicativo: `current` e `previous` PASS; pulizia isolata conclusa
+  con ricevuta `deletion_complete`. RPO proposto 36 h in esercizio regolare e RTO
+  proposto 2 h su Linux pronto con accessi disponibili; non sono SLA. Host vuoto,
+  provisioning e percorso pubblico restano fuori prova, non gate aggiunti.
+  [Checkpoint recovery](evidence/RECOVERY-APPLICATION-2026-10-18.md)
+- QA: le prove browser Shopify storiche, il componente legato alla fixture e il
+  carico controllato sono riutilizzati. Lo spot-check manuale mobile PDP/carrello
+  è documentato; immagini statiche, non una registrazione delle interazioni;
+  full a11y e down/stale live restano limiti senza criterio originale locale
+  dimostrato. Nessun outage live, benchmark massimo o regressione completa.
+  [Matrice e limiti](evidence/QA-REMAINING-2026-10-18.md)
+- Funzioni come ordinamenti diversi dal GID, filtri lingua/condizione/finish e
+  “altre stampe” restano backlog, senza essere requisiti di completamento di
+  questa fase; apertura pubblica senza password richiede una decisione separata
+  del titolare.
+- Non è documentato un percorso webhook completo in esercizio. I timer Bulk e
+  importer costituiscono l'automazione accettata.
 
-## Platform gate
+## Riferimenti
 
-The remote code candidate `73f3f78` passes exact CI and CodeQL. It is still not eligible for
-merge: CI and CodeQL must run again on the documentation-inclusive head containing this file,
-and independent reviewer v4 must approve that same final revision. PR #20 remains draft.
+- [Handoff PM e checkpoint](PM-HANDOFF.md)
+- [Fotografia e inventario del 30 settembre](evidence/STATE-2026-09-30.md)
+- [Roadmap di esecuzione](ROADMAP-EXECUTION.md) · [Runbook operativo](OPERATIONS-RUNBOOK.md)
+- [Decisioni e autorizzazioni](DECISIONS.md)
+- [Cronologia precedente](STATUS-HISTORY-20260929.md)
 
-| Check | Result | Evidence |
-|---|---|---|
-| Ruff check and format | PASS | Local equivalent tree |
-| Pytest | PASS | 564/564, zero skipped/xfailed, 877 statements and 472 branches at 100% |
-| Repository preflight | PASS | Local exact indexed candidate; 25 tracked files, zero findings |
-| Package build | PASS | Local build and remote isolated sdist/wheel builds |
-| Dependency audit | PASS | Local equivalent tree |
-| Container build and smoke | PASS | Local equivalent tree |
-| Exact remote CI | PASS | Run `33456765768` |
-| Exact remote CodeQL/SARIF | PASS | Run `33456765740`; zero security findings |
-| Static red team | PASS | Zero High on the remediated tree |
-| Independent final review | PENDING | Reviewer v4 on final documentation-inclusive SHA |
+## Prossimi passi
 
-Exact remote evidence:
+1. Definire e completare i tre workstream richiesti: modifiche alla home,
+   nuove funzionalità e sezioni non dedicate alla vendita, nella direzione Arena.
+   I dettagli sono ancora da definire; il backlog esistente non è automaticamente
+   incluso. [Roadmap](ROADMAP-EXECUTION.md#ordine-di-lavoro-proposto)
+2. Valutare il lancio pubblico soltanto dopo questi lavori; la rimozione della
+   password resta una decisione separata di Jacopo.
+3. Conservare le evidenze del drill chiuso e il backup verificato; le copie cloud sono protette e la rotazione
+   automatica è opzionale, non un prerequisito.
+4. Mantenere la manutenzione ordinaria separata e riutilizzare le prove QA valide.
+   Ricevuti screenshot desktop (rimozione owner-attestata) e PDP/carrello
+   stretti per la chiusura del 18 ottobre. La tipografia allora provvisoria è
+   superata da Arena; il limite tecnico Computer Use di quella prova resta
+   documentato. Lo spot-check manuale ha coperto la lacuna; alert e carico della
+   fase sono conclusi.
+   [QA](evidence/QA-REMAINING-2026-10-18.md)
+5. La consegna GitHub D-030 si chiude con #117 e #101 fuse e controlli verdi;
+   a quel punto eliminare solo `completa-consegna-github-nla`. Conservare
+   la chat e l'automazione VPS, lasciata invariata (calendario salvato: domenica
+   alle 09:00; il riferimento alle 48 ore nel prompt è storico).
 
-- [CI run 33456765768](https://github.com/cajopo/nla-catalog-gateway-staging./actions/runs/33456765768):
-  `SUCCESS`. Python 3.12/3.13 jobs `99698284002`/`99698283943` pass 564 tests,
-  877 statements and 472 branches at 100%, preflight over 25 files, and isolated sdist/wheel
-  builds. Audit job `99698283934` reports zero known vulnerabilities. Container job
-  `99698283800` returns the expected JSON;
-- [CodeQL run 33456765740](https://github.com/cajopo/nla-catalog-gateway-staging./actions/runs/33456765740):
-  `SUCCESS`. Job `99698283209` produced one SARIF with zero security findings and two
-  diagnostics. Artifact `9781748648` is 36,987 bytes with digest
-  `sha256:2957b71a838174e1586a001647eecbb29658a0b06a0db671ed3c360a0cea13bc`.
-
-Local evidence on the tree shared by `db86bd3` and `73f3f78`: Ruff, format, build, audit,
-Docker build/smoke, 564 tests, 100% line and branch coverage, and preflight all pass. A static
-red-team rerun reports zero High. These code-baseline results do not replace final gates on
-the documentation-inclusive SHA.
-
-Immutable review chronology:
-
-- documentation-inclusive head `f211b26` passed CI `33436231899` and CodeQL `33436231910`,
-  but review v1 returned `CHANGES REQUIRED` for dynamic executable and Git-subcommand gaps;
-- code baseline `8047ba6` addressed those findings, and documentation-inclusive head
-  `00f07033baaa465ac920e620265bff570a104d03` (tree
-  `3e4d99dc188122f9dae4ca937d5363a3ac2fc2a7`) passed CI `33446860246` and CodeQL
-  `33446860231`;
-- review v2 of `00f0703` still returned `CHANGES REQUIRED` with four High classes: `env`
-  split-string dispatch, `Start-Process` into a shell, PowerShell function/provider overrides,
-  and Git-helper environment or `GITHUB_ENV` dispatch;
-- code baseline `9d351e5` applied the second remediation and became documentation-inclusive
-  head `82ec0e472d4cfb4df131e95d87a445a7b56850b4`;
-- reviewer v3 returned `CHANGES REQUIRED` on `82ec0e4` with one High: shell and PowerShell
-  `$()` subexpressions could conceal forbidden dispatch;
-- remote candidate `73f3f78` and local equivalent `db86bd3` apply the third remediation on
-  exact tree `a72a1c6016db2fcd8611ff5ae1ee770e5e394947`.
-
-The remediated contract remains bounded and conservative. D-007 controls still apply; D-008
-additionally bans the whole inline-command classes `$()`, `<()`, `>()`, and `@()`. Container
-smoke replaces command substitution with a direct `docker run | python` pipeline. The
-capability boundary still requires read-only permissions,
-rejects workflow secret references, and requires `persist-credentials: false`. Python,
-Docker, and arbitrary scripts invoked transitively remain outside semantic analysis, so local
-PASS is defense in depth rather than absolute proof about every indirect execution path.
-
-Two fail-closed limitations remain documented as Medium, not bypasses:
-
-- a heredoc containing a literal executable-looking `git push` line is rejected;
-- JSON that intentionally preserves a token-like Unicode escape literally may be rejected.
-
-The local MySQL Shell Python 3.13 runtime cannot create an isolated build environment because
-its copied runtime lacks SSL. Local `--no-isolation` build passes, and the exact candidate's
-isolated build passes on both supported CI interpreters; this is a host limitation, not a
-release bypass.
-
-## Data and artifact availability
-
-`NLA_DATA_ROOT` is absent from the Process, User, and Machine environments. The local Codex
-setup points to `C:\NLA_DATA`, but that directory and its expected `input`, `snapshots`,
-`artifacts`, `reports`, and `tmp` children do not exist.
-
-No baseline, JSONL, SQLite database, archive, or report can therefore be verified or reused
-on this host. The correct state is `MISSING`, not `CORRUPT`. This does not block Platform/CI;
-it does block future claims based on a real baseline until the external data root is
-provisioned and independently verified.
-
-## Closed-branch salvage status
-
-- PR #21 sharding: retain deterministic packing ideas only. Confirmed verdict is `NO-GO`
-  as the primary architecture; any limited SEO/fallback use remains unapproved.
-- PR #22 taxonomy: retain the enum/model/report concepts, but reimplement validation for
-  normalized-key collisions, `unclassified` reasons, subtype fragments, rule conflicts,
-  duplicate JSON keys, and schema versioning.
-- PR #23 data/Bulk: retain streaming hash and reconciliation patterns only. Empty exports,
-  invalid types, duplicate JSON keys, BOMs, truncated connections, unbounded memory,
-  non-atomic staging, and incomplete commercial-field preservation remain blockers.
-- PR #24 and #25 are additional closed, unmerged data experiments. Neither supersedes a
-  fresh implementation on a post-Platform base.
-
-## Immediate execution order
-
-1. Commit this evidence and require fresh CI and CodeQL on the documentation-inclusive SHA.
-2. Run independent clean-checkout reviewer v4 on that same final SHA.
-3. Resolve all applicable PR #20 threads, update its body, and mark it ready for review.
-4. Merge Platform only if no Blocker, Critical, or High finding remains.
-5. Start Taxonomy, Data/Bulk, and Runtime-contract workstreams from merged `main`; do not
-   resurrect closed branches wholesale.
-
-No Shopify, PowerTools, Render, theme, product, price, or inventory mutation is authorized
-by this status document.
+La cronologia e le ricevute collegate conservano i dettagli dei singoli run.
+Questa pagina fotografa lo stato e non sostituisce i limiti descritti nelle prove.
