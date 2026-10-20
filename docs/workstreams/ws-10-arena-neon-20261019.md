@@ -7,7 +7,8 @@ il tema precedente `175195881740` è `UNPUBLISHED` ed è conservato per rollback
 Jacopo ha confermato la visualizzazione corretta in incognito. Questo checkpoint
 aggiorna lo stato della pubblicazione; la sezione del 19 ottobre sotto conserva
 le prove e i limiti registrati prima della pubblicazione. La presente consegna
-GitHub riguarda solo patch sorgente, simbolo e documentazione: non pubblica o
+GitHub riguarda solo patch sorgente e documentazione; il simbolo originale resta
+conservato separatamente. Questa consegna non pubblica o
 modifica temi Shopify. Stato registrato secondo la decisione del titolare D-028.
 
 Issue [#14](https://github.com/cajopo/nla-catalog-gateway-staging./issues/14),
@@ -93,9 +94,10 @@ certificazione completa di accessibilità o di tutti i template.
 
 ## Consegna e rollback
 
-Preparati per la consegna soltanto [patch sorgente](../../theme/patches/arena-theme.patch),
-[nuovo simbolo](../../theme/assets/nla-symbol.png) e questa evidenza. La patch si
-applica alla radice del tema esportato; il PNG va copiato in `assets/nla-symbol.png`.
+Consegnati su GitHub soltanto [patch sorgente](../../theme/patches/arena-theme.patch)
+e questa evidenza. La patch si applica alla radice del tema esportato.
+Serve inoltre il simbolo PNG originale fornito dal titolare, da copiare in
+`assets/nla-symbol.png`: il file binario non fa parte di questa repository.
 Non è un tema completo: export, payload, manifest, ricevute e immagini QA restano
 privati in `C:/Users/umbri/.codex/visualizations/2026/10/19/01a154c0-ddcf-70e1-b9f7-c8df57c74630/arena-rollout`.
 
@@ -106,3 +108,18 @@ Per ripristinare il clone: rileggere ruolo e checksum, ripristinare i dieci file
 esistenti dal backup e rimuovere i tre asset nuovi solo con gli stessi controlli.
 Il MAIN non modificato rimane disponibile. Nessuna prova di pubblicazione o di
 rollback live è stata eseguita; GitHub/CI e pubblicazione sono stati distinti.
+
+## Correzione della consegna CI — 20 ottobre
+
+Il preflight richiede file UTF-8 e vieta anche gli artefatti codificati.
+La prima consegna del PNG binario ha fatto fallire un solo test su entrambe
+le versioni Python (4.448 passati, uno fallito); non era un timeout.
+Il PNG viene escluso dall'albero tracciato, senza modificare preflight o test.
+La copia originale rimane nel PC del titolare:
+`C:/Users/umbri/Projects/nla-catalog-gateway-staging/output/arena-neon-worktree/theme/assets/nla-symbol.png`.
+Misura 54.114 byte e ha lo SHA-256 del simbolo riportato sopra, verificato
+prima della consegna. Non contiene modifiche rispetto all'immagine approvata.
+
+Questa consegna conserva patch e prove; non è un archivio autosufficiente del
+tema. Per ricostruirlo occorrono l'export di baseline e il PNG conservati
+separatamente. I controlli sul commit finale sono registrati nella PR #117.
