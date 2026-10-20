@@ -1,0 +1,39 @@
+# Issue #13: render reviewed absolute paths before installation. No credentials.
+[Unit]
+Description=NLA read-only operational observation
+After=network.target
+
+[Service]
+Type=oneshot
+User=root
+UMask=0022
+WorkingDirectory=@OBSERVER_PACKAGE@
+Environment=PYTHONPATH=@OBSERVER_PACKAGE@/src
+Environment=PYTHONNOUSERSITE=1
+ExecStart=@PYTHON@ -m scripts.observe_catalog_health \
+    --refresh-root @REFRESH_ROOT@ \
+    --market-root @MARKET_ROOT@ \
+    --store @CATALOG_STORE@ \
+    --backup-root @BACKUP_ROOT@ \
+    --output /run/nla-operational-health/status.json \
+    --min-free-bytes 6442450944 --max-source-age-seconds 86400 --max-backup-age-seconds 93600
+RuntimeDirectory=nla-operational-health
+RuntimeDirectoryMode=0755
+RuntimeDirectoryPreserve=yes
+ReadWritePaths=/run/nla-operational-health
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+NoNewPrivileges=yes
+RestrictSUIDSGID=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_INET AF_UNIX
+IPAddressDeny=any
+IPAddressAllow=localhost
+TimeoutStartSec=20s
+MemoryMax=96M
+CPUQuota=10%
+StandardOutput=journal
+StandardError=null
