@@ -340,12 +340,16 @@ def _verify_search(
         queries.update(name[-4:] for _, name, _, _ in samples)
         queries.update(code[:256] for _, _, codes, _ in samples for code in codes[:1])
         queries.update(
+            code.replace("-", "")[:256] for _, _, codes, _ in samples for code in codes[:1]
+        )
+        queries.update(
             _expected_normalized_name(record.card_metadata.collector_number)[:256]
             for record, _, _, _ in samples
             if record.card_metadata is not None and record.card_metadata.collector_number
         )
         for raw_query in sorted(queries):
             query = _expected_normalized_name(raw_query)
+            compact_code_query = query.replace("-", "")
             if not query:
                 continue
             for stock in (None, False, True):
@@ -357,7 +361,14 @@ def _verify_search(
                 expected = [
                     fact
                     for fact in facts
-                    if (query in fact[1] or any(query in code for code in fact[2]))
+                    if (
+                        query in fact[1]
+                        or any(
+                            query in code
+                            or (compact_code_query and compact_code_query in code.replace("-", ""))
+                            for code in fact[2]
+                        )
+                    )
                     and (stock is None or fact[3] is stock)
                 ]
                 actual_gids: list[str] = []

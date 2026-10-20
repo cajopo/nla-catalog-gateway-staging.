@@ -5,7 +5,8 @@ Collector numbers come from source-ID-joined CSV metadata. Single-card search
 never matches expansion names or rarity. Sealed/accessory search uses commercial
 titles; sealed also uses its classified subtype. The current projection has no
 structured expansion field for sealed products; none is inferred from card data.
-No printed-code punctuation is inferred from SKUs.
+Code comparisons ignore ASCII hyphens; card names retain literal punctuation.
+No printed-code punctuation or identifier is inferred from SKUs or titles.
 """
 
 from __future__ import annotations
@@ -100,10 +101,18 @@ def search_scope(request: CatalogRequestV1) -> tuple[str, tuple[object, ...]]:
         parameters.append(request.product_family.value)
     query = normalized_query(request)
     if query:
+        compact_code_query = query.replace("-", "")
+        code_match = "instr(code.value, ?) > 0"
+        single_parameters: tuple[object, ...] = (query, query)
+        # A hyphen-only query must keep its literal meaning, never become the
+        # empty substring that matches every source code. Names stay literal.
+        if compact_code_query:
+            code_match += " OR instr(replace(code.value, '-', ''), ?) > 0"
+            single_parameters += (compact_code_query,)
         single_match = (
-            "(instr(normalized_card_name, ?) > 0 OR EXISTS "
+            "(instr(normalized_card_name, ?) > 0 OR EXISTS "  # noqa: S608 -- fixed SQL only
             "(SELECT 1 FROM json_each(search_codes_json) AS code "
-            "WHERE instr(code.value, ?) > 0))"
+            f"WHERE {code_match}))"
         )
         # Evaluate titles at read time: the persisted, verified search facts and
         # projection schema stay compatible with already-built generations.
@@ -114,7 +123,7 @@ def search_scope(request: CatalogRequestV1) -> tuple[str, tuple[object, ...]]:
         )
         if request.product_family.value == "single":
             clauses.append(single_match)
-            parameters.extend((query, query))
+            parameters.extend(single_parameters)
         elif request.product_family.value == "all":
             # CASE is lazy: singles never normalize their commercial title or
             # accidentally match its expansion/version suffixes.
@@ -122,7 +131,7 @@ def search_scope(request: CatalogRequestV1) -> tuple[str, tuple[object, ...]]:
                 f"(CASE WHEN product_family = 'single' THEN {single_match} "
                 f"ELSE {commercial_match} END)"
             )
-            parameters.extend((query,) * 4)
+            parameters.extend((*single_parameters, query, query))
         else:
             clauses.append(commercial_match)
             parameters.extend((query, query))

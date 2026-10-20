@@ -258,6 +258,30 @@ def test_asgi_serves_verified_catalog_without_gate_overrides(http_case):
     assert asgi._status(asgi._invoke(app, path="/catalog", query=case.signed_query)) == 400
 
 
+@pytest.mark.parametrize("query", ["SET019", "SET-019", "MET007", "MET-007"])
+def test_http_code_spellings_share_pages_suggestions_and_stock_scope(http_case, query):
+    _, call = http_case
+    first = call(_request(query, page_size=1))
+    assert first.status == 200
+    parsed = CatalogResponseEnvelopeV1.from_json_bytes(first.body)
+    assert parsed.page.items[0].product_gid == "gid://shopify/Product/1"
+    assert sum(s.print_count for s in parsed.suggestions) == 4
+    assert sum(s.available_print_count for s in parsed.suggestions) == 1
+    seen = [parsed.page.items[0].product_gid]
+    while parsed.next_cursor is not None:
+        response = call(_request(query, page_size=1), parsed.next_cursor)
+        assert response.status == 200
+        parsed = CatalogResponseEnvelopeV1.from_json_bytes(response.body)
+        assert parsed.suggestions is None
+        seen.extend(item.product_gid for item in parsed.page.items)
+    assert seen == [f"gid://shopify/Product/{i}" for i in range(1, 5)]
+    stock = call(_request(query, in_stock=True))
+    assert stock.status == 200
+    parsed = CatalogResponseEnvelopeV1.from_json_bytes(stock.body)
+    assert [item.product_gid for item in parsed.page.items] == ["gid://shopify/Product/2"]
+    assert sum(s.print_count for s in parsed.suggestions) == 1
+
+
 def test_http_suggestions_same_scope_counts_and_first_page_only(http_case):
     _, call = http_case
     first = call(_request(page_size=1))
