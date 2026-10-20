@@ -1,0 +1,11 @@
+query CommercialActiveSubscription($appId: ID!, $shopId: ID!) {
+  activeSubscription(appId: $appId, shopId: $shopId) {
+    app { id }
+    shop { id myshopifyDomain }
+    billingPeriod
+    cancelAtEndOfCycle
+    trialEndsAt
+    currentBillingCycle { startTime endTime }
+    items { handle price { __typename active } }
+  }
+}
