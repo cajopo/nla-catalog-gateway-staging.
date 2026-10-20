@@ -1,0 +1,1781 @@
+--- /dev/null
++++ b/assets/nla-arena.css
+@@ -0,0 +1,197 @@
++html:has(body.nla-arena) { background: #10131a; scroll-padding-top: 2rem; }
++body.nla-arena {
++  --nla-black: #10131a;
++  --nla-logo-black: #292828;
++  --nla-surface: #181c25;
++  --nla-surface-raised: #202634;
++  --nla-silver: #abb3c3;
++  --nla-white: #edf1f8;
++  --nla-cyan: #12c5f4;
++  --nla-blue: #287eff;
++  --nla-violet: #6550ff;
++  --nla-gradient: linear-gradient(105deg, #12c5f4, #287eff 55%, #6550ff);
++  --nla-line: #303745;
++  --nla-action: linear-gradient(105deg, #1761c8, #5941cc);
++  --font-body-family: Arial, Helvetica, sans-serif;
++  --font-heading-family: Arial, Helvetica, sans-serif;
++  --font-heading-weight: 800;
++  --font-body-weight: 400;
++  --font-body-style: normal;
++  --font-heading-style: normal;
++  font-family: var(--font-body-family);
++  background: var(--nla-black);
++  color: var(--nla-white);
++  letter-spacing: .01em;
++  line-height: 1.55;
++  color-scheme: dark;
++}
++body.nla-arena .gradient { background: rgb(var(--color-background, 16, 19, 26)); }
++body.nla-arena :is(h1,h2,h3,h4,h5,h6,.h0,.h1,.h2,.h3,.h4,.h5) { font-family: var(--font-heading-family); color: var(--nla-white); }
++body.nla-arena :focus-visible { outline: 2px solid var(--nla-cyan); outline-offset: 4px; }
++body.nla-arena a { text-underline-offset: .3em; }
++body.nla-arena :is(input,select,textarea,button) { font-family: inherit; }
++body.nla-arena :is(input,textarea)::placeholder { color: #abb3c3; opacity: 1; }
++body.nla-arena :is(input[type=checkbox],input[type=radio]) { accent-color: #287eff; }
++body.nla-arena .nla-header { box-shadow: none; border-bottom-color: var(--nla-line); }
++body.nla-arena .nla-header::after { display: none; }
++body.nla-arena .nla-header__announcement { position: relative; min-height: 3rem; background: #10131a; color: #abb3c3; font-size: 1rem; letter-spacing: .17em; padding-block: .5rem; }
++body.nla-arena .nla-header__announcement::after { position: absolute; bottom: 0; left: 0; right: 0; height: 2px; content: ''; background: var(--nla-gradient); }
++body.nla-arena .nla-header__shell { max-width: 132rem; padding-inline: 3.2rem; }
++body.nla-arena .nla-header__main { grid-template-columns: 17rem minmax(0,1fr) auto; gap: 2.4rem; padding-block: 1.3rem; }
++body.nla-arena .nla-brand__crop { width: 15.5rem; }
++body.nla-arena .nla-header__actions { gap: 1rem; }
++body.nla-arena .nla-icon-button { background: #20232c; border-color: #515866; border-radius: 1rem; }
++body.nla-arena .nla-desktop-nav > ul { min-height: 4.5rem; gap: clamp(1.8rem, 3vw, 4rem); }
++body.nla-arena .nla-desktop-nav :is(a,summary) { min-height: 4.5rem; font-size: 1.2rem; letter-spacing: .04em; }
++body.nla-arena .nla-desktop-nav__panel { border: 1px solid #526079; background: #181c25; border-radius: 1rem; }
++body.nla-arena .nla-mobile-menu__panel { background: #181c25; border-bottom: 1px solid #526079; }
++body.nla-arena .nla-cart-link__count { background: #1761c8; }
++body.nla-arena .nla-search-wrap { align-self: center; }
++body.nla-arena nla-catalog-search { color: var(--nla-white); }
++body.nla-arena nla-catalog-search .nla-catalog__bar { display: grid; grid-template-columns: minmax(12rem,.65fr) minmax(12rem,.6fr) minmax(18rem,1.8fr) auto; gap: 1rem; }
++body.nla-arena nla-catalog-search .nla-catalog__bar label { min-width: 0; gap: .4rem; font-size: 1.2rem; color: var(--nla-silver); }
++body.nla-arena nla-catalog-search :is(input[type=search],select,button) { min-height: 4.4rem; width: 100%; font-size: 1.4rem; border-radius: .8rem; border-color: #5c6576; background: #181c25; color: #edf1f8; }
++body.nla-arena nla-catalog-search .nla-catalog__query input { border: 1px solid transparent; background: linear-gradient(#181c25,#181c25) padding-box, linear-gradient(105deg,#2386a3,#5552a9) border-box; }
++body.nla-arena nla-catalog-search .nla-catalog__query input:focus { background: linear-gradient(#181c25,#181c25) padding-box, var(--nla-gradient) border-box; box-shadow: 0 0 14px #287eff1f; }
++body.nla-arena nla-catalog-search :is(.nla-catalog__bar,.nla-catalog__recovery,nav) button { width: auto; cursor: pointer; padding-inline: 1.6rem; border-color: #6889ed; background: var(--nla-action); color: #fff; font-weight: 700; box-shadow: 0 4px 15px #287eff1f; }
++body.nla-arena nla-catalog-search button:disabled { opacity: .55; cursor: wait; box-shadow: none; }
++body.nla-arena .nla-catalog__stock { width: fit-content; margin-top: .2rem; font-size: 1.3rem; color: var(--nla-silver); }
++body.nla-arena .nla-catalog__stock input { margin: 0; width: 1.8rem; height: 1.8rem; }
++body.nla-arena .nla-catalog__status { font-size: 1.3rem; color: var(--nla-silver); }
++body.nla-arena .nla-catalog__status:empty { min-height: 0; margin: 0; }
++body.nla-arena .nla-catalog__suggestions { background: #181c25; border-color: #617baf; border-radius: .8rem; box-shadow: 0 14px 24px #0006; font-size: 1.4rem; }
++body.nla-arena .nla-catalog__suggestions li { min-height: 4.4rem; }
++body.nla-arena .nla-catalog__suggestions :is(li:hover,[aria-selected=true]) { background: #253047; }
++body.nla-arena .nla-catalog__filters { margin: 1rem 0 2rem; padding: 1.6rem; border-color: #465268; background: #181c25; border-radius: 1rem; }
++body.nla-arena .nla-catalog__filters legend { padding-inline: .7rem; color: var(--nla-silver); font-size: 1.2rem; }
++body.nla-arena .nla-catalog__filters label { font-size: 1.3rem; color: var(--nla-silver); }
++body.nla-arena .nla-catalog-section { max-width: 124rem; padding: 4rem 2.4rem 6rem; background: #10131a; }
++body.nla-arena .nla-catalog-section > h1 { margin: 0 0 2.8rem; font-size: clamp(3.2rem,4.3vw,5rem); font-style: italic; font-weight: 900; letter-spacing: -.035em; text-transform: uppercase; }
++body.nla-arena :is(.nla-catalog-section > h1,.nla-section-heading h2)::after { display: block; width: 7.8rem; height: 3px; margin-top: 1.7rem; background: var(--nla-gradient); content: ''; }
++body.nla-arena .nla-catalog__heading { font-size: 2rem; line-height: 1.35; }
++body.nla-arena .nla-catalog__page > p { font-size: 1.3rem; color: var(--nla-silver); }
++body.nla-arena .nla-catalog__results { grid-template-columns: repeat(2,minmax(0,1fr)); gap: 1.4rem; }
++body.nla-arena .nla-catalog__results li { display: grid; grid-template-columns: 11.2rem minmax(0,1fr); grid-template-rows: auto auto 1fr; column-gap: 1.8rem; row-gap: .9rem; padding: 1.6rem; border-color: var(--nla-line); border-radius: 1.2rem; background: var(--nla-surface); }
++body.nla-arena .nla-catalog__results li:hover { border-color: #526b97; }
++body.nla-arena .nla-catalog__results li > a { grid-column: 2; color: #edf1f8; font-size: 1.6rem; font-weight: 700; line-height: 1.4; text-decoration: none; }
++body.nla-arena .nla-catalog__results li > a:hover { color: #72dcfa; text-decoration: underline; }
++body.nla-arena .nla-catalog__results li > p { grid-column: 2; margin: 0; color: #abb3c3; font-size: 1.3rem; }
++body.nla-arena .nla-catalog__results li > p:last-child:not(.nla-catalog__sold-out):not(:nth-child(3)) { align-self: end; color: #edf1f8; font-size: 1.9rem; font-weight: 700; }
++body.nla-arena .nla-catalog__media { grid-row: 1 / span 3; grid-column: 1; margin: 0; width: 11.2rem; align-self: start; border-radius: .6rem; background: #10131a; color: #abb3c3; font-size: 1.2rem; text-align: center; }
++body.nla-arena .nla-catalog__media img { max-height: 16rem; border-radius: .5rem; }
++body.nla-arena nla-catalog-search .nla-catalog__sold-out { color: #ff616b; background: transparent; font-weight: 700; }
++body.nla-arena .nla-home { background: #10131a; }
++body.nla-arena .nla-home__shell { max-width: 124rem; width: calc(100% - 6.4rem); }
++body.nla-arena .nla-hero { min-height: 51rem; border-color: var(--nla-line); background: radial-gradient(ellipse at 80% 40%,#287eff09,transparent 60%); }
++body.nla-arena .nla-hero::before { display: none; }
++body.nla-arena .nla-hero__grid { min-height: 51rem; grid-template-columns: minmax(0,1.15fr) minmax(0,.85fr); gap: 4rem; padding-block: 5rem; }
++body.nla-arena .nla-kicker { margin-bottom: 1.5rem; background: none; color: #72dcfa; font-size: 1.1rem; font-weight: 700; letter-spacing: .16em; }
++body.nla-arena .nla-hero h1 { max-width: 65rem; font-size: clamp(4.5rem,5.7vw,7.6rem); line-height: .99; letter-spacing: -.045em; }
++body.nla-arena .nla-hero__accent { color: #72dcfa; }
++body.nla-arena .nla-hero__copy > p { margin-top: 2.2rem; font-size: 1.6rem; max-width: 49rem; line-height: 1.65; }
++body.nla-arena .nla-hero__actions { margin-top: 2.6rem; }
++body.nla-arena .nla-button { min-height: 4.8rem; padding-inline: 2rem; border-radius: 1rem; text-transform: none; font-size: 1.4rem; letter-spacing: 0; font-weight: 700; }
++body.nla-arena .nla-button:hover { transform: none; }
++body.nla-arena .nla-button--primary { background: var(--nla-action); border-color: #6889ed; box-shadow: 0 6px 18px #287eff24; }
++body.nla-arena .nla-button--secondary { border-color: #5c6576; background: #181c25; }
++body.nla-arena .nla-hero__proof { margin-top: 2.5rem; gap: 1.3rem; color: #abb3c3; font-size: 1rem; }
++body.nla-arena .nla-card-fan { min-height: 35rem; }
++body.nla-arena .nla-card-fan__card { width: clamp(16rem,16vw,22rem); border-radius: .8rem; box-shadow: 0 18px 35px #0006; }
++body.nla-arena .nla-card-fan__glow { opacity: .12; filter: blur(5rem); }
++body.nla-arena :is(.nla-game-section,.nla-products) { padding-block: 5rem; }
++body.nla-arena .nla-products { background: #10131a; border-color: var(--nla-line); }
++body.nla-arena .nla-section-heading { margin-bottom: 2.7rem; }
++body.nla-arena :is(.nla-section-heading h2,.nla-feature h2) { font-size: clamp(2.6rem,3.3vw,3.9rem); line-height: 1.1; }
++body.nla-arena .nla-section-heading--row > a { color: #72dcfa; font-size: 1.2rem; letter-spacing: 0; text-transform: none; }
++body.nla-arena .nla-game-grid { grid-template-columns: repeat(4,minmax(0,1fr)); gap: 1.4rem; }
++body.nla-arena .nla-game-card { min-height: 18rem; padding: 2rem; border-color: var(--nla-line); border-radius: 1.2rem; background: #181c25; }
++body.nla-arena .nla-game-card::before { width: 100%; height: 2px; top: 0; left: 0; right: 0; border-radius: 0; opacity: .7; filter: none; background: var(--nla-gradient); }
++body.nla-arena .nla-game-card::after { display: none; }
++body.nla-arena .nla-game-card:hover { transform: none; box-shadow: none; border-color: #526b97; }
++body.nla-arena .nla-game-card > span { position: static; margin-bottom: 1.4rem; color: #abb3c3; font-size: 1rem; }
++body.nla-arena .nla-game-card h3 { font-size: 2.1rem; }
++body.nla-arena .nla-game-card p { margin: .8rem 0 1.6rem; font-size: 1.2rem; }
++body.nla-arena .nla-game-card strong { color: #72dcfa; font-size: 1.1rem; }
++body.nla-arena .nla-game-card--sealed { grid-column: 1/-1; min-height: auto; display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: .6rem 2rem; }
++body.nla-arena .nla-game-card--sealed > span { grid-row: 1 / span 2; margin: 0; }
++body.nla-arena .nla-game-card--sealed p { grid-column: 2; margin: 0; }
++body.nla-arena .nla-game-card--sealed strong { grid-column: 3; grid-row: 1 / span 2; }
++body.nla-arena .nla-product-grid { gap: 1.4rem; }
++body.nla-arena .nla-product-card { border-color: var(--nla-line); border-radius: 1.2rem; }
++body.nla-arena .nla-product-card:hover { border-color: #526b97; transform: none; }
++body.nla-arena .nla-product-card__media { background: #141923; padding: 1.8rem; }
++body.nla-arena .nla-product-card__body { padding: 1.6rem; }
++body.nla-arena .nla-product-card__body > span { color: #abb3c3; }
++body.nla-arena .nla-product-card__body h3 { margin: .7rem 0 1.2rem; }
++body.nla-arena :is(.nla-product-card__status,.nla-product-card__body .nla-product-card__unavailable) { color: #ff616b; }
++body.nla-arena .nla-feature { padding-block: 4rem; border-color: var(--nla-line); background: #181c25; }
++body.nla-arena .nla-feature + .nla-feature { background: #10131a; }
++body.nla-arena .nla-feature__grid { gap: 4rem; grid-template-columns: 1fr 1fr; }
++body.nla-arena .nla-feature p { font-size: 1.6rem; }
++body.nla-arena .nla-footer { background: #10131a; padding-top: 4.5rem; border-color: var(--nla-line); }
++body.nla-arena .nla-footer__shell { max-width: 124rem; width: calc(100% - 6.4rem); }
++body.nla-arena :is(.nla-footer__brand p,.nla-footer__meta) { color: #abb3c3; }
++body.nla-arena :is(.nla-footer nav a,.nla-footer__meta a) { display: inline-flex; min-height: 4.4rem; align-items: center; color: #c7cede; }
++body.nla-arena .nla-password-brand { display: block; overflow: hidden; position: relative; width: 18rem; aspect-ratio: 811/489; background: #292828; }
++body.nla-arena .nla-password-brand img { position: absolute; width: 123.31%; max-width: none; height: auto; top: -51.94%; left: -11.84%; }
++@media (max-width: 1100px) and (min-width: 990px) {
++  body.nla-arena .nla-header__main { grid-template-columns: 14rem minmax(0,1fr) auto; gap: 1.2rem; }
++  body.nla-arena .nla-brand__crop { width: 13rem; }
++  body.nla-arena .nla-header__main .nla-catalog__bar { grid-template-columns: 10rem 10rem minmax(12rem,1fr) auto; gap: .6rem; }
++}
++@media (max-width: 989px) {
++  body.nla-arena .nla-header__shell { padding-inline: 1.6rem; }
++  body.nla-arena .nla-header__main { grid-template-columns: auto minmax(0,1fr) auto; gap: .8rem; padding-block: 1rem; }
++  body.nla-arena .nla-brand__crop { width: 7.8rem; aspect-ratio: 655/366; background: transparent; }
++  body.nla-arena .nla-brand__image { position: static; width: 100%; height: 100%; object-fit: contain; }
++  body.nla-arena .nla-header__main .nla-catalog__bar { grid-template-columns: repeat(6,minmax(0,1fr)); gap: .7rem; }
++  body.nla-arena .nla-header__main .nla-catalog__bar > label { grid-column: span 3; }
++  body.nla-arena .nla-header__main .nla-catalog__bar > .nla-catalog__query { grid-column: span 4; }
++  body.nla-arena .nla-header__main .nla-catalog__bar > button { grid-column: span 2; }
++  body.nla-arena .nla-header__main .nla-catalog__bar button { width: 100%; }
++  body.nla-arena .nla-home__shell { width: calc(100% - 4rem); }
++  body.nla-arena .nla-hero__grid { grid-template-columns: 1fr; min-height: 0; gap: 1rem; padding-block: 4rem 2rem; }
++  body.nla-arena .nla-hero { min-height: 0; }
++  body.nla-arena .nla-hero h1 { max-width: 60rem; font-size: clamp(4rem,7.5vw,6rem); }
++  body.nla-arena .nla-card-fan { min-height: 30rem; }
++  body.nla-arena .nla-card-fan__card { width: 17rem; }
++  body.nla-arena .nla-game-grid { grid-template-columns: repeat(2,minmax(0,1fr)); }
++}
++@media (max-width: 749px) {
++  body.nla-arena .nla-catalog-section { padding: 3rem 1.6rem 4rem; }
++  body.nla-arena nla-catalog-search .nla-catalog__bar { grid-template-columns: repeat(2,minmax(0,1fr)); gap: 1rem; }
++  body.nla-arena nla-catalog-search input[type=search], body.nla-arena nla-catalog-search select { font-size: 1.6rem; }
++  body.nla-arena nla-catalog-search .nla-catalog__bar button { width: 100%; }
++  body.nla-arena .nla-catalog__results { grid-template-columns: minmax(0,1fr); }
++  body.nla-arena .nla-catalog__results li { padding: 1.2rem; grid-template-columns: 9rem minmax(0,1fr); gap: .8rem 1.2rem; }
++  body.nla-arena .nla-catalog__media { width: 9rem; }
++  body.nla-arena .nla-catalog__results li > a { font-size: 1.5rem; }
++  body.nla-arena :is(.nla-home__shell,.nla-footer__shell) { width: calc(100% - 3.2rem); }
++  body.nla-arena .nla-hero__grid { padding-top: 3.5rem; }
++  body.nla-arena .nla-hero h1 { font-size: clamp(3.5rem,10.4vw,5.5rem); }
++  body.nla-arena .nla-hero__copy > p { font-size: 1.5rem; }
++  body.nla-arena .nla-hero__proof { font-size: .95rem; }
++  body.nla-arena .nla-card-fan { min-height: 28rem; }
++  body.nla-arena .nla-card-fan__card { width: 14rem; }
++  body.nla-arena :is(.nla-game-section,.nla-products) { padding-block: 3.5rem; }
++  body.nla-arena .nla-game-card { min-height: 18rem; padding: 1.5rem; }
++  body.nla-arena .nla-game-card h3 { font-size: 1.8rem; }
++  body.nla-arena .nla-game-card--sealed { min-height: auto; grid-template-columns: 1fr auto; gap: .7rem; }
++  body.nla-arena .nla-game-card--sealed > span { grid-column: 1; grid-row: auto; }
++  body.nla-arena .nla-game-card--sealed h3 { grid-column: 1; }
++  body.nla-arena .nla-game-card--sealed p { grid-column: 1; }
++  body.nla-arena .nla-game-card--sealed strong { grid-column: 2; grid-row: 2; }
++  body.nla-arena .nla-product-grid { gap: 1rem; }
++  body.nla-arena .nla-product-card__body { padding: 1.2rem; }
++  body.nla-arena .nla-product-card__media { padding: 1rem; }
++  body.nla-arena .nla-feature__grid { grid-template-columns: 1fr; gap: 1.8rem; }
++  body.nla-arena .nla-feature { padding-block: 3rem; }
++  body.nla-arena .nla-section-heading--row { gap: 1.4rem; }
++}
++@media (max-width: 374px) {
++  body.nla-arena .nla-card-fan__card { width: 12rem; }
++  body.nla-arena .nla-card-fan { min-height: 25rem; }
++}
++@media (prefers-reduced-motion: reduce) {
++  body.nla-arena *, body.nla-arena *::before, body.nla-arena *::after { scroll-behavior: auto; transition-duration: .01ms; animation-duration: .01ms; animation-iteration-count: 1; }
++}
+--- /dev/null
++++ b/assets/nla-arena-native.css
+@@ -0,0 +1,666 @@
++body.nla-arena {
++  --nla-arena-page: #10131a;
++  --nla-arena-surface: #181c25;
++  --nla-arena-raised: #202634;
++  --nla-arena-border: #303745;
++  --nla-arena-text: #edf1f8;
++  --nla-arena-muted: #abb3c3;
++  --nla-arena-cyan: #12c5f4;
++  --nla-arena-gradient: linear-gradient(105deg, #12c5f4, #287eff 52%, #6550ff);
++  --font-body-family: Arial, Helvetica, sans-serif;
++  --font-heading-family: Arial, Helvetica, sans-serif;
++  --font-body-style: normal;
++  --font-heading-style: normal;
++  --font-body-weight: 400;
++  --font-body-weight-bold: 700;
++  --font-heading-weight: 700;
++  --buttons-radius: 5px;
++  --buttons-radius-outset: 6px;
++  --inputs-radius: 5px;
++  --inputs-radius-outset: 6px;
++  --variant-pills-radius: 5px;
++  font-family: var(--font-body-family);
++  letter-spacing: 0;
++  color: var(--nla-arena-text);
++  background: var(--nla-arena-page);
++  color-scheme: dark;
++}
++
++body.nla-arena :is(.button, .customer button, .shopify-challenge__button) {
++  border: 1px solid #6889ed;
++  border-radius: 5px;
++  min-height: 4.6rem;
++  padding: 1.2rem 2rem;
++  color: #fff;
++  background: linear-gradient(105deg, #1761c8, #5941cc);
++  font-family: var(--font-body-family);
++  font-weight: 700;
++  letter-spacing: 0;
++  line-height: 1.3;
++  box-shadow: 0 0 1.6rem rgb(40 126 255 / 14%);
++}
++
++body.nla-arena :where(.button, .customer button, .shopify-challenge__button)::before,
++body.nla-arena :where(.button, .customer button, .shopify-challenge__button)::after {
++  box-shadow: none;
++}
++
++body.nla-arena :is(.button--secondary, .button--tertiary, .cart-remove-button, .customer button[type='reset']) {
++  border-color: var(--nla-arena-border);
++  color: var(--nla-arena-text);
++  background: var(--nla-arena-surface);
++  box-shadow: none;
++}
++
++body.nla-arena .button:not([disabled]):not([aria-disabled='true']):hover,
++body.nla-arena .customer button:not([disabled]):hover {
++  border-color: #86b5ff;
++}
++
++body.nla-arena :is(.button, .customer button):is([disabled], [aria-disabled='true'], .disabled) {
++  color: var(--nla-arena-muted);
++  background: var(--nla-arena-raised);
++  border-color: #505a6c;
++  box-shadow: none;
++  opacity: 0.8;
++}
++
++body.nla-arena :where(a, button, summary, input, select, textarea):focus-visible,
++body.nla-arena .focused {
++  outline: 2px solid var(--nla-arena-cyan);
++  outline-offset: 3px;
++}
++
++body.nla-arena :where(.field__input, .select__select, .customer input, .customer select, .localization-form__select) {
++  color: var(--nla-arena-text);
++  background: var(--nla-arena-surface);
++  font-family: var(--font-body-family);
++  font-size: 1.6rem;
++  letter-spacing: 0;
++}
++
++body.nla-arena :where(.field__label, .form__label, .customer .field label, .caption, .caption-with-letter-spacing, .product-option, .tax-note) {
++  color: var(--nla-arena-muted);
++}
++
++body.nla-arena :where(.field, .select)::after {
++  box-shadow: 0 0 0 1px var(--nla-arena-border);
++}
++
++body.nla-arena :where(.field, .select):focus-within::after {
++  box-shadow: 0 0 0 1px var(--nla-arena-cyan);
++}
++
++body.nla-arena :where(.field, .select)::before {
++  box-shadow: none;
++}
++
++body.nla-arena :where(.quantity) {
++  color: var(--nla-arena-text);
++  background: var(--nla-arena-surface);
++  border-radius: 5px;
++  min-height: 4.6rem;
++}
++
++body.nla-arena .quantity::after {
++  box-shadow: 0 0 0 1px #505a6c;
++  border-radius: 5px;
++}
++
++body.nla-arena .quantity::before {
++  box-shadow: none;
++}
++
++body.nla-arena :where(.quantity__input, .quantity__button) {
++  color: var(--nla-arena-text);
++  font-family: var(--font-body-family);
++}
++
++body.nla-arena :where(.quantity__button):disabled {
++  color: var(--nla-arena-muted);
++}
++
++body.nla-arena :where(.product__title h1, .product__title h2) {
++  color: var(--nla-arena-text);
++  font-size: clamp(2.6rem, 3.1vw, 4.2rem);
++  line-height: 1.12;
++  font-weight: 750;
++  font-style: normal;
++  letter-spacing: -0.035em;
++  text-transform: none;
++  overflow-wrap: anywhere;
++}
++
++body.nla-arena .product__info-container > .product__text.caption-with-letter-spacing {
++  color: #72dfff;
++  font-size: 1.1rem;
++  font-weight: 700;
++  letter-spacing: 0.16em;
++}
++
++body.nla-arena .product__media-wrapper media-gallery {
++  display: block;
++  padding: 3rem 2rem;
++  border: 1px solid var(--nla-arena-border);
++  border-radius: 7px;
++  background:
++    var(--nla-arena-gradient) center top / 70% 2px no-repeat,
++    var(--nla-arena-surface);
++}
++
++body.nla-arena .product__media-wrapper .product-media-container.media-type-image {
++  max-width: 32rem;
++  margin-inline: auto;
++  border: 0;
++  background: transparent;
++}
++
++body.nla-arena .product__media-wrapper .media {
++  background: transparent;
++}
++
++body.nla-arena .product__media-wrapper .product__media img {
++  object-fit: contain;
++}
++
++body.nla-arena .product__info-container :where(.product__tax, .product__sku, shopify-payment-terms, .product__description) {
++  color: var(--nla-arena-muted);
++  line-height: 1.65;
++}
++
++body.nla-arena .product__info-container .price {
++  color: var(--nla-arena-text);
++  font-size: 3rem;
++  font-weight: 700;
++  letter-spacing: -0.025em;
++}
++
++body.nla-arena .product__info-container variant-selects {
++  padding-top: 2rem;
++  border-top: 1px solid var(--nla-arena-border);
++}
++
++body.nla-arena .product-form__input {
++  min-width: 0;
++  max-width: 100%;
++}
++
++body.nla-arena .product-form__input .form__label {
++  margin-bottom: 0.6rem;
++  color: var(--nla-arena-text);
++  font-size: 1.3rem;
++  font-weight: 700;
++}
++
++body.nla-arena .product-form__input--pill input[type='radio'] + label {
++  min-height: 4.4rem;
++  margin: 0.3rem 0.5rem 0.5rem 0;
++  padding: 1.3rem 1.6rem;
++  border: 1px solid #505a6c;
++  border-radius: 5px;
++  color: var(--nla-arena-text);
++  background: var(--nla-arena-surface);
++  font-size: 1.4rem;
++  line-height: 1.25;
++  letter-spacing: 0;
++  overflow-wrap: anywhere;
++  max-width: 100%;
++}
++
++body.nla-arena .product-form__input--pill input[type='radio']:checked + label {
++  border-color: transparent;
++  color: #fff;
++  background:
++    linear-gradient(#1c2939, #1c2939) padding-box,
++    var(--nla-arena-gradient) border-box;
++  box-shadow: 0 0 1.4rem rgb(40 126 255 / 10%);
++}
++
++body.nla-arena .product-form__input--pill input[type='radio']:is(:disabled, .disabled, .visually-disabled) + label {
++  color: var(--nla-arena-muted);
++  text-decoration: line-through;
++  text-decoration-thickness: 1px;
++}
++
++body.nla-arena .product-form__input--pill input[type='radio']:is(:focus-visible, .focused) + label {
++  outline: 2px solid var(--nla-arena-cyan);
++  outline-offset: 3px;
++  box-shadow: none;
++}
++
++body.nla-arena .product-form__input--pill input[type='radio'] + label::before {
++  box-shadow: none;
++}
++
++body.nla-arena .product-form__buttons {
++  max-width: 100%;
++}
++
++body.nla-arena .product__info-container :is(.nla-product__unavailable, .price__badge-sold-out),
++body.nla-arena .product__info-container .product-form__submit:disabled {
++  color: #ffb7bc;
++  border-color: #915c69;
++}
++
++body.nla-arena :where(.product__accordion, .accordion) {
++  border-color: var(--nla-arena-border);
++}
++
++body.nla-arena :where(.accordion__title, .related-products__heading) {
++  color: var(--nla-arena-text);
++  font-style: normal;
++  font-weight: 700;
++}
++
++body.nla-arena :where(.product-popup-modal__content, .product-media-modal__content, .pickup-availability-drawer, .share-button__fallback) {
++  color: var(--nla-arena-text);
++  background: var(--nla-arena-surface);
++  border-color: var(--nla-arena-border);
++}
++
++body.nla-arena :where(.product-media-modal__toggle, .thumbnail, .product__media-icon) {
++  color: var(--nla-arena-text);
++  background: var(--nla-arena-raised);
++  border-color: var(--nla-arena-border);
++}
++
++body.nla-arena .thumbnail[aria-current='true'] {
++  border-color: var(--nla-arena-cyan);
++  box-shadow: 0 0 0 1px var(--nla-arena-cyan);
++}
++
++body.nla-arena .related-products {
++  border-top: 1px solid var(--nla-arena-border);
++}
++
++body.nla-arena :where(.collection-hero, .main-blog, .template-search, .shopify-policy__container) {
++  color: var(--nla-arena-text);
++  background: var(--nla-arena-page);
++}
++
++body.nla-arena :where(.collection-hero__title, .main-page-title, .main-blog .title--primary, .template-search__header h1, .cart__empty-text, .template-404 .title, .shopify-policy__title h1) {
++  color: var(--nla-arena-text);
++  font-size: clamp(3rem, 4.5vw, 5.6rem);
++  font-weight: 800;
++  font-style: italic;
++  letter-spacing: -0.035em;
++  line-height: 1.1;
++  text-transform: uppercase;
++}
++
++body.nla-arena :where(.collection-hero__title, .main-page-title, .main-blog .title--primary, .template-search__header h1)::after {
++  display: block;
++  width: 7.8rem;
++  height: 3px;
++  margin-top: 1.8rem;
++  background: var(--nla-arena-gradient);
++  content: '';
++}
++
++body.nla-arena :where(.template-search__header h1)::after {
++  margin-inline: auto;
++}
++
++body.nla-arena :where(.collection-hero__description, .rte, .article-template__content) {
++  color: var(--nla-arena-muted);
++  line-height: 1.7;
++}
++
++body.nla-arena :where(.rte h2, .rte h3, .rte h4, .rte strong, .rte th) {
++  color: var(--nla-arena-text);
++}
++
++body.nla-arena :where(.rte a, .link, .customer a, .shopify-policy__body a) {
++  color: #9cdfff;
++  text-underline-offset: 0.3rem;
++}
++
++body.nla-arena :where(.rte a, .link, .customer a):hover {
++  color: #d0f3ff;
++}
++
++body.nla-arena :where(.card--standard, .card--card) {
++  color: var(--nla-arena-text);
++  border: 1px solid var(--nla-arena-border);
++  border-radius: 7px;
++  background: var(--nla-arena-surface);
++  box-shadow: none;
++  overflow: hidden;
++}
++
++body.nla-arena .card-wrapper:hover .card {
++  border-color: #5076a2;
++  box-shadow: none;
++  transform: none;
++}
++
++body.nla-arena .card .card__inner {
++  background: var(--nla-arena-raised);
++  border-radius: 0;
++}
++
++body.nla-arena .product-card-wrapper .card__media img {
++  object-fit: contain;
++  padding: 1.4rem;
++}
++
++body.nla-arena .card > .card__content {
++  padding: 1.4rem;
++}
++
++body.nla-arena .card__information {
++  padding: 0;
++}
++
++body.nla-arena :where(.card__heading, .card__heading a) {
++  color: var(--nla-arena-text);
++  font-style: normal;
++  font-weight: 700;
++  line-height: 1.4;
++  letter-spacing: 0;
++  text-transform: none;
++}
++
++body.nla-arena .card-information > .price {
++  color: var(--nla-arena-text);
++  font-weight: 700;
++  letter-spacing: 0;
++}
++
++body.nla-arena .badge {
++  border: 1px solid #505a6c;
++  border-radius: 4px;
++  background: var(--nla-arena-raised);
++  color: var(--nla-arena-text);
++  letter-spacing: 0.03em;
++}
++
++body.nla-arena :where(.facets__display, .mobile-facets__inner, .mobile-facets__header, .mobile-facets__footer, .disclosure__list-wrapper, .localization-form__select) {
++  color: var(--nla-arena-text);
++  background: var(--nla-arena-surface);
++  border-color: var(--nla-arena-border);
++}
++
++body.nla-arena :where(.facets__heading, .facets__summary, .facet-filters__label, .facet-filters__sort, .mobile-facets__open, .mobile-facets__heading, .mobile-facets__summary, .facet-checkbox, .mobile-facets__label) {
++  color: var(--nla-arena-text);
++}
++
++body.nla-arena :where(.facets__header, .facets__disclosure-vertical, .mobile-facets__header, .mobile-facets__footer) {
++  border-color: var(--nla-arena-border);
++}
++
++body.nla-arena :where(.active-facets__button-inner) {
++  border: 1px solid #5076a2;
++  border-radius: 5px;
++  background: #1c2939;
++  color: var(--nla-arena-text);
++  box-shadow: none;
++}
++
++body.nla-arena :where(.facets__selected, .product-count__text, .mobile-facets__count, .facet-filters__field .select) {
++  color: var(--nla-arena-muted);
++}
++
++body.nla-arena :where(.pagination__item) {
++  color: var(--nla-arena-text);
++}
++
++body.nla-arena .pagination__item--current::after {
++  height: 2px;
++  background: var(--nla-arena-gradient);
++}
++
++body.nla-arena .drawer {
++  background-color: rgb(0 0 0 / 65%);
++}
++
++body.nla-arena :where(.drawer__inner, .drawer__header, .drawer__footer, .cart-notification, .cart-notification__header) {
++  color: var(--nla-arena-text);
++  background: var(--nla-arena-surface);
++  border-color: var(--nla-arena-border);
++}
++
++body.nla-arena .drawer__header {
++  border-bottom: 1px solid var(--nla-arena-border);
++}
++
++body.nla-arena :where(.drawer__heading, .cart__warnings h1, .cart__warnings h2, .cart-item__name, .totals__total, .totals__total-value) {
++  color: var(--nla-arena-text);
++  font-style: normal;
++  font-weight: 700;
++  letter-spacing: 0;
++}
++
++body.nla-arena .cart-item__name {
++  overflow-wrap: anywhere;
++}
++
++body.nla-arena :where(.cart__items, .cart-items th, .cart-items td, .drawer__footer > details) {
++  border-color: var(--nla-arena-border);
++}
++
++body.nla-arena :where(.cart-item__image-container) {
++  background: var(--nla-arena-raised);
++  border: 1px solid var(--nla-arena-border);
++  border-radius: 5px;
++}
++
++body.nla-arena :where(.cart-item__price-wrapper, .cart-item__final-price) {
++  color: var(--nla-arena-text);
++}
++
++body.nla-arena :where(.cart-item__error-text, .product-form__error-message, .errors) {
++  color: #ffb7bc;
++}
++
++body.nla-arena .cart-remove-button,
++body.nla-arena cart-remove-button .button {
++  min-width: 4.4rem;
++  min-height: 4.4rem;
++  padding: 0.9rem;
++  color: var(--nla-arena-muted);
++  border-color: transparent;
++  background: transparent;
++  box-shadow: none;
++}
++
++body.nla-arena :where(.cart__blocks) {
++  border-top: 2px solid #387fe8;
++  padding-top: 2rem;
++}
++
++body.nla-arena :where(.customer h1, .customer h2, .contact h2, .article-template__title) {
++  color: var(--nla-arena-text);
++  font-style: normal;
++  font-weight: 700;
++  letter-spacing: -0.025em;
++}
++
++body.nla-arena :where(.customer table, .customer th, .customer td, .rte table, .rte th, .rte td, .article-template__comment-wrapper) {
++  border-color: var(--nla-arena-border);
++}
++
++body.nla-arena :where(.customer table, .article-template__comment-wrapper, .article-template__comments-comment, .newsletter__wrapper, .password-header, .password-footer, .password-modal__content) {
++  color: var(--nla-arena-text);
++  background: var(--nla-arena-surface);
++}
++
++body.nla-arena :where(.password-header, .password-footer) {
++  border-color: var(--nla-arena-border);
++}
++
++body.nla-arena :where(.password__footer-text, .password__footer-login, .password-link, .password__footer-caption) {
++  color: var(--nla-arena-muted);
++}
++
++body.nla-arena .shopify-policy__container {
++  max-width: 86rem;
++  padding: 4rem 2rem 6rem;
++}
++
++@media screen and (min-width: 750px) {
++  body.nla-arena .product__media-wrapper .product__media-list {
++    margin: 0;
++  }
++
++  body.nla-arena .product:not(.product--no-media) .product__info-wrapper {
++    padding-left: clamp(2.4rem, 4vw, 5rem);
++  }
++
++  body.nla-arena .product.product--right:not(.product--no-media) .product__info-wrapper {
++    padding-left: 0;
++    padding-right: clamp(2.4rem, 4vw, 5rem);
++  }
++}
++
++@media screen and (max-width: 749px) {
++  body.nla-arena .product__media-wrapper media-gallery {
++    padding: 2rem 1rem 1rem;
++  }
++
++  body.nla-arena .product__media-wrapper .product-media-container.media-type-image {
++    max-width: 24rem;
++  }
++
++  body.nla-arena .product__info-wrapper {
++    padding-top: 2.6rem;
++  }
++
++  body.nla-arena .product__title h1 {
++    font-size: clamp(2.6rem, 8vw, 3.4rem);
++  }
++
++  body.nla-arena .product__info-container .price {
++    font-size: 2.8rem;
++  }
++
++  body.nla-arena .card > .card__content {
++    padding: 1rem;
++  }
++
++  body.nla-arena .product-card-wrapper .card__media img {
++    padding: 1rem;
++  }
++
++  body.nla-arena .card__heading {
++    font-size: 1.4rem;
++  }
++
++  body.nla-arena .drawer__inner {
++    max-width: calc(100vw - 1.6rem);
++  }
++
++  body.nla-arena .cart__blocks {
++    margin-top: 2.6rem;
++  }
++}
++
++@media (forced-colors: active) {
++  body.nla-arena .product-form__input--pill input[type='radio']:checked + label {
++    border-color: Highlight;
++    outline: 1px solid Highlight;
++  }
++
++  body.nla-arena :where(a, button, summary, input, select, textarea):focus-visible {
++    outline-color: Highlight;
++  }
++}
++
++body.nla-arena.gift-card {
++  max-width: 64rem;
++  padding: 3.2rem 1.6rem 5rem;
++}
++
++body.nla-arena.gift-card > main {
++  margin-top: 2.4rem;
++  padding: 2.4rem 1.6rem 3.2rem;
++  border: 1px solid var(--nla-arena-border);
++  border-radius: 8px;
++  background:
++    var(--nla-arena-gradient) center top / 70% 2px no-repeat,
++    var(--nla-arena-surface);
++}
++
++body.nla-arena.gift-card .nla-gift-card__brand {
++  position: relative;
++  display: block;
++  width: 28rem;
++  max-width: 100%;
++  height: auto;
++  aspect-ratio: 811 / 489;
++  margin: 0 auto 2.4rem;
++  overflow: hidden;
++  background: #292828;
++}
++
++body.nla-arena.gift-card .nla-gift-card__brand .gift-card__image {
++  position: absolute;
++  top: -51.94%;
++  left: -11.84%;
++  width: 123.31%;
++  max-width: none;
++  height: auto;
++  max-height: none;
++  padding: 0;
++}
++
++body.nla-arena.gift-card :is(.gift-card__price, .gift-card__number, .gift-card__text) {
++  opacity: 1;
++}
++
++body.nla-arena.gift-card .gift-card__text {
++  color: var(--nla-arena-muted);
++}
++
++body.nla-arena.gift-card .gift-card__number {
++  padding: 1.4rem 0.8rem;
++  border: 1px solid var(--nla-arena-border);
++  border-radius: 5px;
++  color: var(--nla-arena-text);
++  background: var(--nla-arena-page);
++  font-size: clamp(1.5rem, 4.5vw, 1.8rem);
++  letter-spacing: 0.15rem;
++  overflow-wrap: anywhere;
++}
++
++body.nla-arena.gift-card .gift-card__qr-code {
++  width: max-content;
++  margin: 2.4rem auto;
++  padding: 16px;
++  background: #fff;
++  color: #000;
++  border: 0;
++  color-scheme: light;
++}
++
++body.nla-arena.gift-card .gift-card__qr-code :is(img, canvas) {
++  max-width: none;
++  margin: 0;
++}
++
++@media print {
++  html:has(body.nla-arena.gift-card),
++  body.nla-arena.gift-card,
++  body.nla-arena.gift-card > main {
++    color: #000;
++    background: #fff;
++    color-scheme: light;
++    box-shadow: none;
++  }
++
++  body.nla-arena.gift-card :is(h1, h2, .gift-card__text, .gift-card__number, .badge) {
++    color: #000;
++    background: #fff;
++    border-color: #555;
++    opacity: 1;
++  }
++
++  body.nla-arena.gift-card > main {
++    border-color: #999;
++    break-inside: avoid;
++  }
++
++  body.nla-arena.gift-card .no-print {
++    display: none;
++  }
++}
+--- a/config/settings_data.json
++++ b/config/settings_data.json
+@@ -1,44 +1,35 @@
+-/*
+- * ------------------------------------------------------------
+- * IMPORTANT: The contents of this file are auto-generated.
+- *
+- * This file may be updated by the Shopify admin theme editor
+- * or related systems. Please exercise caution as any changes
+- * made to this file may be overwritten.
+- * ------------------------------------------------------------
+- */
+ {
+   "current": {
+     "logo": "shopify://shop_images/logo_minimal_nla.png",
+     "logo_width": 90,
+     "favicon": "shopify://shop_images/LOGO_MINIMAL.png",
+-    "type_header_font": "bungee_n4",
++    "type_header_font": "sans_serif_n7",
+     "heading_scale": 100,
+-    "type_body_font": "bungee_n4",
++    "type_body_font": "sans_serif_n4",
+     "body_scale": 100,
+-    "page_width": 1000,
++    "page_width": 1200,
+     "spacing_sections": 0,
+     "spacing_grid_horizontal": 8,
+     "spacing_grid_vertical": 8,
+-    "animations_reveal_on_scroll": true,
++    "animations_reveal_on_scroll": false,
+     "animations_hover_elements": "none",
+     "buttons_border_thickness": 1,
+     "buttons_border_opacity": 100,
+-    "buttons_radius": 0,
++    "buttons_radius": 10,
+     "buttons_shadow_opacity": 0,
+     "buttons_shadow_horizontal_offset": 0,
+     "buttons_shadow_vertical_offset": 4,
+     "buttons_shadow_blur": 5,
+     "variant_pills_border_thickness": 1,
+     "variant_pills_border_opacity": 55,
+-    "variant_pills_radius": 40,
++    "variant_pills_radius": 8,
+     "variant_pills_shadow_opacity": 0,
+     "variant_pills_shadow_horizontal_offset": 0,
+     "variant_pills_shadow_vertical_offset": 4,
+     "variant_pills_shadow_blur": 5,
+     "inputs_border_thickness": 1,
+     "inputs_border_opacity": 55,
+-    "inputs_radius": 0,
++    "inputs_radius": 8,
+     "inputs_shadow_opacity": 0,
+     "inputs_shadow_horizontal_offset": 0,
+     "inputs_shadow_vertical_offset": 4,
+@@ -49,7 +40,7 @@
+     "card_color_scheme": "scheme-b43bb898-772e-4baf-b68a-943dc7fb691c",
+     "card_border_thickness": 0,
+     "card_border_opacity": 10,
+-    "card_corner_radius": 0,
++    "card_corner_radius": 12,
+     "card_shadow_opacity": 0,
+     "card_shadow_horizontal_offset": 0,
+     "card_shadow_vertical_offset": 4,
+@@ -60,7 +51,7 @@
+     "collection_card_color_scheme": "scheme-abd99666-6353-444b-bb90-58f4c93e5b0d",
+     "collection_card_border_thickness": 0,
+     "collection_card_border_opacity": 10,
+-    "collection_card_corner_radius": 0,
++    "collection_card_corner_radius": 12,
+     "collection_card_shadow_opacity": 0,
+     "collection_card_shadow_horizontal_offset": 0,
+     "collection_card_shadow_vertical_offset": 4,
+@@ -71,7 +62,7 @@
+     "blog_card_color_scheme": "scheme-2",
+     "blog_card_border_thickness": 0,
+     "blog_card_border_opacity": 10,
+-    "blog_card_corner_radius": 0,
++    "blog_card_corner_radius": 12,
+     "blog_card_shadow_opacity": 0,
+     "blog_card_shadow_horizontal_offset": 0,
+     "blog_card_shadow_vertical_offset": 4,
+@@ -85,14 +76,14 @@
+     "text_boxes_shadow_blur": 5,
+     "media_border_thickness": 1,
+     "media_border_opacity": 5,
+-    "media_radius": 0,
++    "media_radius": 12,
+     "media_shadow_opacity": 0,
+     "media_shadow_horizontal_offset": 0,
+     "media_shadow_vertical_offset": 4,
+     "media_shadow_blur": 5,
+     "popup_border_thickness": 1,
+     "popup_border_opacity": 10,
+-    "popup_corner_radius": 0,
++    "popup_corner_radius": 12,
+     "popup_shadow_opacity": 5,
+     "popup_shadow_horizontal_offset": 0,
+     "popup_shadow_vertical_offset": 4,
+@@ -146,90 +137,90 @@
+     "color_schemes": {
+       "scheme-1": {
+         "settings": {
+-          "background": "#ffffff",
+-          "background_gradient": "",
+-          "text": "#121212",
+-          "button": "#121212",
+-          "button_label": "#ffffff",
+-          "secondary_button_label": "#121212",
+-          "shadow": "#121212"
++          "background": "#10131a",
++          "background_gradient": "",
++          "text": "#edf1f8",
++          "button": "#1761c8",
++          "button_label": "#ffffff",
++          "secondary_button_label": "#edf1f8",
++          "shadow": "#080b10"
+         }
+       },
+       "scheme-2": {
+         "settings": {
+-          "background": "#f3f3f3",
+-          "background_gradient": "",
+-          "text": "#121212",
+-          "button": "#121212",
+-          "button_label": "#f3f3f3",
+-          "secondary_button_label": "#121212",
+-          "shadow": "#121212"
++          "background": "#181c25",
++          "background_gradient": "",
++          "text": "#edf1f8",
++          "button": "#1761c8",
++          "button_label": "#ffffff",
++          "secondary_button_label": "#edf1f8",
++          "shadow": "#080b10"
+         }
+       },
+       "scheme-3": {
+         "settings": {
+-          "background": "#242833",
+-          "background_gradient": "",
+-          "text": "#ffffff",
+-          "button": "#ffffff",
+-          "button_label": "#000000",
+-          "secondary_button_label": "#ffffff",
+-          "shadow": "#121212"
++          "background": "#10131a",
++          "background_gradient": "",
++          "text": "#edf1f8",
++          "button": "#1761c8",
++          "button_label": "#ffffff",
++          "secondary_button_label": "#edf1f8",
++          "shadow": "#080b10"
+         }
+       },
+       "scheme-4": {
+         "settings": {
+-          "background": "#121212",
+-          "background_gradient": "",
+-          "text": "#ffffff",
+-          "button": "#ffffff",
+-          "button_label": "#121212",
+-          "secondary_button_label": "#ffffff",
+-          "shadow": "#121212"
++          "background": "#10131a",
++          "background_gradient": "",
++          "text": "#edf1f8",
++          "button": "#1761c8",
++          "button_label": "#ffffff",
++          "secondary_button_label": "#edf1f8",
++          "shadow": "#080b10"
+         }
+       },
+       "scheme-5": {
+         "settings": {
+-          "background": "#334fb4",
+-          "background_gradient": "",
+-          "text": "#ffffff",
+-          "button": "#ffffff",
+-          "button_label": "#334fb4",
+-          "secondary_button_label": "#ffffff",
+-          "shadow": "#121212"
++          "background": "#10131a",
++          "background_gradient": "",
++          "text": "#edf1f8",
++          "button": "#1761c8",
++          "button_label": "#ffffff",
++          "secondary_button_label": "#edf1f8",
++          "shadow": "#080b10"
+         }
+       },
+       "scheme-abd99666-6353-444b-bb90-58f4c93e5b0d": {
+         "settings": {
+-          "background": "#ffffff",
+-          "background_gradient": "",
+-          "text": "#000000",
+-          "button": "#81e50d",
+-          "button_label": "#81e50d",
+-          "secondary_button_label": "#81e50d",
+-          "shadow": "#121212"
++          "background": "#10131a",
++          "background_gradient": "",
++          "text": "#edf1f8",
++          "button": "#1761c8",
++          "button_label": "#ffffff",
++          "secondary_button_label": "#edf1f8",
++          "shadow": "#080b10"
+         }
+       },
+       "scheme-b43bb898-772e-4baf-b68a-943dc7fb691c": {
+         "settings": {
+-          "background": "#121212",
+-          "background_gradient": "",
+-          "text": "#81e50d",
+-          "button": "#81e50d",
+-          "button_label": "#81e50d",
+-          "secondary_button_label": "#ffffff",
+-          "shadow": "#121212"
++          "background": "#181c25",
++          "background_gradient": "",
++          "text": "#edf1f8",
++          "button": "#1761c8",
++          "button_label": "#ffffff",
++          "secondary_button_label": "#edf1f8",
++          "shadow": "#080b10"
+         }
+       },
+       "scheme-3760c241-2473-44f6-ae5b-427926f3198b": {
+         "settings": {
+-          "background": "#ffffff",
+-          "background_gradient": "",
+-          "text": "#ff0000",
+-          "button": "#121212",
+-          "button_label": "#ffffff",
+-          "secondary_button_label": "#121212",
+-          "shadow": "#121212"
++          "background": "#10131a",
++          "background_gradient": "",
++          "text": "#edf1f8",
++          "button": "#1761c8",
++          "button_label": "#ffffff",
++          "secondary_button_label": "#edf1f8",
++          "shadow": "#080b10"
+         }
+       }
+     }
+--- a/layout/theme.liquid
++++ b/layout/theme.liquid
+@@ -4,12 +4,10 @@
+     <meta charset="utf-8">
+     <meta http-equiv="X-UA-Compatible" content="IE=edge">
+     <meta name="viewport" content="width=device-width,initial-scale=1">
+-    <meta name="theme-color" content="">
++    <meta name="theme-color" content="#10131a">
+     <link rel="canonical" href="{{ canonical_url }}">
+
+-    {%- if settings.favicon != blank -%}
+-      <link rel="icon" type="image/png" href="{{ settings.favicon | image_url: width: 32, height: 32 }}">
+-    {%- endif -%}
++    <link rel="icon" type="image/png" href="{{ 'nla-symbol.png' | asset_url }}">
+
+     {%- unless settings.type_header_font.system? and settings.type_body_font.system? -%}
+       <link rel="preconnect" href="https://fonts.shopifycdn.com" crossorigin>
+@@ -35,6 +33,8 @@
+       <script src="{{ 'animations.js' | asset_url }}" defer="defer"></script>
+     {%- endif -%}
+
++    {{ 'nla-arena.css' | asset_url | stylesheet_tag }}
++    {{ 'nla-arena-native.css' | asset_url | stylesheet_tag }}
+     {{ content_for_header }}
+
+     {%- liquid
+@@ -285,7 +285,7 @@
+     </script>
+   </head>
+
+-  <body class="gradient{% if settings.animations_hover_elements != 'none' %} animate--hover-{{ settings.animations_hover_elements }}{% endif %}">
++  <body class="nla-arena gradient{% if settings.animations_hover_elements != 'none' %} animate--hover-{{ settings.animations_hover_elements }}{% endif %}">
+     <a class="skip-to-content-link button visually-hidden" href="#MainContent">
+       {{ 'accessibility.skip_to_text' | t }}
+     </a>
+--- a/layout/password.liquid
++++ b/layout/password.liquid
+@@ -4,12 +4,10 @@
+     <meta charset="utf-8">
+     <meta http-equiv="X-UA-Compatible" content="IE=edge">
+     <meta name="viewport" content="width=device-width,initial-scale=1">
+-    <meta name="theme-color" content="">
++    <meta name="theme-color" content="#10131a">
+     <link rel="canonical" href="{{ canonical_url }}">
+
+-    {%- if settings.favicon != blank -%}
+-      <link rel="icon" type="image/png" href="{{ settings.favicon | image_url: width: 32, height: 32 }}">
+-    {%- endif -%}
++    <link rel="icon" type="image/png" href="{{ 'nla-symbol.png' | asset_url }}">
+
+     {%- unless settings.type_header_font.system? -%}
+       <link rel="preconnect" href="https://fonts.shopifycdn.com" crossorigin>
+@@ -21,6 +19,8 @@
+
+     {% render 'meta-tags' %}
+
++    {{ 'nla-arena.css' | asset_url | stylesheet_tag }}
++    {{ 'nla-arena-native.css' | asset_url | stylesheet_tag }}
+     {{ content_for_header }}
+
+     {%- liquid
+@@ -194,7 +194,7 @@
+     <script src="{{ 'password-modal.js' | asset_url }}" defer="defer"></script>
+   </head>
+
+-  <body class="password gradient">
++  <body class="nla-arena password gradient">
+     <a class="skip-to-content-link button visually-hidden" href="#MainContent">
+       {{ 'accessibility.skip_to_text' | t }}
+     </a>
+--- a/sections/nla-header.liquid
++++ b/sections/nla-header.liquid
+@@ -46,7 +46,8 @@
+       </details>
+
+       <a class="nla-brand" href="{{ routes.root_url }}" aria-label="{{ shop.name | escape }}">
+-        <span class="nla-brand__crop">
++        <picture class="nla-brand__crop">
++          <source media="(max-width: 989px)" srcset="{{ 'nla-symbol.png' | asset_url }}">
+           <img
+             class="nla-brand__image"
+             src="{{ 'nla-logo-original.png' | asset_url }}"
+@@ -56,7 +57,7 @@
+             loading="eager"
+             fetchpriority="high"
+           >
+-        </span>
++        </picture>
+       </a>
+
+       <div class="nla-search-wrap">
+--- a/sections/nla-home.liquid
++++ b/sections/nla-home.liquid
+@@ -4,17 +4,17 @@
+   assign one_piece_collection = section.settings.one_piece_collection
+   assign yugioh_collection = section.settings.yugioh_collection
+   assign sealed_collection = section.settings.sealed_collection
+-  assign magic_product = magic_collection.products.first
+-  assign pokemon_product = pokemon_collection.products.first
+-  assign one_piece_product = one_piece_collection.products.first
++  assign magic_product = section.settings.hero_center | default: magic_collection.products.first
++  assign pokemon_product = section.settings.hero_left | default: pokemon_collection.products.first
++  assign one_piece_product = section.settings.hero_right | default: one_piece_collection.products.first
+ %}
+
+-<main class="nla-home">
++<div class="nla-home">
+   <section class="nla-hero">
+     <div class="nla-home__shell nla-hero__grid">
+       <div class="nla-hero__copy">
+         <span class="nla-kicker">{{ section.settings.hero_kicker | escape }}</span>
+-        <h1>{{ section.settings.hero_heading | escape }}</h1>
++        <h1>{% assign hero_words = section.settings.hero_heading | split: ' ' %}{% for word in hero_words %}{% if forloop.last %}<span class="nla-hero__accent">{{ word | escape }}</span>{% else %}{{ word | escape }} {% endif %}{% endfor %}</h1>
+         <p>{{ section.settings.hero_text | escape }}</p>
+         <div class="nla-hero__actions">
+           {% if magic_collection != blank %}
+@@ -22,36 +22,22 @@
+           {% endif %}
+           <a class="nla-button nla-button--secondary" href="{{ routes.search_url }}">{{ section.settings.search_button | escape }}</a>
+         </div>
+-        <div class="nla-hero__proof">
+-          {% if magic_collection != blank %}
+-            <span><strong>{{ magic_collection.all_products_count }}</strong> Magic</span>
+-          {% endif %}
+-          {% if pokemon_collection != blank %}
+-            <span><strong>{{ pokemon_collection.all_products_count }}</strong> Pokémon</span>
+-          {% endif %}
+-          {% if one_piece_collection != blank %}
+-            <span><strong>{{ one_piece_collection.all_products_count }}</strong> One Piece</span>
+-          {% endif %}
+-          {% if yugioh_collection != blank %}
+-            <span><strong>{{ yugioh_collection.all_products_count }}</strong> Yu-Gi-Oh!</span>
+-          {% endif %}
+-        </div>
+       </div>
+
+       <div class="nla-card-fan" aria-hidden="true">
+         {% if pokemon_product.featured_image %}
+           <div class="nla-card-fan__card nla-card-fan__card--left">
+-            {{ pokemon_product.featured_image | image_url: width: 520 | image_tag: loading: 'eager', alt: '' }}
++            {{ pokemon_product.featured_image | image_url: width: 520 | image_tag: loading: 'eager', widths: '200, 360, 520', sizes: '(max-width: 749px) 150px, 230px', alt: '' }}
+           </div>
+         {% endif %}
+         {% if magic_product.featured_image %}
+           <div class="nla-card-fan__card nla-card-fan__card--center">
+-            {{ magic_product.featured_image | image_url: width: 560 | image_tag: loading: 'eager', alt: '' }}
++            {{ magic_product.featured_image | image_url: width: 560 | image_tag: loading: 'eager', fetchpriority: 'high', widths: '200, 360, 560', sizes: '(max-width: 749px) 150px, 230px', alt: '' }}
+           </div>
+         {% endif %}
+         {% if one_piece_product.featured_image %}
+           <div class="nla-card-fan__card nla-card-fan__card--right">
+-            {{ one_piece_product.featured_image | image_url: width: 520 | image_tag: loading: 'eager', alt: '' }}
++            {{ one_piece_product.featured_image | image_url: width: 520 | image_tag: loading: 'eager', widths: '200, 360, 520', sizes: '(max-width: 749px) 150px, 230px', alt: '' }}
+           </div>
+         {% endif %}
+         <div class="nla-card-fan__glow"></div>
+@@ -70,7 +56,7 @@
+           <a class="nla-game-card nla-game-card--magic" href="{{ magic_collection.url }}">
+             <span>MTG</span>
+             <h3>Magic: The Gathering</h3>
+-            <p>{{ magic_collection.all_products_count }} {{ section.settings.products_label | escape }}</p>
++            <p>{{ 'nla_catalog.family_single' | t }}</p>
+             <strong>{{ section.settings.explore_label | escape }} →</strong>
+           </a>
+         {% endif %}
+@@ -78,7 +64,7 @@
+           <a class="nla-game-card nla-game-card--pokemon" href="{{ pokemon_collection.url }}">
+             <span>TCG</span>
+             <h3>Pokémon</h3>
+-            <p>{{ pokemon_collection.all_products_count }} {{ section.settings.products_label | escape }}</p>
++            <p>{{ 'nla_catalog.family_single' | t }}</p>
+             <strong>{{ section.settings.explore_label | escape }} →</strong>
+           </a>
+         {% endif %}
+@@ -86,7 +72,7 @@
+           <a class="nla-game-card nla-game-card--one-piece" href="{{ one_piece_collection.url }}">
+             <span>TCG</span>
+             <h3>One Piece</h3>
+-            <p>{{ one_piece_collection.all_products_count }} {{ section.settings.products_label | escape }}</p>
++            <p>{{ 'nla_catalog.family_single' | t }}</p>
+             <strong>{{ section.settings.explore_label | escape }} →</strong>
+           </a>
+         {% endif %}
+@@ -94,7 +80,7 @@
+           <a class="nla-game-card nla-game-card--yugioh" href="{{ yugioh_collection.url }}">
+             <span>TCG</span>
+             <h3>Yu-Gi-Oh!</h3>
+-            <p>{{ yugioh_collection.all_products_count }} {{ section.settings.products_label | escape }}</p>
++            <p>{{ 'nla_catalog.family_single' | t }}</p>
+             <strong>{{ section.settings.explore_label | escape }} →</strong>
+           </a>
+         {% endif %}
+@@ -158,7 +144,7 @@
+       <p>{{ section.settings.store_text | escape }}</p>
+     </div>
+   </section>
+-</main>
++</div>
+
+ {% stylesheet %}
+   .nla-home {
+@@ -720,6 +706,9 @@
+   "tag": "section",
+   "class": "nla-home-section",
+   "settings": [
++    { "type": "product", "id": "hero_left", "label": "Carta hero a sinistra" },
++    { "type": "product", "id": "hero_center", "label": "Carta hero centrale" },
++    { "type": "product", "id": "hero_right", "label": "Carta hero a destra" },
+     {
+       "type": "collection",
+       "id": "magic_collection",
+--- a/sections/main-password-header.liquid
++++ b/sections/main-password-header.liquid
+@@ -6,22 +6,7 @@
+
+ <div class="color-{{ section.settings.color_scheme }} gradient">
+   <div class="password-header">
+-    {%- if settings.logo != blank -%}
+-      {%- assign logo_alt = settings.logo.alt | default: shop.name | escape -%}
+-      {%- assign logo_height = settings.logo_width | divided_by: settings.logo.aspect_ratio -%}
+-      {{
+-        settings.logo
+-        | image_url: width: 500
+-        | image_tag:
+-          class: 'password-logo',
+-          widths: '50, 100, 150, 200, 250, 300, 400, 500',
+-          width: settings.logo_width,
+-          height: logo_height,
+-          alt: logo_alt
+-      }}
+-    {%- else -%}
+-      <h1 class="h2">{{ shop.name }}</h1>
+-    {%- endif -%}
++    <span class="nla-password-brand"><img src="{{ 'nla-logo-original.png' | asset_url }}" alt="{{ shop.name | escape }}" width="1000" height="1000" loading="eager"></span>
+
+     {%- if shop.password_message != blank -%}
+       <div class="password-content">
+--- a/sections/nla-collection-style.liquid
++++ b/sections/nla-collection-style.liquid
+@@ -1,317 +1,7 @@
+ <div class="nla-collection-style" hidden></div>
+
+ {% stylesheet %}
+-  .nla-collection-style-section {
+-    display: none;
+-  }
+-
+-  .nla-collection-style-section ~ .section {
+-    --nla-collection-bg: #0b0c10;
+-    --nla-collection-surface: #15171d;
+-    --nla-collection-surface-soft: #1b1e26;
+-    --nla-collection-border: rgb(255 255 255 / 10%);
+-    --nla-collection-text: #f5f7fb;
+-    --nla-collection-muted: #a7adba;
+-    --nla-collection-cyan: #30bff5;
+-    --nla-collection-blue: #4a54fc;
+-  }
+-
+-  .nla-collection-style-section ~ .section .collection-hero {
+-    position: relative;
+-    overflow: hidden;
+-    border-bottom: 1px solid var(--nla-collection-border);
+-    background:
+-      radial-gradient(circle at 86% 10%, rgb(48 191 245 / 18%), transparent 25rem),
+-      linear-gradient(135deg, #11131a, var(--nla-collection-bg));
+-    color: var(--nla-collection-text);
+-  }
+-
+-  .nla-collection-style-section ~ .section .collection-hero::before {
+-    position: absolute;
+-    inset: 0;
+-    background-image:
+-      linear-gradient(rgb(255 255 255 / 3%) 1px, transparent 1px),
+-      linear-gradient(90deg, rgb(255 255 255 / 3%) 1px, transparent 1px);
+-    background-size: 4rem 4rem;
+-    content: "";
+-    mask-image: linear-gradient(to right, #000, transparent 88%);
+-    pointer-events: none;
+-  }
+-
+-  .nla-collection-style-section ~ .section .collection-hero__inner {
+-    position: relative;
+-    min-height: 24rem;
+-    align-items: center;
+-    padding-block: 5.6rem;
+-  }
+-
+-  .nla-collection-style-section ~ .section .collection-hero__title {
+-    max-width: 90rem;
+-    margin: 0;
+-    color: var(--nla-collection-text);
+-    font-size: clamp(3.8rem, 6vw, 7.2rem);
+-    font-style: italic;
+-    font-weight: 950;
+-    letter-spacing: -0.045em;
+-    line-height: 0.95;
+-    text-transform: uppercase;
+-  }
+-
+-  .nla-collection-style-section ~ .section .collection-hero__title::after {
+-    display: block;
+-    width: 7rem;
+-    height: 0.4rem;
+-    margin-top: 2rem;
+-    border-radius: 999px;
+-    background: linear-gradient(90deg, var(--nla-collection-cyan), var(--nla-collection-blue));
+-    content: "";
+-  }
+-
+-  .nla-collection-style-section ~ .section .collection-hero__description {
+-    max-width: 76rem;
+-    margin-top: 2.2rem;
+-    color: var(--nla-collection-muted);
+-    font-size: 1.7rem;
+-    line-height: 1.65;
+-  }
+-
+-  .nla-collection-style-section ~ .section .collection-hero__description * {
+-    color: inherit;
+-  }
+-
+-  .nla-collection-style-section ~ .section .collection-hero__image-container {
+-    overflow: hidden;
+-    border: 1px solid var(--nla-collection-border);
+-    border-radius: 2rem;
+-    background: var(--nla-collection-surface);
+-    box-shadow: 0 2.4rem 6rem rgb(0 0 0 / 34%);
+-  }
+-
+-  .nla-collection-style-section ~ .section .section-template--collection__product-grid-padding,
+-  .nla-collection-style-section ~ .section .gradient.color-scheme-1 {
+-    background: var(--nla-collection-bg);
+-    color: var(--nla-collection-text);
+-  }
+-
+-  .nla-collection-style-section ~ .section .facets-vertical {
+-    gap: 3.2rem;
+-  }
+-
+-  .nla-collection-style-section ~ .section .facets-wrapper {
+-    border: 1px solid var(--nla-collection-border);
+-    border-radius: 1.8rem;
+-    background: var(--nla-collection-surface);
+-  }
+-
+-  .nla-collection-style-section ~ .section .facets__form-vertical {
+-    padding: 0.8rem 2rem 2rem;
+-  }
+-
+-  .nla-collection-style-section ~ .section .facets__heading,
+-  .nla-collection-style-section ~ .section .facets__summary,
+-  .nla-collection-style-section ~ .section .facet-filters__label,
+-  .nla-collection-style-section ~ .section .product-count__text,
+-  .nla-collection-style-section ~ .section .product-count-vertical {
+-    color: var(--nla-collection-text);
+-  }
+-
+-  .nla-collection-style-section ~ .section .facets__summary:hover,
+-  .nla-collection-style-section ~ .section .facets__display-vertical,
+-  .nla-collection-style-section ~ .section .facets__disclosure-vertical {
+-    border-color: var(--nla-collection-border);
+-  }
+-
+-  .nla-collection-style-section ~ .section .facet-checkbox,
+-  .nla-collection-style-section ~ .section .facets__selected,
+-  .nla-collection-style-section ~ .section .product-count__text {
+-    color: var(--nla-collection-muted);
+-  }
+-
+-  .nla-collection-style-section ~ .section .facet-checkbox:hover,
+-  .nla-collection-style-section ~ .section .facet-checkbox:has(input:checked) {
+-    color: var(--nla-collection-text);
+-  }
+-
+-  .nla-collection-style-section ~ .section .facet-checkbox input:checked ~ svg {
+-    color: var(--nla-collection-cyan);
+-  }
+-
+-  .nla-collection-style-section ~ .section .facet-filters__sort {
+-    min-height: 4.4rem;
+-    padding-inline: 1.6rem 4rem;
+-    border: 1px solid var(--nla-collection-border);
+-    border-radius: 999px;
+-    background: var(--nla-collection-surface);
+-    color: var(--nla-collection-text);
+-  }
+-
+-  .nla-collection-style-section ~ .section .active-facets__button-inner {
+-    border-color: rgb(48 191 245 / 35%);
+-    background: rgb(48 191 245 / 10%);
+-    color: var(--nla-collection-text);
+-    box-shadow: none;
+-  }
+-
+-  .nla-collection-style-section ~ .section .product-grid {
+-    row-gap: 2.4rem;
+-  }
+-
+-  .nla-collection-style-section ~ .section .card-wrapper {
+-    height: 100%;
+-  }
+-
+-  .nla-collection-style-section ~ .section .card {
+-    overflow: hidden;
+-    height: 100%;
+-    border: 1px solid var(--nla-collection-border);
+-    border-radius: 1.6rem;
+-    background: var(--nla-collection-surface);
+-    box-shadow: none;
+-    transition:
+-      border-color 180ms ease,
+-      box-shadow 180ms ease,
+-      transform 180ms ease;
+-  }
+-
+-  .nla-collection-style-section ~ .section .card-wrapper:hover .card {
+-    border-color: rgb(48 191 245 / 46%);
+-    box-shadow: 0 2rem 5rem rgb(0 0 0 / 28%);
+-    transform: translateY(-4px);
+-  }
+-
+-  .nla-collection-style-section ~ .section .card__inner {
+-    border-bottom: 1px solid var(--nla-collection-border);
+-    background:
+-      radial-gradient(circle at 50% 32%, rgb(54 111 242 / 14%), transparent 50%),
+-      #0e0f14;
+-  }
+-
+-  .nla-collection-style-section ~ .section .card__media .media {
+-    padding: 1.4rem;
+-  }
+-
+-  .nla-collection-style-section ~ .section .card__media img {
+-    object-fit: contain;
+-  }
+-
+-  .nla-collection-style-section ~ .section .card__content {
+-    padding: 0;
+-  }
+-
+-  .nla-collection-style-section ~ .section .card__information {
+-    padding: 1.7rem;
+-  }
+-
+-  .nla-collection-style-section ~ .section .card__heading {
+-    min-height: 4.4rem;
+-    color: var(--nla-collection-text);
+-    font-size: 1.45rem;
+-    font-weight: 750;
+-    line-height: 1.45;
+-  }
+-
+-  .nla-collection-style-section ~ .section .card-information {
+-    color: var(--nla-collection-muted);
+-  }
+-
+-  .nla-collection-style-section ~ .section .price {
+-    margin-top: 1rem;
+-    color: var(--nla-collection-text);
+-    font-weight: 850;
+-  }
+-
+-  .nla-collection-style-section ~ .section .badge {
+-    border: 1px solid rgb(255 255 255 / 16%);
+-    background: rgb(13 14 18 / 90%);
+-    color: var(--nla-collection-muted);
+-  }
+-
+-  .nla-collection-style-section ~ .section .nla-card--catalog-only .card__media {
+-    filter: saturate(0.7);
+-  }
+-
+-  .nla-collection-style-section ~ .section .nla-card--catalog-only .price {
+-    display: none;
+-  }
+-
+-  .nla-collection-style-section ~ .section .pagination__item {
+-    color: var(--nla-collection-text);
+-  }
+-
+-  .nla-collection-style-section ~ .section .pagination__item--current::after {
+-    background: linear-gradient(90deg, var(--nla-collection-cyan), var(--nla-collection-blue));
+-  }
+-
+-  .nla-collection-style-section ~ .section .collection--empty {
+-    color: var(--nla-collection-text);
+-  }
+-
+-  @media screen and (max-width: 989px) {
+-    .nla-collection-style-section ~ .section .collection-hero__inner {
+-      min-height: 20rem;
+-      padding-block: 4.4rem;
+-    }
+-
+-    .nla-collection-style-section ~ .section .facets-wrapper {
+-      border: 0;
+-      border-radius: 0;
+-      background: transparent;
+-    }
+-
+-    .nla-collection-style-section ~ .section .mobile-facets__open,
+-    .nla-collection-style-section ~ .section .mobile-facets__sort .select__select {
+-      color: var(--nla-collection-text);
+-    }
+-
+-    .nla-collection-style-section ~ .section .mobile-facets__open {
+-      min-height: 4.4rem;
+-      padding-inline: 1.8rem;
+-      border: 1px solid var(--nla-collection-border);
+-      border-radius: 999px;
+-      background: var(--nla-collection-surface);
+-    }
+-
+-    .nla-collection-style-section ~ .section .mobile-facets__inner,
+-    .nla-collection-style-section ~ .section .mobile-facets__header,
+-    .nla-collection-style-section ~ .section .mobile-facets__footer,
+-    .nla-collection-style-section ~ .section .mobile-facets__submenu {
+-      background: var(--nla-collection-surface);
+-      color: var(--nla-collection-text);
+-    }
+-  }
+-
+-  @media screen and (max-width: 749px) {
+-    .nla-collection-style-section ~ .section .collection-hero__inner {
+-      padding-inline: 1.2rem;
+-      padding-block: 3.6rem;
+-    }
+-
+-    .nla-collection-style-section ~ .section .collection-hero__title {
+-      font-size: clamp(3.3rem, 12vw, 5rem);
+-    }
+-
+-    .nla-collection-style-section ~ .section .collection-hero__description {
+-      font-size: 1.5rem;
+-    }
+-
+-    .nla-collection-style-section ~ .section .product-grid {
+-      column-gap: 1rem;
+-      row-gap: 1.4rem;
+-    }
+-
+-    .nla-collection-style-section ~ .section .card__media .media {
+-      padding: 0.8rem;
+-    }
+-
+-    .nla-collection-style-section ~ .section .card__information {
+-      padding: 1.2rem;
+-    }
+-
+-    .nla-collection-style-section ~ .section .card__heading {
+-      min-height: 4rem;
+-      font-size: 1.25rem;
+-    }
+-  }
++  .nla-collection-style-section { display: none; }
+ {% endstylesheet %}
+
+ {% schema %}
+--- a/templates/product.json
++++ b/templates/product.json
+@@ -1,12 +1,3 @@
+-/*
+- * ------------------------------------------------------------
+- * IMPORTANT: The contents of this file are auto-generated.
+- *
+- * This file may be updated by the Shopify admin theme editor
+- * or related systems. Please exercise caution as any changes
+- * made to this file may be overwritten.
+- * ------------------------------------------------------------
+- */
+ {
+   "sections": {
+     "main": {
+@@ -73,7 +64,7 @@
+         "constrain_to_viewport": false,
+         "media_fit": "contain",
+         "gallery_layout": "stacked",
+-        "media_position": "right",
++        "media_position": "left",
+         "image_zoom": "none",
+         "mobile_thumbnails": "hide",
+         "hide_variants": true,
+--- a/templates/index.json
++++ b/templates/index.json
+@@ -1,12 +1,3 @@
+-/*
+- * ------------------------------------------------------------
+- * IMPORTANT: The contents of this file are auto-generated.
+- *
+- * This file may be updated by the Shopify admin theme editor
+- * or related systems. Please exercise caution as any changes
+- * made to this file may be overwritten.
+- * ------------------------------------------------------------
+- */
+ {
+   "sections": {
+     "nla_home": {
+@@ -38,7 +29,10 @@
+         "sell_text": "Una sezione chiara per proporre la tua collezione, conoscere i criteri di valutazione e scegliere come ricevere il corrispettivo.",
+         "store_kicker": "NEXT LEVEL ARENA",
+         "store_heading": "GIOCA. SCAMBIA. COMPETI.",
+-        "store_text": "Lo spazio fisico di Next Level Arena completa il catalogo online: tavoli, eventi e una community costruita intorno ai giochi."
++        "store_text": "Lo spazio fisico di Next Level Arena completa il catalogo online: tavoli, eventi e una community costruita intorno ai giochi.",
++        "hero_left": "animation-module-kaladesh-rare-194",
++        "hero_center": "black-mage-s-rod-magic-the-gathering-final-fantasy-common-90-824134",
++        "hero_right": "diabolic-tutor-kaladesh-uncommon-75-292819"
+       }
+     }
+   },
+--- a/templates/gift_card.liquid
++++ b/templates/gift_card.liquid
+@@ -7,12 +7,10 @@
+     <meta charset="utf-8">
+     <meta http-equiv="X-UA-Compatible" content="IE=edge">
+     <meta name="viewport" content="width=device-width,initial-scale=1">
+-    <meta name="theme-color" content="{{ settings.color_background }}">
++    <meta name="theme-color" content="#10131a">
+     <link rel="canonical" href="{{ canonical_url }}">
+
+-    {%- if settings.favicon != blank -%}
+-      <link rel="icon" type="image/png" href="{{ settings.favicon | image_url: width: 32, height: 32 }}">
+-    {%- endif -%}
++    <link rel="icon" type="image/png" href="{{ 'nla-symbol.png' | asset_url }}">
+
+     {%- unless settings.type_header_font.system? -%}
+       <link rel="preconnect" href="https://fonts.shopifycdn.com" crossorigin>
+@@ -24,6 +22,8 @@
+
+     <meta name="description" content="{{ 'gift_cards.issued.subtext' | t }}">
+
++    {{ 'nla-arena.css' | asset_url | stylesheet_tag }}
++    {{ 'nla-arena-native.css' | asset_url | stylesheet_tag }}
+     {{ content_for_header }}
+
+     {%- liquid
+@@ -105,7 +105,7 @@
+     {{ 'template-giftcard.css' | asset_url | stylesheet_tag }}
+   </head>
+
+-  <body class="gradient gift-card">
++  <body class="nla-arena gradient gift-card">
+     <header>
+       <div class="gift-card__price">
+         <h1>
+@@ -128,20 +128,8 @@
+     </header>
+
+     <main>
+-      <div class="gift-card__image-wrapper">
+-        {%- if settings.logo != blank -%}
+-          {%- assign logo_alt = settings.logo.alt | default: shop.name | escape -%}
+-          {{ settings.logo | image_url: width: 570 | image_tag: class: 'gift-card__image', alt: logo_alt }}
+-        {%- else %}
+-          <img
+-            class="gift-card__image"
+-            src="{{ 'gift-card/card.svg' | shopify_asset_url }}"
+-            alt=""
+-            height="{{ 570 | divided_by: 1.5 }}"
+-            width="570"
+-            loading="eager"
+-          >
+-        {%- endif %}
++      <div class="gift-card__image-wrapper nla-gift-card__brand">
++        <img class="gift-card__image" src="{{ 'nla-logo-original.png' | asset_url }}" alt="{{ shop.name | escape }}" width="1000" height="1000" loading="eager">
+       </div>
+       <h2>{{ shop.name }}</h2>
+       <div class="gift-card__text-wrapper">
