@@ -12,7 +12,16 @@ from nla_catalog_gateway import cardtrader_capture
 
 
 @pytest.mark.parametrize(
-    "case", ["success", "integrated", "bad_hash", "wal", "existing_output", "relative_output"]
+    "case",
+    [
+        "success",
+        "integrated",
+        "bad_hash",
+        "wal",
+        "existing_output",
+        "relative_output",
+        "projection_race",
+    ],
 )
 def test_projection_comparison_is_pinned_readonly_and_never_overwrites(
     tmp_path, monkeypatch, capsys, case
@@ -41,6 +50,8 @@ def test_projection_comparison_is_pinned_readonly_and_never_overwrites(
 
     def compare(path, products, categories):
         assert path == capture and products == [product] and categories == cli.CATEGORIES
+        if case == "projection_race":
+            projection.write_bytes(original + b"changed")
         return {
             "status": "read_only_comparison_complete",
             "sourceRows": 1,
@@ -100,7 +111,7 @@ def test_projection_comparison_is_pinned_readonly_and_never_overwrites(
         ],
     )
     assert cli.main() == (0 if case in ("success", "integrated") else 1)
-    assert projection.read_bytes() == original
+    assert projection.read_bytes() == original + (b"changed" if case == "projection_race" else b"")
     result = json.loads(capsys.readouterr().out)
     assert result["creationApproved"] is False
     if case in ("success", "integrated"):

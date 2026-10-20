@@ -740,6 +740,33 @@ def test_duplicate_and_conflicting_typed_gid_rows_fail(tmp_path: Path, conflict:
         )
 
 
+@pytest.mark.parametrize("other_channel", [False, True])
+def test_never_published_draft_is_retained_without_online_store_edge(
+    tmp_path: Path, other_channel: bool
+) -> None:
+    products, variants = _rows()
+    products[1]["status"] = "DRAFT"
+    products[1]["publishedAt"] = None
+    if other_channel:
+        products[2] = _publication(PRODUCT_ONE, _gid("Publication", 42))
+    else:
+        del products[2]
+    expectation = _expectation(expected_active_online_store_published_product_count=1)
+    result = reconcile_snapshot_parts(
+        _inputs(tmp_path, products=products, variants=variants, expectation=expectation),
+        expectation=expectation,
+        taxonomy_config=load_taxonomy(),
+    )
+    draft, active = result.records
+    assert draft.product_gid == _gid("Product", PRODUCT_ONE)
+    assert draft.shopify_status.value == "DRAFT"
+    assert draft.online_store_published is False
+    assert active.online_store_published is True
+    assert len(draft.variants) == 1
+    assert result.source_manifest.product_count == len(result.records) == 2
+    assert result.source_manifest.variant_count == 2
+
+
 @pytest.mark.parametrize(
     ("mutation", "message"),
     [

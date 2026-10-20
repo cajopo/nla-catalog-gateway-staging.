@@ -224,7 +224,7 @@ def test_suggestion_sql_cancellation_preserves_original_exception(projection, mo
         if active:
             raise cancelled
 
-    def slow_query(connection, request, *, limit):
+    def slow_query(connection, request, *, limit, checkpoint=None):
         nonlocal active
         active = True
         connection.execute(

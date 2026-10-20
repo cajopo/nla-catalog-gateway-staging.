@@ -128,6 +128,42 @@ def test_promote_preserves_previous_and_rollback_exchanges_verified_packages(
     assert second.directory.is_dir()
 
 
+@pytest.mark.parametrize("action", ["promote", "rollback"])
+@pytest.mark.parametrize("rejected_package", [0, 1])
+def test_selector_requires_both_packages_compatible_before_pointer_change(
+    activation_store: SimpleNamespace,
+    monkeypatch: pytest.MonkeyPatch,
+    action: str,
+    rejected_package: int,
+) -> None:
+    first, second = activation_store.packages[:2]
+    pin = _promote_first(activation_store)
+    if action == "rollback":
+        pin = staging_activation.promote_staging_generation(
+            activation_store.root, second.manifest_sha256, pin
+        )
+    pointer = activation_store.root / staging_activation.ACTIVATION_FILENAME
+    original_pointer = pointer.read_bytes()
+    open_package = staging_activation._open_package
+    rejected = (first, second)[rejected_package].manifest_sha256
+
+    def incompatible(root: Path, manifest: str) -> Any:
+        if manifest == rejected:
+            raise ValueError("package incompatible with selector runtime")
+        return open_package(root, manifest)
+
+    monkeypatch.setattr(staging_activation, "_open_package", incompatible)
+    _fixed_failure(
+        lambda: manage_staging_activation.run_action(
+            activation_store.root,
+            action,
+            pin,
+            second.manifest_sha256 if action == "promote" else None,
+        )
+    )
+    assert pointer.read_bytes() == original_pointer
+
+
 def test_bad_pins_and_invalid_transitions_leave_pointer_unchanged(
     activation_store: SimpleNamespace,
 ) -> None:
