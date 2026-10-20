@@ -23,7 +23,20 @@ e dall'autorizzazione persistente del proprietario (D-023). Non aggirarlo tramit
 lettura di sessioni, cookie o credenziali del browser.
 Il destinatario è modificabile; il recapito degli alert resta da collaudare.
 
-Il controllo iniziale di `/readyz` copre la raggiungibilità. Il nuovo componente
+Verifica indipendente della casella alle 10:56 UTC del 17 ottobre: il profilo
+del connettore Gmail coincide con il destinatario autorizzato. Una ricerca
+read-only, inclusi Spam e Cestino, per mittente UptimeRobot e destinatario,
+dal 14 ottobre al momento della verifica, restituisce una sola email e nessuna
+pagina successiva: «Confirm your UptimeRobot monitor», inviata il 15 ottobre
+alle 13:49:33 UTC e presente in Inbox. Sono stati letti soltanto i metadati;
+nessun invio, link di attivazione aperto o accesso a Chrome.
+Questo conferma la ricezione della richiesta iniziale, non quella di un alert
+down/up o di prova: nessuno trovato dalla query delimitata. Non si deduce
+l'assenza assoluta di altri messaggi né la configurazione del monitor.
+Ricevuta privata `output/nla-alert-mail-evidence-20261017.json`, SHA-256
+`8c684d3310fdda60f9c266d925536c73f5250e557368b5a3efb1175fbf1eef4d`.
+
+Il controllo iniziale di `/readyz` copre la raggiungibilità. Il componente iniziale
 espone `/opsz`, attivato il 17 ottobre: il collector legge lo stato dei processi, le ricevute, la
 freschezza del catalogo e lo spazio disponibile; un processo separato espone
 solo un esito generico. Una lettura scaduta oltre 90 secondi produce 503.
@@ -33,6 +46,9 @@ Il collector `59a74e6` controlla market e refresh, ma non fallimenti o anzianit�
 del backup. Il limite di 90 secondi riguarda l'osservazione del collector, non
 l'età del backup: questa copertura resta un lavoro separato.
 L'endpoint e il codice da soli non costituiscono una catena di alert verificata.
+I limiti di questo paragrafo descrivono la versione `59a74e6`: il successivo
+collector `319ca0b`, installato il 17 ottobre, aggiunge copertura backup e timer,
+come documentato nella [prova successiva](BACKUP-HEALTH-2026-10-17.md).
 
 ## Preparazione riproducibile
 

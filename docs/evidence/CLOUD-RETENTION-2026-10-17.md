@@ -5,6 +5,14 @@ alle 08:50:04 UTC, exit 0, in 8,975 secondi. Solo letture B2 e due letture
 `restic snapshots --json --no-cache --no-lock`; nessuna operazione sulla VPS,
 nessun nuovo backup, cancellazione o modifica lifecycle.
 
+**Aggiornamento del 18 ottobre:** il primo backup automatico ha aggiunto lo
+snapshot `9fc4fe1143bd0e9048f91ff23ca6d4d517cad300238acc42a94f5f29b0c75d5e`,
+con inclusione dell'observer verificata ([prova](BACKUP-SCHEDULED-2026-10-18.md)).
+Conservare anche questo ID: le copie di prova protette sono ora cinque.
+Il piano e i conteggi sotto fotografano il 17 ottobre; non riutilizzare quel
+piano per cancellazioni né una lista di protezione limitata ai quattro ID
+storici. Nessuna rotazione cloud è attiva e nessuna copia è stata rimossa.
+
 ## Risultato osservato
 
 | Ambito | Versioni | Byte degli upload completati |
@@ -47,10 +55,61 @@ il default formerebbe tre gruppi separati, rendendo inefficace la rotazione.
 Una proposta concreta è limitare l'ambito a quel solo hostname, raggruppare per
 hostname e conservare 7 giornaliere, 4 settimanali e 6 mensili, proteggendo anche
 le copie delle prove sopra. Il pilota PC e l'oggetto manuale restano esclusi.
-Prima dell'attivazione servono il piano `--dry-run` sui dati aggiornati, review
-indipendente e una finestra compatibile con il backup. Non applicare scadenze
+Il piano `--dry-run` eseguito sotto verifica la proposta sui dati osservati.
+Prima di una futura attivazione servono protezioni esplicite, piano aggiornato,
+review indipendente e una finestra compatibile con il backup. Non applicare scadenze
 per età agli oggetti attivi del repository: dati vecchi possono servire a copie
 recenti. [Contratto ufficiale restic 0.19.1](https://restic.readthedocs.io/en/stable/060_forget.html).
+
+### Piano reale read-only — 09:47 UTC
+
+Il dry-run della proposta è ora eseguito: tre soli comandi restic, snapshot
+prima/dopo e `forget --dry-run --host nla-catalog --group-by host --keep-daily 7
+--keep-weekly 4 --keep-monthly 6`, tutti con `--no-cache --no-lock --json`.
+Exit 0, `cloud_retention_dryrun_complete_readonly`, completato alle
+09:47:16.790701 UTC in 8,779 s. Nessuna operazione sulla VPS, cancellazione,
+tag o attivazione di policy; nessun nuovo inventario completo B2.
+
+Il piano conserva `f1100505…` e `ffa29faf…`, ma proporrebbe di rimuovere
+`bd249a0d8064bd950a2ef6ddb37eb9329c36eec2101491884d0c8cd794e42963`,
+la copia del 17 ottobre dopo la correzione del confronto mount. Quest'ultima
+è una prova protetta: il filtro per ID completo la esclude dai candidati.
+Il pilota PC `770df0e0…` è fuori dall'hostname selezionato; l'oggetto manuale
+non appartiene al repository restic. Tutti e quattro gli snapshot risultano
+presenti e invariati alle letture prima/dopo.
+
+**Zero candidati effettivi; non attivare il comando policy grezzo.** La regola
+7/4/6, da sola, non protegge tutte le copie di prova. Il piano distingue
+`rawPolicyRemoveIds`, `protectedPolicyRemoveIds` ed `effectiveCandidateIds`;
+`policyActivationBlocked=true` segnala il conflitto rilevato. Questo esito
+chiude la verifica della proposta sui dati osservati, non installa la retention
+automatica. Un futuro esecutore dovrà preservare esplicitamente gli ID protetti,
+rivalutare un piano aggiornato e sottoporlo a review prima di qualsiasi rimozione.
+La stabilità ai due estremi non prova atomicità o assenza di scritture intermedie;
+il dry-run non stima byte liberabili né verifica nuovamente il contenuto dei dati.
+
+Helper privato `output/nla-cloud-retention-dryrun.ps1`, SHA-256
+`2dadaa01b43456a73964bd537dd137f6a93a110b70e5799acea8873c63a6b73e`.
+Autore e reviewer separati, 24 controlli offline su Windows PowerShell 5.1
+passati; binario 0.19.1 fissato, credenziali DPAPI, ACL invariati, output e tempi
+limitati. La review root è in `output/nla-cloud-retention-dryrun.root-review.json`,
+SHA-256 `2f44f1939de1cbf83fb4cce014ac7a546bb5211dec6270ab9f3618b6abb47b4e`.
+Il parser verifica gruppo, identità/metadati, partizione completa keep/remove,
+ragioni di conservazione e presenza di tutti gli ID protetti secondo lo
+[schema JSON ufficiale](https://restic.readthedocs.io/en/stable/075_scripting.html#forget).
+
+Ricevute private sotto `output/nla-recovery/20260930/backup-automation-20261015/receipts/`
+nella directory `cloud-retention-dryrun-20261017T094708220Z-368eb926db504fdebf3242dfcf119069/`:
+
+| File | SHA-256 |
+| --- | --- |
+| `terminal.json` | `16f30e6a1b14b21fcdc4b3ba9717c209b2746eb83ed9f0f11c0652462c455c16` |
+| `result.json` | `02a28111c9093a60491d4289bdf29406888844f554c03765a320f042aa6766c1` |
+| `policy.raw.json` | `7cd5debb61d2772f10affa1316574b60a436df40319353a376158d0b01d7c69f` |
+| `snapshots-before.raw.json` e `snapshots-after.raw.json` | `39f6ebf4b883db5390d2c7fee325d743b4f06d5828cbd9b1a1e2dadfc492b064` |
+
+Root ha riletto la ricevuta e verificato questi hash dopo l'esecuzione.
+Questo aggiornamento è solo locale mentre GitHub resta sospeso secondo D-024.
 
 Il [listino Backblaze](https://www.backblaze.com/cloud-storage/pricing), consultato
 il 17 ottobre, indica 6,95 USD/TB/30 giorni e i primi 10 GB gratuiti. A volume

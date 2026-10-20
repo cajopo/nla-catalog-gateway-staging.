@@ -1,168 +1,230 @@
 # Stato attuale del progetto NLA
 
-Aggiornamento operativo del 17 ottobre 2026; fotografia generale del 3 ottobre.
-PM della fase: Codex, incaricato da Jacopo.
-Workstream documentale [#34](https://github.com/cajopo/nla-catalog-gateway-staging./issues/34), roadmap [#3](https://github.com/cajopo/nla-catalog-gateway-staging./issues/3).
+Fotografia operativa aggiornata al 20 ottobre 2026. PM della fase: Codex,
+incaricato da Jacopo. Riferimenti: roadmap [#3](https://github.com/cajopo/nla-catalog-gateway-staging./issues/3),
+architettura #17, tassonomia #19 e manutenzione documentale #34.
 
-L'obiettivo operativo della chat «Esegui bootstrap e audit NLA» è raggiunto.
-Il catalogo usa il tema principale dal 29 settembre, ore 19:20 Europe/Rome.
-Il negozio resta protetto da password. Il 3 ottobre Jacopo ha revocato il rinvio
-della consegna GitHub e ha chiesto di capire e correggere l'errore, poi riprendere
-la consegna. Il ramo main è ora `90f4f49` (integrazione PR #108); la correzione
-market è nella [PR #112](https://github.com/cajopo/nla-catalog-gateway-staging./pull/112).
-Recovery VPS del 3 ottobre conclusa alle 07:29:11
-UTC; il refresh ordinario read-only successivo è terminato exit 0 alle 09:12:19.
-Freschezza, pointer e readiness sono passati; runtime `af366c05…` è attivo senza
-OOM. Vedi [incidente](evidence/INCIDENT-2026-10-03.md) e
-[ripresa GitHub](evidence/GITHUB-RESUME-2026-10-03.md).
+**Fase di manutenzione completata il 18 ottobre 2026 (100% dell'obiettivo
+autorizzato).** Garanzie operative e recupero verificati; ricevute anche le
+immagini della scheda prodotto mobile, che completano lo spot-check manuale
+PDP/carrello. La consegna GitHub è stata riattivata il 20 ottobre, separatamente
+dalla chiusura operativa ([D-030](DECISIONS.md#d-030--completare-la-consegna-github-nella-repository-pubblica)).
+[Verifica dei cinque requisiti e limiti](evidence/MAINTENANCE-CLOSURE-2026-10-18.md).
 
-Il 15 ottobre alle 10:17:47 UTC è stato corretto e sbloccato il market:
-interruzione della cattura CardTrader del 14 ottobre, prima di qualsiasi scrittura
-Shopify; marker pendente archiviato dopo verifica indipendente e ledger immutato.
-Il modulo ora ritenta gli errori transitori e conserva diagnostica sicura.
-Readiness 200/ready, puntatore e ricevuta del refresh invariati; nessun avvio o
-riavvio di processi. Il refresh ordinario era già terminato alle 04:38:51 UTC.
-Il primo ciclo market post-fix, run `market-20261015t140020z-69980f6a`, è
-terminato alle 14:49:19 UTC con `draft_cycle_complete`: 2.438 espansioni
-completate, 257.154 blueprint, zero differiti e zero tentativi di creazione;
-nessuna nuova stampa idonea selezionata. L'indice non è stato aggiornato perché
-non c'erano cambiamenti importer e quello esistente era fresco. Alle 14:50:42 UTC
-entrambi i servizi erano inattivi e il refresh delle
-15 UTC pronto; spazio libero 10.244.165.632 byte, generazioni corrente e
-precedente invariate. Esito documentato in
-[incidente market](evidence/MARKET-SOURCE-2026-10-15.md).
+## Sito e priorità prima del lancio — 20 ottobre 2026
 
-Il successivo refresh ordinario `20261015t150018z-a6b95321` è terminato con
-successo alle 16:36:34 UTC. Il controllo delle 16:40:10 conferma ricevuta,
-last-success e manifest attivo coerenti; retention eseguita, nessuna directory
-prevista ancora da rimuovere e soltanto corrente/precedente conservate.
-Spazio libero 10.245.189.632 byte; entrambi i servizi inattivi con esito positivo.
-Il parser `nsfs` corretto ha superato il controllo nativo completo in sola
-lettura. Due container smoke del 17 settembre erano già stati rimossi
-separatamente; poi il vecchio drill è stato messo in quarantena, con tre
-container rimossi e due payload cancellati dopo lo smoke PASS (10 richieste,
-6 controlli) sulla generazione live `ae3be49c…` alle 21:57:13 UTC. La ricevuta terminale del
-15 ottobre alle 21:58 UTC verifica la cancellazione; la retention successiva è
-coerente, con 13.795.237.888 byte liberi e le generazioni corrente/precedente
-protette. [Dettagli e ricevute](evidence/BACKUP-AUTOMATION-2026-10-15.md).
+Arena è pubblicato dal 19 ottobre: MAIN `210350735628`, precedente
+`175195881740` non pubblicato e conservato per rollback. Logo attuale mantenuto,
+stile Arena e accenti neon applicati; Jacopo ha confermato la visualizzazione
+corretta in incognito. La tipografia provvisoria del 18 ottobre è uno stato
+storico. Il negozio resta protetto da password.
+[Pubblicazione e prove](DECISIONS.md#d-028--stile-arena-pubblicato).
 
+Jacopo ha chiarito il 20 ottobre che prima del lancio pubblico vuole modifiche
+alla home, nuove funzionalità e nuove sezioni del sito non dedicate alla vendita.
+Sono tre workstream ancora da dettagliare, senza funzionalità, sezioni o scadenze
+già decise. Il lancio viene dopo il loro completamento e una decisione separata
+sulla password; Fase 2 chiusa e manutenzione ordinaria restano distinte.
+[Ordine di lavoro](ROADMAP-EXECUTION.md#ordine-di-lavoro-proposto) ·
+[Decisione](DECISIONS.md#d-029--home-funzionalità-e-sezioni-prima-del-lancio).
 
-Questa pagina riassume lo stato; la [fotografia del 30 settembre](evidence/STATE-2026-09-30.md)
-contiene inventario, limiti delle prove, versioni e riconciliazione con GitHub.
-Il 15 ottobre è riuscita anche la [prova di backup cifrato S3](evidence/BACKUP-ENCRYPTION-2026-10-15.md):
-checkpoint del 3 ottobre trasferito, controllato integralmente e recuperato su PC
-con hash identico. Era la prova sul checkpoint storico; il successivo primo
-backup completo corrente è descritto sotto. Restano verifica del primo ciclo
-automatico, conservazione e custodia indipendente delle chiavi.
-Il codice del backup automatico è nella [PR #113](https://github.com/cajopo/nla-catalog-gateway-staging./pull/113).
-Il backup completo più recente è del 17 ottobre, verificato entro le 08:18 UTC: job
-`backup-919aeddea561432c9da028bd7e3ff6e8`, `read-data` e gate PASS, snapshot
-`ffa29faf98aecfc61a39c2ad52f9bc69803a3b479e2cc877fa7a87297ef43cf8`. Timer
-attivo, enabled per le 01 UTC con prossimo trigger il 18 ottobre alle 01 UTC;
-la prima esecuzione automatica non è ancora stata osservata. Il restore da host
-vuoto resta non provato perché l'immagine era già residente. Il runtime live è
-operativo; la sonda `/opsz` è attiva, verificata e inclusa nella copertura del backup.
-Il collector health aggiornato è nella PR #114, head
-`319ca0ba046715b769eda97af3e18fad906d6bc2`, pubblicato alle 09:14 UTC.
-La verifica read-only in memoria delle 09:17:08.775623 UTC è PASS; il codice è destinato a controllare
-failure backup, corrispondenza fra `last-success` e ricevuta immutabile per-job,
-validazione dei campi d'identità snapshot (senza interrogazione remota), freschezza
-checkpoint <26 h (soglia di alert, non RPO), staging residuo e timer market/
-refresh/backup abilitati/attivi. Ammette la pausa refresh deliberata dal market.
-Il collector mantiene risposta HTTP generica; elapsed monotonic evita falsi
-allarmi se un backup termina durante la lettura. mtime è solo evidenza temporale,
-non prova ownership di un processo. Il rollout del nuovo observer è riuscito
-alle 09:26 UTC; due osservazioni healthy e il controllo read-only delle
-09:28:04.384413 UTC confermano servizio e timer attivi. Il backup delle 08:18
-resta l'ultimo e non include il nuovo observer; la cattura automatica del
-18 ottobre alle 01:00 UTC è da osservare. Recapito email/UptimeRobot non
-verificato. [Evidenza health e
-backup](evidence/BACKUP-HEALTH-2026-10-17.md); stato precedente e limiti
-[qui](evidence/BACKUP-AUTOMATION-2026-10-15.md).
-PR #113 e #114 hanno i controlli riportati nell'[handoff PM](PM-HANDOFF.md).
-Il precedente checkpoint documentale pubblicato della PR #101 era `4cae6c7c6c84a00a64c3ca286eba1b4963bea643`, con CI `38920068601` e CodeQL `38920068523` riusciti il 16 ottobre. Il nuovo head e i controlli del delta attuale sono da seguire nei metadati della PR #101.
-La [verifica operativa del 30 settembre](evidence/MAINTENANCE-2026-09-30.md)
-aggiunge stato VPS, cicli, prima copia fuori host e prove browser. Il successivo
-[recupero Linux isolato](evidence/RECOVERY-LINUX-2026-09-30.md) verifica dati,
-ammissione, paginazione/ricerca, errore di cursore e carico limitato; il drill
-temporaneo è ora chiuso. La prova di generazione attiva del 29–30 settembre è
-storica e superata dalla recovery e dal refresh del 3 ottobre. La password resta
-attestata dalle prove precedenti.
-La nuova [prova PC](evidence/RECOVERY-PC-2026-10-01.md) attesta immagine e
-integrità dei dati restaurati nel volume Linux isolato; il controllo di memoria
-ha bloccato la preparazione del runtime, che non è stato creato né avviato.
-La [prova reference](evidence/REFERENCE-RECOVERY-2026-10-01.md) ha poi accettato
-la configurazione restaurata e validato tutte le 336.752 identità con i sorgenti
-installati, offline sul PC. Il ciclo Shopify effettivo resta da collaudare.
+## Ricerca codici installata — 19 ottobre 2026
+
+**Aggiornamento del 20 ottobre, 08:28 UTC:** il primo ciclo market successivo
+è completo e il refresh ordinario è terminato alle 06:07 UTC. Il manifest
+attivo corrisponde alla ricevuta; sorgente di circa quattro ore. La precedente
+segnalazione `market_incomplete` è superata: l'espansione rinviata il 19 ottobre
+aveva restituito HTTP 404 dalla fonte. `/readyz` è 200; `/opsz` resta 503, ora
+per `backup_attention`. Non dichiarare tutto UP. La diagnosi del 19 ottobre
+riportata sotto resta una prova storica.
+Alle 08:30 UTC è confermato il backup automatico odierno fallito
+(`checkpoint_failed`); ultimo backup completo il 19 ottobre alle 01:01 UTC.
+La causa interna del checkpoint resta da diagnosticare e correggere.
+[Verifica corrente](evidence/OPERATIONAL-CHECK-2026-10-20.md).
+
+Su richiesta esplicita di Jacopo, installata la correzione locale `2c8c650`
+(`agent/card-code-search-115`): `FIN88` e `FIN-88` restituiscono la stessa carta,
+con suggerimenti e faccette coerenti. La stampa è esaurita e rimane esclusa
+con il filtro disponibili. Copertura aggregata Windows/Linux 100% su istruzioni
+e rami; 4.122 test Windows e 35 test nativi Linux passati, review indipendente.
+
+Immagine effettiva `sha256:2231c268945bf3681c83b2f0fafa9ae71a0751e46972c963c205463fc2b24a22`,
+costruita sull'immagine `8a23ad08`/runtime `ed24a61` con soli quattro moduli aggiornati.
+Container `b89865e8...`, installazione registrata alle 21:05:56 UTC,
+prova finale alle 21:10:40 UTC. Fonte dati, pointer e ambiente accettato invariati;
+operatore/archive `881b9ca`, patch importer `8657aaa`, unità, Caddy, backup e monitor
+preservati. Modificato soltanto `image` nella configurazione del refresh futuro.
+Timer market 02/14 UTC e refresh 03/15 UTC attivi; nessun marker pendente.
+Al checkpoint del 19 ottobre il primo ciclo pianificato successivo non era
+ancora osservato; l'aggiornamento sopra registra la verifica del 20 ottobre.
+
+**Attenzione operativa preesistente:** `/readyz` 200, `/opsz` GET/HEAD 503.
+Il collector segnalava `market_incomplete` già prima del deploy (20:00 e
+20:52:13 UTC). Ricevuta immutabile `draft_cycle_partial` del ciclo
+`market-20261019t140017z-be2a057f`, SHA256 `5fb4de9672fcc50d5194db59214ff5458985479d6764bc6631d8aae0ebc72096`.
+Non è un guasto introdotto dalla ricerca; non dichiarare il monitor UP.
+Esito market e monitor non sono stati modificati né è stato forzato un ciclo.
+Al checkpoint del 19 ottobre il problema market restava manutenzione separata.
+
+Ricevute VPS: `/opt/nla-staging/search-code-2c8c650/rollout/` e
+`/var/lib/nla-catalog-refresh/20261019t205146z-48551a72/`.
+[Metodo, prove, limiti e rollback](workstreams/ws-05-code-hyphen-search.md).
+Prove private PC nel worktree `C:\Users\umbri\.codex\worktrees\0072\nla-catalog-gateway-staging\output\card-code-search-20261019`.
+Nessun push, PR o workflow GitHub: consegna locale separata secondo D-024/D-027.
+Non rieseguire i due helper di installazione/finalizzazione una tantum.
+
+## Stato operativo
+
+- Il catalogo live resta operativo e in sola lettura verso Shopify. Shopify è
+  autoritativo per prodotti, varianti, prezzi, inventario, pagine, carrello e ordini.
+- L'ultimo controllo completo della retention del 17 ottobre alle 11:42:43 UTC conferma
+  market e refresh inattivi con esito success, timer attivi, ricevuta
+  e stato corrente coerenti, zero directory residue previste dalla retention e
+  solo due generazioni protette. Spazio libero VPS: 13.246.488.576 byte.
+  [Ricevuta retention](../output/nla-recovery/20260930/evidence/retention-periodic-20261017T114241Z-1b73631c/retention_periodic_check_remote.result.json)
+- Il primo backup automatico è riuscito il 18 ottobre, dalle 01:00:12 alle
+  01:01:33 UTC: circa 81 secondi, integrità `read-data` PASS. Il manifest remoto
+  dello snapshot `9fc4fe1…` include l'observer `319ca0b` con i pin attesi. Le copie
+  cloud sono protette; la rotazione automatica resta opzionale e inattiva.
+  [Primo backup automatico](evidence/BACKUP-SCHEDULED-2026-10-18.md)
+- Drill applicativo isolato chiuso: `current` PASS (04:42:55.573467–05:02:30.871598 UTC,
+  1.175,298131 s, 10 richieste) e `previous` PASS (05:03:13.812059–05:22:46.065102 UTC,
+  1.172,253043 s, 10 richieste). Entrambi chiusi 45m29s dopo il download; la pulizia
+  è esclusa da tale durata. Alle 05:26:27.145572 UTC sono stati rimossi 765 file e
+  104 directory (3.931.679.750 byte, solo percorsi restored/catalog); ricevuta
+  `deletion_complete` e journal `Deactivated successfully`. Spazio libero:
+  13.750.943.744 byte. Evidenze conservate. Proposta
+  RPO 36 h in esercizio regolare; RTO 2 h su Linux pronto con accessi disponibili.
+  [Checkpoint e limiti](evidence/RECOVERY-APPLICATION-2026-10-18.md)
+- La prova di carico controllato del 17 ottobre è completata: 54 richieste HTTPS
+  riuscite, massimo due concorrenti; è la prova limitata prevista e non misura la
+  capacità massima. Dopo cleanup, GET pubblico `/opsz` alle 05:29:06.024486 UTC
+  ha restituito HTTP 200, body `healthy`, in 0,604 s. I due runtime del drill
+  sono PASS e chiusi come sopra.
+  [Prova HTTPS](evidence/PUBLIC-GATEWAY-2026-10-17.md) ·
+  [Backup e restore](evidence/BACKUP-AUTOMATION-2026-10-15.md)
+- I materiali runtime e TLS recuperati dal backup hanno hash verificati,
+  handshake TLS e controlli negativi PASS in 18,806 secondi; il drill applicativo
+  successivo è documentato sopra. [Materiali](evidence/RECOVERY-MATERIALS-2026-10-18.md) ·
+  [Preparazione](evidence/RECOVERY-RESUME-2026-10-18.md)
+- Monitor UptimeRobot esistente configurato su `/opsz` e UP secondo conferma
+  di Jacopo; intervallo 5 minuti visibile nello screenshot prima del cambio URL.
+  Recapito TEST DOWN/UP verificato in Gmail alle 00:52 UTC; sonda indipendente
+  GET/HEAD `/opsz` 200 alle 01:13 UTC. Non ripetere attivazione, test email o
+  cambio URL. L'accesso tecnico a Chrome resta indisponibile per la QA Shopify;
+  l'ispezione diretta della configurazione dopo la modifica è distinta dalla
+  conferma del titolare. [Prova email e monitor](evidence/ALERT-DELIVERY-2026-10-18.md)
+- Il negozio resta protetto da password. Il tema Arena MAIN è `210350735628`;
+  il precedente `175195881740` è conservato per rollback.
+- Il 18 ottobre la lettura API del componente MAIN e dei testi italiani ha
+  confermato l'equivalenza con la fixture storica dopo normalizzazione delle
+  righe. Le prove del componente restano riutilizzabili; nessuna nuova prova
+  browser né equivalenza dell'intero tema è dichiarata.
+  PDP e carrello stretti sono documentati da immagini del proprietario, con
+  coerenza verificata indipendentemente. In quella prova font e dimensioni erano
+  provvisori; lo stile Arena pubblicato il 19 ottobre supera tale stato. Accessibilità completa e
+  down/stale live sono limiti di contesto, non gate originali dimostrati.
+  [Binding](evidence/QA-COMPONENT-BINDING-2026-10-18.md) ·
+  [Copertura e limiti QA](evidence/QA-REMAINING-2026-10-18.md)
+- Il drill, la pulizia isolata e le lacune QA applicabili della fase sono chiusi.
 
 ## Cosa abbiamo
 
 | Area | Stato verificato | Evidenza |
 | --- | --- | --- |
-| Catalogo completo | Proiezione Shopify e navigazione oltre 25.000, con conte e identità verificate | Fotografia, dati e prove di traversal |
-| Ricerca | Gioco obbligatorio; singole per nome/codici verificati; sigillato e accessori per titolo commerciale; vista Tutto | [Ricerca per famiglia](workstreams/ws-05-family-search-v1.md) |
-| Suggerimenti | Nomi distinti e dinamici per le singole, confinati al gioco | Prove browser del 28 e 29 settembre |
-| Filtri | Famiglia, disponibilità, espansione/rarità per le singole e stato URL | Fotografia e prove browser |
-| Presentazione | Immagini, SOLD OUT rosso, prezzi assenti/zero omessi nell'interfaccia; acquisto nativo Shopify | [QA della home e del carrello](workstreams/ws-10-home-browser-20260928.md) |
-| Aggiornamenti — ultimo stato VPS, 17 ottobre | Verifica 09:28:04.384413 UTC, dopo rollout 09:26–09:27: market/refresh/backup `inactive/success`, pointer invariato; 13.244.923.904 byte liberi | [Health/backup](evidence/BACKUP-HEALTH-2026-10-17.md); storico: [incidente](evidence/INCIDENT-2026-10-03.md) |
-| Refresh e market — storico 3 ottobre | Run `20261003t073240z-3f7384f8` exit 0; freshness e smoke PASS; dataset `5152b3c3…`. Questo è un esito storico, non lo stato corrente | [Incidente](evidence/INCIDENT-2026-10-03.md) |
-| Retention e spazio VPS — 17 ottobre | Quarantena, controllo indipendente e rimozione esatta del vecchio staging `971c`: 743 file, 2.126.986.835 byte; 13.247.131.648 byte liberi dopo il backup health | [Pulizia e retention](evidence/BACKUP-AUTOMATION-2026-10-15.md); storico 30 settembre: [retention](evidence/RETENTION-2026-09-30.md) |
-| Backup e recupero | Backup completo più recente `919aed…`, gate `read-data` PASS; timer abilitato. Restore isolati `current`/`previous` PASS; host vuoto non provato. Nuovo observer attivo ma non incluso nel backup più recente; prima cattura automatica da osservare | [Health/backup 17 ottobre](evidence/BACKUP-HEALTH-2026-10-17.md); [backup e restore](evidence/BACKUP-AUTOMATION-2026-10-15.md) |
-| Salute operativa | Nuovo observer installato e healthy; check nativo, endpoint GET/HEAD e timer PASS. Risposta HTTP generica invariata. Recapito esterno non verificato | [Health/backup 17 ottobre](evidence/BACKUP-HEALTH-2026-10-17.md) |
-| QA componente | Matrice 21/21 in Chrome, Firefox e WebKit; smoke touch 390×844 e retry dopo 503 simulato sulla fixture; axe zero violazioni, un incomplete di contrasto valutato manualmente nello stato coperto | Solo fixture congelata; non certifica Shopify/mobile reale, Safari/iOS, screen reader, outage gateway o freschezza. Dettagli: [QA](evidence/MAINTENANCE-2026-09-30.md#qa-sul-sorgente-congelato); ricevuta privata in `../output/nla-recovery/20260930/evidence/qa-touch-down-final/index.json` |
-| Sicurezza | Confine Shopify App Proxy autenticato; gateway e refresh in sola lettura | Architettura #17 e prove del servizio |
-| Tema | 175195881740 principale; 175194898700 conservato per ripristino; password attiva | [Ricevute del passaggio](workstreams/ws-12-release-readiness-20260929.md) |
+| Catalogo | Proiezione completa e navigazione oltre 25.000 prodotti, con conte e identità verificate | [Fotografia e inventario](evidence/STATE-2026-09-30.md) |
+| Ricerca | Gioco obbligatorio; singole per nome/codici verificati; sigillati e accessori per titolo commerciale; vista Tutto | [Ricerca per famiglia](workstreams/ws-05-family-search-v1.md) |
+| Suggerimenti | Nomi distinti e dinamici per singole, confinati al gioco | [QA/manutenzione](evidence/MAINTENANCE-2026-09-30.md) |
+| Filtri | Famiglia, disponibilità, espansione/rarità per singole e stato URL | [Fotografia e inventario](evidence/STATE-2026-09-30.md) |
+| Presentazione e carrello | Immagini, SOLD OUT rosso, prezzi assenti/zero omessi; carrello nativo Shopify | [QA home e carrello](workstreams/ws-10-home-browser-20260928.md) |
+| Tema | Arena MAIN `210350735628` dal 19 ottobre; precedente `175195881740` conservato per rollback; password attiva | [Pubblicazione Arena](DECISIONS.md#d-028--stile-arena-pubblicato) |
 
-## Cosa resta aperto
+## Codice e consegna: stati distinti
 
-- Completare la consegna delle correzioni successive e della documentazione:
-  l'integrazione principale della PR #108 è fusa dal 4 ottobre in `90f4f49`;
-  le PR #100 (recovery), #101 (PM), #112 (market), #113 (backup) e #114
-  (health operativa #13) restano non fuse. #112 e #113 sono pronte per la
-  revisione, con CI e CodeQL verdi rispettivamente su `8657aaa` e `b56ca95`;
-  #114 è anch'essa pronta su `59a74e6`, con controlli verdi e sonda attivata. #101 ha
-  CI `39013921899` e CodeQL `39013921898` riusciti sul checkpoint `e5851e2`;
-  i successivi aggiornamenti documentali richiedono i propri controlli.
-  Restano la riconciliazione delle issue e l'integrazione delle PR.
-- Certificazione completa della release: matrice browser/accessibilità/carico
-  e prove di recupero legate alla stessa versione.
-- Completare backup automatico e recupero del servizio: backup completo del 17 ottobre,
-  gate `read-data` PASS e timer enabled/waiting; prima esecuzione automatica da osservare
-  ([evidenza](evidence/BACKUP-AUTOMATION-2026-10-15.md)). Restore VPS `current`/`previous`
-  PASS, host vuoto non provato perché l'immagine era preesistente; runtime di test chiuso,
-  live operativo e componente health attivo e incluso nel backup. Restano margine disco, conservazione cloud,
-  custodia chiave e prova della prima esecuzione automatica.
-  Il controllo PC del 17 ottobre alle 07:51:06 UTC rileva 506.658.816 byte
-  di RAM disponibile; la pipe Docker Desktop non è presente al controllo.
-  La prova locale su host vuoto resta sospesa per risorse insufficienti,
-  senza attendere un nuovo consenso. Restano inoltre il ciclo reale
-  runtime/refresh/importer e la verifica di
-  recupero di configurazione, credenziali e certificati inclusi nella cattura.
-- Alert e obiettivi di recupero. Jacopo ha confermato ricezione dell'email,
-  attivazione e accesso alla dashboard. Il monitor UptimeRobot resta da verificare:
-  la lettura UI è stata fermata prima dalla verifica URL e, il 17 ottobre,
-  dall'accesso tecnico a Chrome negato da Computer Use. Non manca il consenso
-  del titolare. Metodo, intervallo e contatto non sono verificati; la sonda
-  `/readyz` ha mostrato GET 200 e HEAD 404. Non reinviare email/attivazione.
-  [D-022 e procedura](DECISIONS.md#d-022--attivazione-uptimerobot-e-referente-iniziale).
-- Funzioni ulteriori: ordinamenti diversi dal GID, filtri lingua/condizione/finish,
-  migliore copertura dei dati non singole. Sono backlog, non difetti dimostrati.
-- «Altre stampe di questa carta»: idea documentata, implementazione da autorizzare.
-- Apertura pubblica senza password: decisione separata di Jacopo, ancora assente.
+**Installato.** Il gateway live e le pipeline ordinarie restano operative. Il
+collector health `319ca0b` è installato e incluso nella prima cattura automatica
+del 18 ottobre, verificata tramite manifest remoto. GET/HEAD pubblici su `/opsz`
+erano 200 dopo quel backup; la verifica del 20 ottobre sopra riporta 503.
+Il backup installato resta al pin `b56ca95`.
 
-Il sistema non va considerato privo di sync solo perché le issue #11/#13 sono
-aperte; allo stesso modo, il successo operativo non chiude automaticamente #15/#16
-o rende verde la CI. Non è documentato un percorso webhook completo in esercizio:
-l'automazione accettata è quella dei timer Bulk/importer.
+**Locale.** Le preparazioni retention sono conservate solo nei worktree locali:
+planner `agent/offsite-backup-13` con commit precedente `aa2ffe5` e commit locale
+più recente `1d4cf53` (esecutore). Sono preparazioni opzionali: non occorre
+distribuire questi componenti per forza; la policy cloud resta inattiva.
+La suite generale sul ramo locale resta incompleta: 1.712 PASS, un errore
+intermittente Windows `WinError 5` al rename, zero skip. I test mirati successivi
+non hanno riprodotto né spiegato la causa. [Planner](evidence/RETENTION-PLANNER-2026-10-17.md) ·
+[Esecutore](evidence/RETENTION-EXECUTOR-2026-10-17.md)
 
-## Da leggere per lavorare
+**GitHub/remoto — ripresa del 20 ottobre.** Jacopo ha reso pubblica la repository
+e autorizzato il completamento immediato, superando il rinvio D-024 e la sola
+cadenza D-027. I nuovi workflow eseguono regolarmente test e analisi.
+Le PR #100/#112/#113/#114 e #26/#27/#109/#110 sono integrate, dopo controlli
+verdi e revisione indipendente. Le restanti consegne sono documentate nella
+[ricevuta GitHub](evidence/GITHUB-DELIVERY-2026-10-20.md), inclusi ricerca #116,
+CodeQL #111, sorgenti Arena #117, evidenza dati #118 e documentazione #101.
+Il vecchio tentativo mattutino respinto è conservato come
+[checkpoint storico](evidence/GITHUB-WEEKLY-2026-10-20.md).
+Il completamento remoto non equivale a una nuova installazione sulla VPS.
 
-1. [Fotografia e inventario](evidence/STATE-2026-09-30.md).
-2. [Priorità e criteri di accettazione](ROADMAP-EXECUTION.md).
-3. [Passaggio di consegne PM](PM-HANDOFF.md).
-4. [Decisioni e autorizzazioni](DECISIONS.md).
-5. [Runbook operativo e recupero](OPERATIONS-RUNBOOK.md).
+## Vincoli e lacune
 
-La [cronologia completa fino al 29 settembre](STATUS-HISTORY-20260929.md)
-è conservata senza riscritture. I suoi blocchi “current”, “blocked” e “next”
-descrivono momenti storici; non autorizzano a riavviare attività concluse.
+- Gateway e refresh restano read-only rispetto a Shopify. Non cambiare o
+  disconnettere TCG PowerTools. L'eccezione autorizzata è un importer separato
+  che crea solo stampe mancanti verificate, inizialmente draft, zero stock e
+  senza sovrascrivere prodotti esistenti; la pubblicazione automatica autorizzata
+  riguarda solo le sue carte verificate SOLD OUT. [Decisioni](DECISIONS.md)
+- Conservare gli identificatori Shopify GID e le identità PowerTools/Cardmarket/
+  CardTrader verificate. Mai identificare per solo titolo, inventare prezzi o
+  dettagli lingua/condizione/finish, né eliminare silenziosamente record
+  non classificati.
+- Drill recovery applicativo: `current` e `previous` PASS; pulizia isolata conclusa
+  con ricevuta `deletion_complete`. RPO proposto 36 h in esercizio regolare e RTO
+  proposto 2 h su Linux pronto con accessi disponibili; non sono SLA. Host vuoto,
+  provisioning e percorso pubblico restano fuori prova, non gate aggiunti.
+  [Checkpoint recovery](evidence/RECOVERY-APPLICATION-2026-10-18.md)
+- QA: le prove browser Shopify storiche, il componente legato alla fixture e il
+  carico controllato sono riutilizzati. Lo spot-check manuale mobile PDP/carrello
+  è documentato; immagini statiche, non una registrazione delle interazioni;
+  full a11y e down/stale live restano limiti senza criterio originale locale
+  dimostrato. Nessun outage live, benchmark massimo o regressione completa.
+  [Matrice e limiti](evidence/QA-REMAINING-2026-10-18.md)
+- Funzioni come ordinamenti diversi dal GID, filtri lingua/condizione/finish e
+  “altre stampe” restano backlog, senza essere requisiti di completamento di
+  questa fase; apertura pubblica senza password richiede una decisione separata
+  del titolare.
+- Non è documentato un percorso webhook completo in esercizio. I timer Bulk e
+  importer costituiscono l'automazione accettata.
+
+## Riferimenti
+
+- [Handoff PM e checkpoint](PM-HANDOFF.md)
+- [Fotografia e inventario del 30 settembre](evidence/STATE-2026-09-30.md)
+- [Roadmap di esecuzione](ROADMAP-EXECUTION.md) · [Runbook operativo](OPERATIONS-RUNBOOK.md)
+- [Decisioni e autorizzazioni](DECISIONS.md)
+- [Cronologia precedente](STATUS-HISTORY-20260929.md)
+
+## Prossimi passi
+
+1. Definire e completare i tre workstream richiesti: modifiche alla home,
+   nuove funzionalità e sezioni non dedicate alla vendita, nella direzione Arena.
+   I dettagli sono ancora da definire; il backlog esistente non è automaticamente
+   incluso. [Roadmap](ROADMAP-EXECUTION.md#ordine-di-lavoro-proposto)
+2. Valutare il lancio pubblico soltanto dopo questi lavori; la rimozione della
+   password resta una decisione separata di Jacopo.
+3. Conservare le evidenze del drill chiuso e il backup verificato; le copie cloud sono protette e la rotazione
+   automatica è opzionale, non un prerequisito.
+4. Mantenere la manutenzione ordinaria separata e riutilizzare le prove QA valide.
+   Ricevuti screenshot desktop (rimozione owner-attestata) e PDP/carrello
+   stretti per la chiusura del 18 ottobre. La tipografia allora provvisoria è
+   superata da Arena; il limite tecnico Computer Use di quella prova resta
+   documentato. Lo spot-check manuale ha coperto la lacuna; alert e carico della
+   fase sono conclusi.
+   [QA](evidence/QA-REMAINING-2026-10-18.md)
+5. Completare la consegna GitHub autorizzata da D-030; eliminare solo
+   `completa-consegna-github-nla` al primo completamento riuscito. Conservare
+   la chat e l'automazione VPS, lasciata invariata (calendario salvato: domenica
+   alle 09:00; il riferimento alle 48 ore nel prompt è storico).
+
+La cronologia e le ricevute collegate conservano i dettagli dei singoli run.
+Questa pagina fotografa lo stato e non sostituisce i limiti descritti nelle prove.

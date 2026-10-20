@@ -324,9 +324,15 @@ pending-state wording; they do not broaden the gateway's read-only boundary.
   e verificato `read-data`; timer abilitato alle 01:00 UTC, prima scadenza osservata
   18 ottobre. Il payload fallito è stato rimosso dopo quarantena, verifica funzionale
   e review indipendente; le prove sono conservate.
-- Limiti: primo ciclo automatico ancora da osservare, crescita oltre i carichi
-  usati per la riserva disco, custodia indipendente della password, retention
-  cloud e alert email restano aperti. [Evidenza](evidence/BACKUP-AUTOMATION-2026-10-15.md).
+- Aggiornamento 18 ottobre: primo ciclo automatico terminato alle 01:01:33 UTC,
+  `read-data` PASS; inclusione dell'observer verificata nel manifest remoto.
+  Custodia della password confermata dal titolare (D-025); recapito TEST email
+  verificato (D-022). [Prova del ciclo](evidence/BACKUP-SCHEDULED-2026-10-18.md).
+- Limiti residui: recupero completo e crescita oltre i carichi usati per la
+  riserva disco non provati. Le copie cloud sono conservate; la rotazione
+  automatica resta una preparazione opzionale inattiva, senza cancellazioni.
+  [Backup e limiti](evidence/BACKUP-AUTOMATION-2026-10-15.md) ·
+  [Conservazione](evidence/CLOUD-RETENTION-2026-10-17.md).
 
 ## D-022 — Attivazione UptimeRobot e referente iniziale
 
@@ -339,12 +345,18 @@ pending-state wording; they do not broaden the gateway's read-only boundary.
 - Esito: richiesta inviata alle 13:49:32 UTC; HTTP 200, `status=ok`.
   Jacopo ha poi confermato ricezione, attivazione e accesso alla dashboard.
   Non serve ripetere l'attivazione o richiedere il consenso all'accesso.
-  La verifica del monitor resta da completare: Computer Use ha interrotto
+  La verifica diretta del monitor era rimasta incompleta: Computer Use ha interrotto
   l'accesso perché non poteva accertare l'URL del browser per applicare la
   propria policy. È un limite tecnico distinto dall'autorizzazione del titolare.
+- Aggiornamento 18 ottobre: TEST DOWN/UP ricevuti e verificati nella casella
+  autorizzata alle 00:52 UTC. Jacopo ha confermato il monitor su `/opsz` e UP;
+  la sonda indipendente GET/HEAD delle 01:13 UTC è riuscita. `/opsz` estende
+  il controllo a esito refresh, freschezza e backup. Configurazione dopo il
+  cambio attestata dal titolare, non ispezionata direttamente nella dashboard.
+  [Prova email e monitor](evidence/ALERT-DELIVERY-2026-10-18.md).
 - Limiti della richiesta iniziale: riguardava l'email di attivazione e il monitor
   proposto. Per proseguire vale la successiva D-023; non simulare guasti sul
-  servizio attivo. Refresh fallito e dati oltre 24 ore richiedono copertura ulteriore.
+  servizio attivo. Il recapito TEST non equivale a un incidente reale simulato.
   [Procedura e fonte ufficiale](OPERATIONS-RUNBOOK.md).
 
 ## D-023 — Continuità operativa entro l'obiettivo autorizzato
@@ -364,6 +376,129 @@ pending-state wording; they do not broaden the gateway's read-only boundary.
   né rimosse modificando ACL, credenziali o impostazioni globali. Un eventuale
   blocco deve indicare il vincolo effettivo, senza attribuirlo a un consenso utente
   già ottenuto. Restano validi i confini su Shopify MAIN, PowerTools e dati esistenti.
+
+## D-024 — Rinvio GitHub fino all'intervento sul budget
+
+Aggiornamento del 19 ottobre: il rinvio è superato per i tentativi settimanali
+espressamente autorizzati in D-027. Il testo sotto conserva la decisione storica;
+non impedisce l'esecuzione dell'automazione GitHub autorizzata.
+
+- Status: istruzione esplicita di Jacopo il 17 ottobre 2026: ha esaurito le
+  azioni GitHub disponibili e chiede di posticipare le operazioni finché non
+  avrà agito sul budget.
+- Decisione: sospendere le operazioni GitHub, inclusi push, aggiornamenti di
+  issue/PR, merge, avvio o retry dei workflow e polling dei controlli. Riprendere
+  quando Jacopo comunicherà di aver sistemato il budget; non chiedere conferme
+  ripetute e non acquistare minuti né modificare la fatturazione.
+- Ambito: questo rinvio prevale temporaneamente sulla ripresa autorizzata in
+  D-017. L'obiettivo operativo e D-023 restano validi per le attività indipendenti
+  da GitHub. Conservare localmente modifiche, prove e documentazione per la
+  successiva consegna; questa decisione non è ancora pubblicata su GitHub.
+- Stato conservato: PR #101 head `18ed78320f485d9ff03c05fa0514000e8afc156b`;
+  CI `39021491093` e CodeQL `39021491094` non avviati per la condizione di
+  pagamento o limite di spesa segnalata da GitHub. I controlli del codice
+  installato PR #114, head `319ca0b`, sono già verdi. Nessun nuovo controllo
+  remoto è necessario per registrare il rinvio.
+
+## D-025 — Custodia della password backup in 1Password
+
+- Status: Jacopo ha scelto 1Password il 17 ottobre 2026 e ha poi confermato
+  «salvata» per la password di cifratura Restic, dopo la procedura manuale.
+  Custodia registrata sulla base della conferma del titolare, senza accesso
+  dell'agente al gestore o lettura della password.
+- Voce indicata nella procedura: `NLA — Recupero backup Backblaze`.
+  Il salvataggio è confermato; resta distinta la prova completa di recupero
+  usando la copia custodita in 1Password.
+- Per la fase corrente la conferma di Jacopo chiude la custodia indipendente.
+  Il drill applicativo del 18 ottobre usa la copia operativa autorizzata della
+  password: non prova una lettura dal gestore e non richiede di ripetere il
+  salvataggio. [Prova e limiti](evidence/RECOVERY-APPLICATION-2026-10-18.md).
+- Le credenziali Backblaze erano già custodite. La conferma successiva riguarda
+  specificamente la password Restic prima mancante; non ripetere il trasferimento.
+- Usare la password esistente, senza rigenerarla o inserirla in chat, Git o
+  documentazione. Il passaggio finale nel gestore è manuale: Computer Use vieta
+  l'automazione delle app e dei siti dei password manager.
+
+## D-026 — Tipografia provvisoria e chiusura QA
+
+Stato storico del 18 ottobre: la successiva D-028 registra lo stile Arena
+approvato e pubblicato. La chiusura QA della Fase 2 resta valida nel suo ambito.
+
+- Il 18 ottobre Jacopo ha chiarito che font e dimensione del testo non sono
+  definitivi. La loro finalizzazione non è un requisito di questa fase.
+- Le immagini iniziali del carrello sono state completate dalle immagini della
+  PDP: spot-check manuale dei due stati coerente e revisionato. Non si dichiara
+  una registrazione delle interazioni o un checkout. La proposta CSS locale è
+  opzionale e non autorizza modifiche a MAIN o pubblicazioni.
+  [Evidenze e limiti](evidence/QA-REMAINING-2026-10-18.md).
+
+## D-027 — Fase 2 chiusa e ripresa GitHub settimanale
+
+- Il 19 ottobre Jacopo conferma «Fase 2 Chiusa» e autorizza un tentativo a
+  settimana per sistemare la consegna GitHub, interrompendo l'attività dopo
+  il primo completamento riuscito. Non occorre attendere un ulteriore consenso
+  sul budget per questi tentativi; nessuna autorizzazione ad acquistare minuti.
+- Creata in questa chat l'automazione `completa-consegna-github-nla`, ACTIVE,
+  ogni martedì alle 09:00, Europe/Rome. Se il blocco rimane invariato, nessun
+  retry insistente né notifica ripetitiva; riprovare alla scadenza successiva.
+- Il successo richiede la sistemazione dei residui pertinenti, controlli sul
+  commit finale e review soddisfatti, integrazioni autorizzate concluse e
+  documentazione coerente. Un accesso riuscito o un solo workflow verde non
+  bastano. Al primo successo completo eliminare soltanto questa automazione.
+- La chat rimane aperta per la manutenzione VPS. L'automazione
+  `manutenzione-spazio-vps-nla` resta ACTIVE e invariata: alla verifica del
+  19 ottobre il calendario salvato è domenica alle 09:00, mentre il prompt
+  conserva il riferimento storico alle 48 ore. Non è stato modificato qui.
+- Restano esclusi deploy, modifiche MAIN/password/PowerTools, nuova funzionalità,
+  indebolimento dei controlli, auto-approvazioni e cambi alla fatturazione.
+
+## D-028 — Stile Arena pubblicato
+
+- Jacopo ha approvato lo stile Arena, il mantenimento del logo attuale e accenti
+  neon contenuti nei colori e nel gradiente del logo, estendendo la direzione
+  all'intero sito. La tipografia provvisoria di D-026 non descrive più lo stato
+  attuale del tema.
+- Il 19 ottobre 2026 Jacopo ha pubblicato il tema `210350735628`: lettura
+  successiva conferma `MAIN`, `processing=false`; il precedente `175195881740`
+  è `UNPUBLISHED` e conservato per rollback. La preparazione era avvenuta sul
+  clone non pubblicato; il connettore non consente scritture MAIN/pubblicazione.
+- Prova privata: `C:/Users/umbri/.codex/visualizations/2026/10/19/01a154c0-ddcf-70e1-b9f7-c8df57c74630/arena-rollout/publication-verified.json`.
+  La ricevuta conferma anche il caricamento Arena nel browser integrato; la
+  successiva conferma di Jacopo in incognito è un'evidenza distinta della chat.
+  Nessuno snapshot Shopify viene aggiunto a Git.
+- La pubblicazione dello stile non equivale all'apertura pubblica: password
+  conservata, PowerTools e dati commerciali invariati.
+
+## D-029 — Home, funzionalità e sezioni prima del lancio
+
+- Il 20 ottobre 2026 Jacopo ha precisato che prima del lancio pubblico vuole
+  modifiche alla home, aggiunta di funzionalità e aggiunta di sezioni del sito
+  non dedicate alla vendita.
+- Questi tre workstream precedono il lancio. Dettagli di home, funzionalità,
+  sezioni e relativi criteri di completamento sono ancora da definire: non
+  assumere funzionalità specifiche, includere automaticamente il backlog,
+  inventare scadenze o introdurre una nuova fase numerata.
+- Arena resta la direzione visiva approvata. La Fase 2 è chiusa; manutenzione
+  ordinaria e consegna GitHub differita restano percorsi separati, senza riaprire
+  bootstrap o prove già accettate.
+- La password non è stata rimossa. L'apertura pubblica viene dopo questi
+  lavori e richiede la decisione del titolare sulla sua rimozione.
+  [Ordine aggiornato](ROADMAP-EXECUTION.md#ordine-di-lavoro-proposto).
+
+## D-030 — Completare la consegna GitHub nella repository pubblica
+
+- Il 20 ottobre Jacopo ha comunicato di avere reso pubblica la repository
+  per utilizzare Actions e ha chiesto di completare tutto il lavoro GitHub,
+  prima di riportarla privata personalmente.
+- Questa istruzione autorizza la ripresa immediata oltre la cadenza D-027 e
+  supera il rinvio D-024. Sono inclusi riconciliazione delle PR, correzione dei
+  conflitti e dei controlli, consegna dei sorgenti finalizzati e documentazione.
+- Restano obbligatori controlli sul commit consegnato, revisione indipendente
+  e conservazione del lavoro locale. Nessuna modifica a fatturazione, VPS,
+  Shopify, MAIN o PowerTools è parte di questa consegna.
+- Al completamento eliminare soltanto `completa-consegna-github-nla`;
+  mantenere aperta la chat e invariata `manutenzione-spazio-vps-nla`.
+  La successiva visibilità privata viene gestita da Jacopo.
 
 ## Reserved decisions
 

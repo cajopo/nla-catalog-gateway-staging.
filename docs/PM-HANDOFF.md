@@ -1,8 +1,185 @@
 # Passaggio di consegne PM NLA
 
-Aggiornato il 17 ottobre 2026. Jacopo ha affidato a Codex il ruolo PM di questa
+Aggiornato il 20 ottobre 2026. Jacopo ha affidato a Codex il ruolo PM di questa
 fase. Riferimenti: master #3, manutenzione documentale #34, architettura #17 e
 tassonomia #19, consultati prima dell'intervento.
+
+## Priorità del sito — 20 ottobre 2026
+
+Il lancio pubblico viene dopo tre workstream richiesti da Jacopo: modifiche
+alla home, nuove funzionalità e nuove sezioni non dedicate alla vendita.
+I dettagli e i criteri di completamento restano da definire; non inventare
+funzionalità, sezioni, scadenze o una nuova fase numerata. Fase 2 chiusa,
+manutenzione ordinaria e consegna GitHub rimangono separate.
+[Roadmap](ROADMAP-EXECUTION.md#ordine-di-lavoro-proposto) ·
+[D-029](DECISIONS.md#d-029--home-funzionalità-e-sezioni-prima-del-lancio).
+
+Arena è pubblicato dal 19 ottobre: MAIN `210350735628`, precedente
+`175195881740` non pubblicato e conservato per rollback. Il logo attuale e gli
+accenti neon approvati sono applicati; visualizzazione corretta in incognito
+confermata da Jacopo. La password resta attiva. I riferimenti sotto ai font
+provvisori e al MAIN precedente sono checkpoint storici, superati da
+[D-028](DECISIONS.md#d-028--stile-arena-pubblicato).
+
+## Consegna GitHub — 20 ottobre 2026
+
+D-030 registra la nuova autorizzazione del titolare dopo il passaggio della
+repository a pubblica. I workflow funzionano; #100/#112/#113/#114 e
+#26/#27/#109/#110 sono integrate con controlli verdi e revisioni indipendenti.
+Ricerca #116, CodeQL #111, sorgenti Arena #117, evidenza dati #118 e questa
+consegna documentale #101 hanno checkpoint e limiti nella
+[ricevuta di consegna](evidence/GITHUB-DELIVERY-2026-10-20.md).
+La precedente sezione del tentativo mattutino è superata; la
+[ricevuta storica](evidence/GITHUB-WEEKLY-2026-10-20.md) ne conserva il rifiuto
+prima dell'invio. Nessuna modifica VPS o Shopify fa parte di questa ripresa.
+
+## Ricerca codici installata — 19 ottobre 2026
+
+**Verifica del 20 ottobre, 08:28 UTC:** market completo, refresh terminato e
+manifest attivo coerente con la ricevuta. Il rinvio del 19 ottobre dipendeva
+da HTTP 404 per un'espansione alla fonte. `/readyz` 200; `/opsz` 503 ora per
+`backup_attention`, non più `market_incomplete`. Il resoconto del 19 ottobre
+sotto è storico; non forzare cicli o azzerare le segnalazioni.
+Confermato alle 08:30 UTC il fallimento del backup odierno
+(`checkpoint_failed`), ultimo completo il 19 ottobre alle 01:01 UTC.
+Prossima manutenzione: diagnosticare la causa del checkpoint e correggerla,
+poi verificare un nuovo backup completo e il monitor prima del lancio.
+[Prove correnti](evidence/OPERATIONAL-CHECK-2026-10-20.md).
+
+Su richiesta esplicita di Jacopo, installata la correzione locale `2c8c650`
+(`agent/card-code-search-115`): `FIN88` e `FIN-88` restituiscono la stessa carta,
+con suggerimenti e faccette coerenti. La stampa è esaurita e rimane esclusa
+con il filtro disponibili. Copertura aggregata Windows/Linux 100% su istruzioni
+e rami; 4.122 test Windows e 35 test nativi Linux passati, review indipendente.
+
+Immagine effettiva `sha256:2231c268945bf3681c83b2f0fafa9ae71a0751e46972c963c205463fc2b24a22`,
+costruita sull'immagine `8a23ad08`/runtime `ed24a61` con soli quattro moduli aggiornati.
+Container `b89865e8...`, installazione registrata alle 21:05:56 UTC,
+prova finale alle 21:10:40 UTC. Fonte dati, pointer e ambiente accettato invariati;
+operatore/archive `881b9ca`, patch importer `8657aaa`, unità, Caddy, backup e monitor
+preservati. Modificato soltanto `image` nella configurazione del refresh futuro.
+Timer market 02/14 UTC e refresh 03/15 UTC attivi; nessun marker pendente.
+Al checkpoint del 19 ottobre il primo ciclo pianificato successivo non era
+ancora osservato; l'aggiornamento sopra registra la verifica del 20 ottobre.
+
+**Attenzione operativa preesistente:** `/readyz` 200, `/opsz` GET/HEAD 503.
+Il collector segnalava `market_incomplete` già prima del deploy (20:00 e
+20:52:13 UTC). Ricevuta immutabile `draft_cycle_partial` del ciclo
+`market-20261019t140017z-be2a057f`, SHA256 `5fb4de9672fcc50d5194db59214ff5458985479d6764bc6631d8aae0ebc72096`.
+Non è un guasto introdotto dalla ricerca; non dichiarare il monitor UP.
+Esito market e monitor non sono stati modificati né è stato forzato un ciclo.
+Al checkpoint del 19 ottobre il problema market restava manutenzione separata.
+
+Ricevute VPS: `/opt/nla-staging/search-code-2c8c650/rollout/` e
+`/var/lib/nla-catalog-refresh/20261019t205146z-48551a72/`.
+[Metodo, prove, limiti e rollback](workstreams/ws-05-code-hyphen-search.md).
+Prove private PC nel worktree `C:\Users\umbri\.codex\worktrees\0072\nla-catalog-gateway-staging\output\card-code-search-20261019`.
+Nessun push, PR o workflow GitHub: consegna locale separata secondo D-024/D-027.
+Non rieseguire i due helper di installazione/finalizzazione una tantum.
+
+## Chiusura della fase — 18 ottobre 2026
+
+**Aggiornamento 19 ottobre (D-027):** Jacopo conferma Fase 2 chiusa e autorizza
+`completa-consegna-github-nla`, ogni martedì alle 09:00 Europe/Rome, fino alla
+prima sistemazione completa riuscita. Questo supera D-024 per i tentativi
+settimanali. Eliminare solo tale automazione al successo; chat e controllo VPS
+restano attivi. Nessun cambiamento alla programmazione VPS esistente.
+
+Obiettivo di manutenzione completato: garanzie operative, backup fuori VPS,
+drill isolato misurato, recapito alert e QA applicabile documentati. Ricevuta
+anche la PDP in vista stretta: prodotto, opzioni, prezzo e quantità coerenti
+con il carrello; revisione indipendente. Al 18 ottobre font e dimensioni erano provvisori.
+La prova manuale non dichiara click registrati, checkout o revisione immutabile
+del tema. [Matrice di chiusura e limiti](evidence/MAINTENANCE-CLOSURE-2026-10-18.md).
+
+La consegna GitHub resta differita per D-024; niente push, merge o polling.
+Conservare le evidenze e proseguire il controllo VPS ogni 48 ore già attivo.
+La proposta CSS e la retention cloud sono opzioni locali, non nuove attività
+obbligatorie. I checkpoint precedenti sotto sono cronologia, non lavori da riavviare.
+
+## Checkpoint operativo — 18 ottobre, recupero applicativo
+
+**05:29 UTC:** recupero applicativo isolato concluso. Restore Backblaze,
+755 file, tre SQLite, reference e immagine gateway verificati; runtime `current`
+e `previous` PASS con ambiente effettivo del backup, 20 richieste complessive
+e chiusura verificata. Dal download alla chiusura di entrambe le generazioni:
+45m29s, pulizia esclusa. Dopo inventario e revisione indipendente eliminati
+765 file e 104 directory temporanei (3,93 GB); spazio libero 13,75 GB.
+Prove conservate, `/opsz` pubblico HTTP 200 dopo la pulizia. Nessun intervento
+sul refresh ordinario. Stima qualitativa circa 95%; non ripetere il drill.
+[Evidenza e riferimenti privati](evidence/RECOVERY-APPLICATION-2026-10-18.md).
+
+La QA allora residua era circoscritta al percorso mobile, ora documentato
+tramite immagini del proprietario di PDP e carrello. In quel checkpoint font e
+dimensioni erano provvisori; la proposta CSS locale era opzionale e non un nuovo gate.
+MAIN allora invariato. L'accesso tecnico a Chrome era indisponibile; browser componente,
+axe, errori/stale e carico controllato hanno prove riusabili. Certificazione
+completa, guasti live e capacità massima non sono nuovi gate. Non ripetere
+richieste di RAM, accessi al gestore password o test email. GitHub resta differito.
+[Matrice e limiti](evidence/QA-REMAINING-2026-10-18.md).
+
+**Preparazione successiva, 02:21 UTC:** bundle restore/runtime/loader/finalizzatore
+installato inerte, revisione indipendente, 69 test/75 subtest e 3 test launcher
+PASS; import Linux tramite percorsi assoluti verificati. Corretto il formato
+UTC della guardia timer. Market è realmente in corso, invocation
+`b441b43c1cfb411da6141ae716a9fff2`; timer refresh osservato inattivo durante il
+job. Nessun restore avviato: attendere catena ordinaria terminata e timer attivi,
+poi ammissione fresca dopo il refresh delle 03 UTC. Non rifare installazione,
+QA già valida o prove dei materiali. Pin e launcher nel
+[checkpoint per la ripresa](evidence/RECOVERY-RESUME-2026-10-18.md).
+
+**QA/versioni:** verifica Shopify API limitata al componente e alla lingua:
+il primo checksum grezzo diverso dipende dai terminatori di riga. Il codice
+normalizzato e i 41 testi coincidono con la fixture storica. Riutilizzare le
+prove del componente; non ripeterle né confonderle con QA dell'intero negozio.
+Il vecchio export completo è assente; la prima pagina da 250 file non è un
+inventario completo. [Prova e limiti](evidence/QA-COMPONENT-BINDING-2026-10-18.md).
+
+**Checkpoint precedente, 01:51 UTC:** recuperati dal backup configurazione runtime,
+ambiente effettivo del container e coppia TLS. Hash, handshake TLS 1.3 e
+controlli negativi PASS in 18,806 s; 17 test locali PASS e revisione indipendente.
+Corretta la sonda per tre variabili storiche e un timeout troppo breve per cinque
+letture. Nessun servizio modificato o runtime avviato. Stima corrente circa 85%:
+restano recupero completo con accessi recuperati e QA Shopify reale. Il PC resta
+indisponibile; non ripetere misure RAM, questa sonda o le prove già concluse.
+La richiesta originaria è recupero isolato; un host nuovo non è un requisito
+infrastrutturale aggiunto. [Evidenza e limiti](evidence/RECOVERY-MATERIALS-2026-10-18.md).
+
+I checkpoint sottostanti conservano le valutazioni precedenti; per l'elenco
+attuale di attività aperte usare [STATUS-CURRENT](STATUS-CURRENT.md).
+
+Il primo backup automatico successivo al rollout observer è terminato alle
+01:01:33.023983 UTC (durata 80,674571 s), `read-data` PASS, servizio
+`inactive/dead/success`, exit 0, invocation
+`451709267d414947a38d89b30f5af628`. Job
+`backup-7f89aeb859744c7e933aab3c724e7b16`, snapshot
+`9fc4fe1143bd0e9048f91ff23ca6d4d517cad300238acc42a94f5f29b0c75d5e`.
+Verifica mirata del manifest remoto PASS: 198.901 byte, SHA-256
+`aa3337d919cb10a4c5a278a4093ec9c10adbc4660a0637efcccfc7ecaf67faad`, legato
+alla ricevuta per-job e contenente i quattro pin dei sorgenti del package
+observer `319ca0b` e il pin dell'unità. Prossimo timer 19 ottobre alle 01:00 UTC.
+[Evidenza e limiti](evidence/BACKUP-SCHEDULED-2026-10-18.md).
+
+Questo chiude la prova del primo ciclo automatico e dell'inclusione observer,
+non il recupero completo da host vuoto. Il PC alle 01:03:29 UTC aveva
+816.218.112 byte liberi, pipe Docker assente: nessun full recovery avviato.
+UptimeRobot TEST DOWN/UP ricevuto alle 00:52. Dopo lo screenshot del monitor
+`804287721` (UP, ogni 5 minuti), Jacopo ha confermato il cambio URL in `/opsz`
+e stato UP. La sonda indipendente alle 01:13:42 UTC conferma GET/HEAD 200.
+Non ripetere cambio URL o test email; i checkpoint precedenti di attività ancora
+pendente sono superati. [Livelli di evidenza](evidence/ALERT-DELIVERY-2026-10-18.md).
+Stima qualitativa: circa 80%.
+
+Aggiornamento successivo del 18 ottobre: Jacopo non riesce a liberare RAM sul
+PC. Tentativo locale rinviato; non ripetere preflight o richieste equivalenti
+senza una risorsa disponibile. Il restore isolato sulla VPS resta valido nel
+proprio ambito. La prova controllata di 54 richieste del 17 ottobre copre il
+requisito originario di carico limitato; capacità massima non misurata, senza
+aggiungerla come nuovo requisito. Restano le lacune indicate nello stato corrente.
+Le cinque copie di prova cloud restano protette: non occorre attivare l'esecutore
+opzionale di cancellazione per completare il backup fuori VPS. Conservazione
+attuale e automazione futura sono distinte; D-021/D-022 riportano ora gli esiti
+del 18 ottobre. Il recupero completo e la QA reale restano da verificare.
 
 Jacopo ha ribadito di proseguire autonomamente entro l'obiettivo approvato e di
 non ripetere richieste di consenso già risolte: [decisione D-023](DECISIONS.md#d-023--continuità-operativa-entro-lobiettivo-autorizzato).
@@ -11,7 +188,146 @@ da un'autorizzazione del titolare già presente.
 
 ## Checkpoint di consegna — 17 ottobre
 
+**Recapito verificato — 18 ottobre:** Jacopo ha eseguito il test UptimeRobot;
+entrambe le email TEST DOWN/UP sono state verificate indipendentemente in Gmail
+alle 00:52 UTC. Le email indicano ancora `/readyz`: resta la modifica del monitor
+esistente a `/opsz`, che supporta GET e HEAD. Jacopo non trova le impostazioni;
+guidarlo nel solo cambio URL, senza nuovi monitor, attivazioni o consensi.
+La prova supera le note storiche di mancato recapito, non i limiti di
+configurazione o QA. [Ricevuta e limiti](evidence/ALERT-DELIVERY-2026-10-18.md).
+
+**Ultima indicazione di Jacopo: semplificare e risparmiare token.** Privilegiare
+strumenti e procedure esistenti; fermare nuove componenti e infrastrutture di
+test non indispensabili. La preparazione retention resta conservata localmente,
+senza trasformarla automaticamente in un requisito di rilascio. Chiudere prima
+le garanzie operative effettive con il percorso minimo verificabile. Aggiornare
+Jacopo durante il lavoro con percentuale stimata, risultato e prossimo passo;
+stima corrente circa 75%, da aumentare alla chiusura di garanzie concrete.
+
+**Custodia password — aggiornamento del 17 ottobre:** Jacopo ha confermato
+«salvata» per la password Restic in 1Password, dopo la procedura manuale
+([D-025](DECISIONS.md#d-025--custodia-della-password-backup-in-1password)).
+La custodia è attestata dal titolare; non ripetere domande sul gestore o il
+trasferimento. Restano prova completa di recupero, primo backup automatico,
+alert/QA e conservazione cloud. I riferimenti alla custodia ancora mancante
+nei checkpoint storici sotto sono superati da questa conferma.
+
+**Rivalutazione delle dipendenze, 11:40 UTC:** nessuna nuova garanzia chiusa.
+La RAM libera sul PC, ricontrollata dopo la fine dei test, è 643.268.608 byte:
+il drill esistente richiede 3 GiB disponibili. La review indipendente conferma
+che ripetere il restore sulla VPS con immagine residente non chiude la prova
+da ambiente vuoto. Accesso tecnico a Chrome ancora negato; non aggirare il
+diniego per monitor UptimeRobot o QA Shopify. Restano inoltre custodia
+indipendente della password e primo ciclo backup previsto il 18 ottobre alle
+01 UTC: una scadenza futura non è un job attualmente in esecuzione.
+Nessun nuovo consenso richiesto. Proseguire alla disponibilità di risorse,
+accessi o della ricevuta automatica; evitare nuovi componenti e controlli
+ripetuti sugli stessi blocchi. GitHub resta differito come sotto.
+Alle 11:41 UTC l'obiettivo è stato segnato **bloccato**, dopo tre passaggi
+consecutivi senza avanzamento e senza nuove condizioni di sblocco. Non è
+completato. Riprendere dal checkpoint quando cambia una dipendenza concreta;
+nessun ulteriore polling o nuova infrastruttura per aggirare questi limiti.
+
+Alla ripresa del 17 ottobre è stata completata la semplificazione di
+`STATUS-CURRENT.md`: fatti correnti, funzionalità, lacune e prossimi passi,
+con distinzione fra installato, preparazione locale e remoto. Review indipendente,
+47 destinazioni locali dei link verificate e controllo whitespace PASS su stato
+e roadmap. La copia integrale precedente è conservata in
+`output/status-current-before-simplification-20261017T1308Z.md` (SHA-256
+`d7ea9f1873eaabe5ca11a64d42b01e3bcb9aadca13097cd383f75be5695c4753`).
+Chiarito che la configurazione di cattura include health ma l'ultimo backup
+precede il nuovo observer. Nessuna nuova garanzia operativa chiusa: stima 75%.
+
+### Storico 17 ottobre: GitHub sospeso per budget — superato da D-030
+
+Applicare [D-024](DECISIONS.md#d-024--rinvio-github-fino-allintervento-sul-budget):
+nessuna operazione GitHub o polling fino alla comunicazione di Jacopo dopo
+l'intervento sul budget. Proseguire il lavoro indipendente e conservare i delta
+localmente. Questo aggiornamento non è pubblicato su GitHub.
+Ultimo head documentale remoto `18ed78320f485d9ff03c05fa0514000e8afc156b`;
+CI `39021491093` e CodeQL `39021491094` non hanno eseguito alcuno step:
+GitHub segnala pagamenti falliti oppure limite di spesa da aumentare, senza
+distinguere le due cause. I controlli verdi del codice installato restano validi.
+
+### Preparazione retention locale — 10:23 UTC
+
+Checkpoint locale successivo, 10:23 UTC: preparato il modulo puro
+`scripts/backup_retention_plan.py` nel worktree `nla-offsite-backup`, ramo
+`agent/offsite-backup-13`, base `b56ca95`, congelato alle 11:10 UTC nel commit
+solo locale `aa2ffe5fbb8cc5c381b03cd0969507a58a4bc957` (worktree pulito).
+154 test mirati PASS e prova restic
+su repository sintetico PASS: 14 snapshot, tre candidati rimossi, 11 rimasti,
+quattro protetti ripristinati, controllo integrale PASS. Nessun accesso cloud
+o VPS e nessuna installazione. [Evidenza e pin](evidence/RETENTION-PLANNER-2026-10-17.md).
+Il backup installato e l'ultimo head remoto noto restano `b56ca95`; non attribuire
+al delta locale la CI precedente. La policy 7/4/6 resta inattiva. L'esecutore
+futuro deve coordinarsi con `/var/lib/nla-backup/.pipeline.lock`, caricare le
+protezioni complete, ripianificare e validare ricevuta e post-stato. Non ripetere
+la prova sintetica senza cambiamenti o lacune che lo giustifichino.
+
+Suite completa locale: primo tentativo scaduto dopo 20 minuti con errori,
+senza JUnit/coverage finali. Diagnosi mirata: un errore Windows al rename di una
+directory temporanea; lo stesso caso passa con base corta, senza modifica ai
+sorgenti. Nuova esecuzione con base esclusiva corta terminata alle 11:01:19 UTC:
+1.712 PASS, un FAIL, zero skip. Ancora `WinError 5`, stavolta al rename del
+sidecar in un test importer; la base corta non risolve il problema generale.
+Cause filesystem/handle ancora da attribuire; nessun altro retry generale senza
+nuova diagnosi, né modifica a ACL/configurazione. Planner e Bulk PASS, ma il ramo
+non è completamente validato e non è pronto da distribuire.
+
+Diagnostica delle 11:14 UTC: gli otto parametri del test fallito passano in
+19,10 s senza modifiche, con 16 rinomine osservate. L'errore non si riproduce;
+nessuna causa o correzione dimostrata, validazione generale ancora aperta.
+L'helper cattura ACL/holder soltanto al fallimento, che non si è verificato.
+Ricevute e limiti nell'evidenza retention collegata sopra; non ripetere la suite
+generale sulla sola base di questo esito.
+
+Preparazione locale successiva: aggiunto l'esecutore protetto
+`scripts/backup_retention.py`, con review indipendente e 256 test congiunti
+planner/esecutore PASS (100% dei due moduli). Non è installato e non include
+prune; policy, prova nativa e validazione completa restano aperte.
+Congelato alle 11:32 UTC nel commit solo locale
+`1d4cf53c78939b3ce06ff93d44050a5420a86ce9`, worktree pulito. Il commit `aa2ffe5`
+rimane la precedente tappa del planner; installato e remoto noto restano `b56ca95`.
+[Contratto, pin e prove](evidence/RETENTION-EXECUTOR-2026-10-17.md).
+Il preflight VPS delle 11:23 UTC trova pipeline inattive e risorse disponibili
+per valutare una futura verifica isolata; non è una prova Linux né un'ammissione
+permanente. Pytest non è installato nel Python di sistema; nessuna dipendenza
+o unità è stata aggiunta.
+
+### Verifica email — 10:56 UTC
+
+Connettore Gmail del destinatario previsto: una email di conferma UptimeRobot
+del 15 ottobre, 13:49:33 UTC, presente in Inbox. Ricerca delimitata con nessuna
+pagina successiva; nessun avviso operativo trovato, nessun invio o link aperto.
+Conferma la ricezione iniziale, non monitor o recapito degli alert.
+[Ricevuta e limiti](evidence/OPERATIONAL-HEALTH-2026-10-15.md).
+
+### Prova HTTPS live — 10:06 UTC
+
+54 richieste PASS, 50 risposte catalogo validate: paginazione su quattro giochi,
+ricerca/suggerimenti e 40 letture limitate a due concorrenti. P95 131,128 ms
+dalla VPS verso il proprio nome pubblico; niente inferenze su capacità massima
+o navigazione Shopify. Runtime, pointer, Caddy, ricevuta backup e marcatori
+pipeline invariati; 13.243.912.192 byte liberi finali. Prima ammissione respinta
+a zero HTTP per timestamp backup mai eseguito; diagnosi, correzione della sonda,
+17 test offline e review indipendente precedono il risultato riuscito.
+[Evidenza, pin e limiti](evidence/PUBLIC-GATEWAY-2026-10-17.md).
+Non ripetere senza cambiamenti e non aggiornare automaticamente i pin.
+
 ### Health backup — aggiornamento finale 09:28 UTC
+
+Dry-run cloud delle 09:47 UTC completato e verificato: il piano restic 7/4/6
+seleziona `bd249a0d…` per rimozione, ma è uno dei quattro snapshot di prova
+protetti. Il piano effettivo ha zero candidati; non applicare il comando grezzo.
+Tutte le copie preservate, nessuna policy attivata; helper privato con review
+indipendente e 24 controlli offline. [Ricevute e limiti](evidence/CLOUD-RETENTION-2026-10-17.md).
+
+Aggiornamento locale successivo: preflight PC delle 09:41 UTC, RAM libera
+529.022.976 byte, solo WSL `docker-desktop` arrestata e pipe Docker assente.
+Nessun drill pesante avviato. Il runbook distingue ora RPO proposto, intervallo
+del timer e freschezza della sorgente; le 2 ore sono budget su host pronto,
+non RTO completo. [Evidenza e prossimo drill](evidence/RECOVERY-READINESS-2026-10-17.md).
 
 PR #114, head `319ca0ba046715b769eda97af3e18fad906d6bc2`, pubblicato alle
 09:14 UTC. Il codice copre gli errori del servizio backup, la corrispondenza
@@ -280,8 +596,10 @@ deployment; lo stato dei gate e la prova read-only sono riportati sopra.
 - Considerare concluse le prove e le unità terminali del 29 settembre; non
   riavviarle e non ripetere il conteggio delle nuove carte come aggiornamento.
 - Jacopo ha revocato il rinvio GitHub il 3 ottobre e ha chiesto di capire/correggere
-  l'errore e riprendere la consegna. Procedere con issue/PR separate, CI verde e
-  review indipendente; la consegna complessiva non è ancora conclusa.
+  l'errore e riprendere la consegna. Il 17 ottobre ha nuovamente sospeso le
+  operazioni GitHub in attesa del proprio intervento sul budget (D-024).
+  Alla ripresa mantenere issue/PR separate, CI verde e review indipendente;
+  la consegna complessiva non è ancora conclusa.
 - Non ricreare il heartbeat `verifica-ciclo-nuove-uscite-nla`, eliminato a fine prova.
   I timer della VPS sono separati e nell'ultima osservazione risultavano attivi.
 - Non togliere la password e non modificare il MAIN. Una nuova modifica al tema
