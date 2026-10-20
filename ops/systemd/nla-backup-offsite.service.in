@@ -1,0 +1,36 @@
+[Unit]
+Description=Next Level Arena private offsite checkpoint backup
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+UMask=0077
+WorkingDirectory=@REPOSITORY@
+Environment=PYTHONPATH=@REPOSITORY@/src
+Environment=PYTHONNOUSERSITE=1
+Environment=PYTHONDONTWRITEBYTECODE=1
+ExecStart=@PYTHON@ -m scripts.backup_offsite --config @BACKUP_CONFIG@
+TimeoutStartSec=47min
+TimeoutStopSec=30s
+KillMode=control-group
+Nice=15
+CPUQuota=50%
+MemoryMax=768M
+MemorySwapMax=0
+LimitCORE=0
+TasksMax=32
+IOSchedulingClass=idle
+IOWeight=10
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=@BACKUP_STATE@ @MARKET_LOCK@ @REFRESH_LOCK@
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+LockPersonality=true
+RestrictSUIDSGID=true
+StandardOutput=journal
+StandardError=journal
