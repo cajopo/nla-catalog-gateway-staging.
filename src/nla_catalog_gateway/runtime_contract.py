@@ -1279,7 +1279,7 @@ def _request_context_dict(dataset_generation: str, request: CatalogRequestV1) ->
         "request": request.as_dict(),
     }
     if request.query not in (None, ""):
-        context["searchSemanticsVersion"] = 2
+        context["searchSemanticsVersion"] = 3
     return context
 
 
