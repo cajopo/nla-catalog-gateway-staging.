@@ -604,8 +604,12 @@ def test_docker_transport_uses_fixed_executable_and_no_shell(monkeypatch):
 
 @pytest.mark.parametrize("action", ["promote", "rollback"])
 @pytest.mark.parametrize("status", ["accepted", "error", "unexpected-output"])
-def test_selection_preserves_existing_pointer_cli_contract(monkeypatch, action, status):
-    plan = operator.load_plan(plan_values())
+@pytest.mark.parametrize("upgrade", [False, True])
+def test_selection_preserves_existing_pointer_cli_contract(monkeypatch, action, status, upgrade):
+    values = plan_values()
+    if upgrade:
+        values["old_image"] = "sha256:" + "a" * 64
+    plan = operator.load_plan(values)
     calls = []
 
     def run(args, **kwargs):
@@ -854,6 +858,24 @@ def test_real_preflight_accepts_bound_evidence_without_writing(preflight_case):
     assert result[6] == case.plan.store / "generations" / case.plan.manifest
     assert not result[6].exists() and not case.plan.work.exists()
     assert all(command[1] in ("inspect", "ps") for command in case.commands)
+
+
+@pytest.mark.parametrize("acquisition_sha", ["8" * 40, "invalid"])
+def test_recovery_preserves_acquisition_pin_separate_from_verified_producer(
+    preflight_case, acquisition_sha
+):
+    case = preflight_case
+    case.documents["operator-receipt.json"]["codeSha"] = acquisition_sha
+    case.documents["capture-checkpoint.v1.json"]["identity"]["sourceCodeSha"] = acquisition_sha
+    for name in ("operator-receipt.json", "capture-checkpoint.v1.json"):
+        (case.plan.capture / name).write_text(json.dumps(case.documents[name]))
+    if acquisition_sha == "invalid":
+        with pytest.raises(AssertionError):
+            operator.preflight(case.plan)
+    else:
+        result = operator.preflight(case.plan)
+        assert result[4] == case.plan.manifest
+        assert not case.plan.work.exists()
 
 
 @pytest.mark.parametrize(

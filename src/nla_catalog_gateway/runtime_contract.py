@@ -1066,30 +1066,54 @@ class CatalogItemV1(_JsonDto):
 class CatalogFiltersV1(_JsonDto):
     in_stock: bool | None
     product_subtype: str | None
+    expansion_code: str | None = None
+    rarity: str | None = None
 
     FIELDS = frozenset({"inStock", "productSubtype"})
+    OPTIONAL_FIELDS = frozenset({"expansionCode", "rarity"})
 
     def __post_init__(self) -> None:
         if self.in_stock is not None:
             _boolean(self.in_stock, "filter inStock")
         _nullable_subtype(self.product_subtype, "filter productSubtype")
+        for value in (self.expansion_code, self.rarity):
+            if value is not None:
+                _string(value, "metadata filter")
+        try:
+            CardMetadataV1(None, self.expansion_code, None, self.rarity)
+        except ValueError:
+            raise _fail("metadata filter is invalid") from None
 
     @property
     def nonempty(self) -> bool:
-        return self.in_stock is not None or self.product_subtype is not None
+        return any(
+            value is not None
+            for value in (self.in_stock, self.product_subtype, self.expansion_code, self.rarity)
+        )
 
     def as_dict(self) -> dict[str, Any]:
-        return {"inStock": self.in_stock, "productSubtype": self.product_subtype}
+        result = {"inStock": self.in_stock, "productSubtype": self.product_subtype}
+        # Absent extensions must not change existing request/cursor bytes.
+        if self.expansion_code is not None:
+            result["expansionCode"] = self.expansion_code
+        if self.rarity is not None:
+            result["rarity"] = self.rarity
+        return result
 
     @classmethod
     def from_dict(cls, value: dict[str, Any]) -> Self:
         if type(value) is not dict:
             raise _fail("filters must be an object")
-        _exact_keys(value, cls.FIELDS, "filters")
+        if not cls.FIELDS <= value.keys() or not value.keys() <= cls.FIELDS | cls.OPTIONAL_FIELDS:
+            raise _fail("filters have missing or unknown fields")
+        for key in cls.OPTIONAL_FIELDS & value.keys():
+            _string(value[key], "metadata filter")
         in_stock = value["inStock"]
         return cls(
             in_stock=None if in_stock is None else _boolean(in_stock, "filter inStock"),
             product_subtype=_nullable_subtype(value["productSubtype"], "filter productSubtype"),
+            expansion_code=value.get("expansionCode"),
+            rarity=value.get("rarity"),
         )
 
 
@@ -1196,6 +1220,10 @@ class CatalogRequestV1(_JsonDto):
             and self.product_family is not RequestFamily.SEALED
         ):
             raise _fail("productSubtype filter is only compatible with sealed requests")
+        if (
+            self.filters.expansion_code is not None or self.filters.rarity is not None
+        ) and self.product_family is not RequestFamily.SINGLE:
+            raise _fail("card metadata filters are only compatible with single requests")
         if (
             DEFAULT_CAPABILITIES_V1.request_state(self.game, self.product_family)
             is CapabilityState.UNSUPPORTED
@@ -1453,6 +1481,12 @@ class CatalogPageV1(_JsonDto):
                 and item.product_family.value != self.request.product_family.value
             ):
                 raise _fail("catalog page item leaks across the requested family")
+            for attribute in ("expansion_code", "rarity"):
+                selected = getattr(self.request.filters, attribute)
+                if selected is not None and (
+                    item.card_metadata is None or getattr(item.card_metadata, attribute) != selected
+                ):
+                    raise _fail("catalog page item violates the metadata filter")
         if _nonnegative_integer(self.returned_product_count, "returnedProductCount") != len(
             self.items
         ):

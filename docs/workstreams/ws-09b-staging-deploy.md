@@ -194,3 +194,56 @@ procedure mutates Shopify, TCG PowerTools, the MAIN theme, or a package in place
 
 Live publication remains exclusively within issue #18 and requires a new explicit decision from
 Jacopo.
+
+## Pinned image replacement — issue #13, delivery reconciliation 2026-10-03
+
+This section recovers the contract from `8e0f2b1`, reconciled with the warm
+operator in `83b14e45`. It does not restore the earlier stop-before-readiness
+handoff or authorize a deployment. See [warm activation](ws-09f-warm-activation.md)
+for the required dual-upstream edge and the current serving/rollback order.
+
+`activate_staging_refresh` accepts optional JSON `old_image`, an exact lowercase
+`sha256:` image ID. Omission defaults to `image` for unchanged refresh coordinators.
+Preflight binds the current container to `old_image` and the verifier to `image`.
+Candidate creation uses `image` on the alternate private port, leaving the
+original serving until readiness and accepted-environment commit. On a pre-commit
+readiness failure, rollback warms a replacement using `old_image`, the old
+evidence-code pin and the actual rollback pointer pin before retiring the original.
+All existing container configuration, environment and host-security checks remain.
+The ordinary refresh coordinator still requires its current image to match config;
+this does not turn recurring dataset refresh into an application updater.
+
+Promotion AND rollback selectors run in the candidate image and must verify both
+retained packages. An incompatible package rejects the operation; do not bypass
+this check or assume cross-version compatibility. Before a real upgrade, prove
+both package opens in that image and the previous package's runtime binding in
+the retained old image. Keep both exact image IDs and immutable packages available.
+
+When replacing only application code, use the separate
+[code-only helper](ws-09-code-only-replacement.md) without repackaging the dataset.
+If a dataset promotion genuinely needs newly pinned evidence, reuse the retained
+reconciled bundle with the normal packaging/proof command; do not relabel old
+evidence or recapture Shopify merely to change application images. Preserve
+acquisition provenance. Run explicit replacement under the existing lock and
+install coherent operator/config/image pins only after the appropriate acceptance.
+On uncertainty retain resources and pending evidence for inspection, never retry
+blindly. No timer, retention, Shopify, PowerTools or publication change is made
+by this documentation/test-only delivery.
+
+Recovered tests cover separate selector image pins for both actions and all four
+combinations of incompatible retained package and selector action, with no pointer
+change. Existing warm tests cover upgrade success, exact previous-image rollback,
+digest validation and separate preflight image binding. Offline tests do not prove
+native image/package compatibility or authorize a real deploy/rollback.
+
+Official references rechecked for this reconciliation:
+[Docker create](https://docs.docker.com/reference/cli/docker/container/create/) and
+[Docker inspect](https://docs.docker.com/reference/cli/docker/container/inspect/).
+
+Delivery validation: `pytest tests/test_activate_staging_refresh.py
+tests/test_staging_activation.py tests/test_replace_staging_image.py
+tests/test_refresh_retention.py -q --no-cov -o addopts= -p no:cacheprovider`
+passed all 347 tests, zero skipped, on 2026-10-03. Repository preflight passed
+with 189 tracked files. Only two test modules and these two deployment documents
+change; production sources remain byte-identical to `83b14e45`. This is focused
+offline evidence, not exact-head CI, independent approval or a new deployment.

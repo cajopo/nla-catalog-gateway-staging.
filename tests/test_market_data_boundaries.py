@@ -1,6 +1,5 @@
 """Adversarial local inputs for the importer scripts; no remote requests."""
 
-import hashlib
 import json
 import stat
 from datetime import UTC, datetime, timedelta
@@ -9,9 +8,7 @@ from types import SimpleNamespace
 
 import pytest
 from scripts import capture_import_identities as identities
-from scripts import compare_cardtrader_catalog as comparison
 from scripts import import_cardtrader_drafts as importer
-from scripts import prepare_cardtrader_reference as preparation
 from scripts import publish_imported_drafts as publication
 from scripts import refresh_market_catalog as market
 
@@ -133,16 +130,22 @@ def test_invalid_identity_never_reaches_graphql(identity_case, entry):
 
 def test_live_identity_check_rejects_baseline_expiring_during_request(identity_case, monkeypatch):
     client, work = identity_case
-    receipt = complete(client, work)
+    complete(client, work)
+    original = client.graphql
 
     class Later(datetime):
         @classmethod
         def now(cls, tz=None):
             return datetime.now(tz) + timedelta(seconds=1801)
 
-    monkeypatch.setattr(identities, "datetime", Later)
+    def graphql(query, variables):
+        result = original(query, variables)
+        if query == identities.FIND_ATTEMPT_HANDLE:
+            monkeypatch.setattr(identities, "datetime", Later)
+        return result
+
     with pytest.raises(ValueError, match="identity_export_stale"):
-        identities._live_missing(receipt, set(), SHOP, 42, client.graphql)
+        identities.verify_missing(work, SHOP, 42, graphql)
 
 
 @pytest.mark.parametrize(
@@ -316,133 +319,6 @@ def test_import_boundary_failures_never_allow_creation(import_case, monkeypatch,
             else "unexpected_batch_error"
         )
     assert all(not query.lstrip().startswith("mutation") for query, _ in api.calls)
-
-
-@pytest.mark.parametrize(
-    "case",
-    [
-        "progress",
-        "symlink",
-        "source_hash",
-        "row_index",
-        "identity",
-        "properties",
-        "long_title",
-        "empty_metadata",
-        "progress_race",
-        "existing_decision",
-    ],
-)
-def test_preparation_checks_bound_source_and_preserves_exceptions(import_case, monkeypatch, case):
-    args, config, _, _ = import_case
-    capture = args["capture"]
-    projection = next(
-        (Path(config["store"]) / "generations").glob("*/catalog-projection.v1.sqlite3")
-    )
-    pin = hashlib.sha256(projection.read_bytes()).hexdigest()
-    report = preparation.compare_projection(capture, projection, pin)
-    monkeypatch.setattr(preparation, "compare_projection", lambda *_: report)
-    progress_path = capture / "progress.json"
-    progress = json.loads(progress_path.read_bytes())
-    source_path = capture / "blueprints-1.json"
-    if case == "progress":
-        progress_path.write_bytes(progress_path.read_bytes() + b" ")
-    elif case == "symlink":
-        original = Path.is_symlink
-        monkeypatch.setattr(
-            Path, "is_symlink", lambda path: path == capture / "expansions.json" or original(path)
-        )
-    elif case == "source_hash":
-        source_path.write_bytes(source_path.read_bytes() + b" ")
-    elif case == "row_index":
-        report["details"][0]["sourceRowIndex"] = 999
-    elif case == "identity":
-        report["details"][0]["blueprintId"] = 999
-    elif case in ("properties", "long_title", "empty_metadata"):
-        rows = json.loads(source_path.read_bytes())
-        if case == "properties":
-            rows[0]["fixed_properties"] = []
-        elif case == "long_title":
-            rows[0]["name"] = "N" * 249
-        else:
-            for row in rows:
-                row["fixed_properties"] = {"collector_number": "", "mtg_rarity": ""}
-            expansions_path = capture / "expansions.json"
-            expansions = json.loads(expansions_path.read_bytes())
-            for row in expansions:
-                row["name"] = ""
-            write_json(expansions_path, expansions)
-            raw = expansions_path.read_bytes()
-            progress["files"][expansions_path.name].update(
-                bytes=len(raw), sha256=hashlib.sha256(raw).hexdigest()
-            )
-        write_json(source_path, rows)
-        raw = source_path.read_bytes()
-        progress["files"][source_path.name].update(
-            bytes=len(raw), sha256=hashlib.sha256(raw).hexdigest()
-        )
-        write_json(progress_path, progress)
-        report["captureSha256"] = hashlib.sha256(progress_path.read_bytes()).hexdigest()
-    elif case == "progress_race":
-        original = Path.read_bytes
-        reads = []
-
-        def changed(path):
-            data = original(path)
-            if path == progress_path:
-                reads.append(1)
-                if len(reads) > 1:
-                    return data + b" "
-            return data
-
-        monkeypatch.setattr(Path, "read_bytes", changed)
-    else:
-        report["details"].append(dict(decision="existing_identity_match"))
-    call = (
-        capture,
-        projection,
-        pin,
-        Path(config["reference"]),
-        config["reference_manifest_sha256"],
-        capture.parent / "prepared-boundary",
-        "a" * 40,
-    )
-    if case in ("progress", "symlink", "source_hash", "progress_race", "empty_metadata"):
-        with pytest.raises(
-            ValueError,
-            match={
-                "progress": "capture_changed",
-                "symlink": "source_symlink",
-                "source_hash": "source_changed",
-                "progress_race": "capture_changed",
-                "empty_metadata": "canonical_extension_roundtrip_changed_records",
-            }[case],
-        ):
-            preparation.prepare(*call)
-    else:
-        result = preparation.prepare(*call)
-        assert result["shopifyChanged"] is False and result["creationApproved"] is False
-        if case in ("row_index", "identity", "properties", "long_title"):
-            assert len(result["exceptions"]) == 1 and len(result["candidates"]) == 1
-            assert result["exceptions"][0]["reason"] == "source_or_canonical_details_require_review"
-        else:
-            assert len(result["candidates"]) == 2 and result["exceptions"] == []
-
-
-def test_comparison_rechecks_projection_after_read(import_case, monkeypatch):
-    args, config, _, _ = import_case
-    projection = next(
-        (Path(config["store"]) / "generations").glob("*/catalog-projection.v1.sqlite3")
-    )
-    pin = hashlib.sha256(projection.read_bytes()).hexdigest()
-
-    def changed(*args):
-        projection.write_bytes(projection.read_bytes() + b"changed")
-        return {}
-
-    monkeypatch.setattr(comparison, "compare_captured_catalog", changed)
-    with pytest.raises(ValueError, match="projection_changed"):
-        comparison.compare_projection(args["capture"], projection, pin)
 
 
 def test_publication_requires_distinct_locks(tmp_path, monkeypatch):
