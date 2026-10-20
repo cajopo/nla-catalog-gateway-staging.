@@ -25,9 +25,11 @@ provvisori e al MAIN precedente sono checkpoint storici, superati da
 
 D-030 registra la nuova autorizzazione del titolare dopo il passaggio della
 repository a pubblica. I workflow funzionano; #100/#112/#113/#114 e
-#26/#27/#109/#110 sono integrate con controlli verdi e revisioni indipendenti.
-Ricerca #116, CodeQL #111, sorgenti Arena #117, evidenza dati #118 e questa
-consegna documentale #101 hanno checkpoint e limiti nella
+#26/#27/#109/#110, ricerca #116, CodeQL #111 ed evidenza dati #118 sono integrate
+con controlli verdi e revisioni indipendenti. #98 è chiusa perché superata.
+Patch Arena #117 e questa consegna documentale #101 completano il pacchetto:
+il loro stato definitivo, head e controlli sono nei metadati delle PR.
+Checkpoint, issue riconciliate e limiti sono nella
 [ricevuta di consegna](evidence/GITHUB-DELIVERY-2026-10-20.md).
 La precedente sezione del tentativo mattutino è superata; la
 [ricevuta storica](evidence/GITHUB-WEEKLY-2026-10-20.md) ne conserva il rifiuto

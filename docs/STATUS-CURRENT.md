@@ -70,7 +70,8 @@ Ricevute VPS: `/opt/nla-staging/search-code-2c8c650/rollout/` e
 `/var/lib/nla-catalog-refresh/20261019t205146z-48551a72/`.
 [Metodo, prove, limiti e rollback](workstreams/ws-05-code-hyphen-search.md).
 Prove private PC nel worktree `C:\Users\umbri\.codex\worktrees\0072\nla-catalog-gateway-staging\output\card-code-search-20261019`.
-Nessun push, PR o workflow GitHub: consegna locale separata secondo D-024/D-027.
+Al checkpoint del 19 ottobre non erano stati eseguiti push, PR o workflow GitHub.
+La consegna successiva è integrata tramite #116 il 20 ottobre, secondo D-030.
 Non rieseguire i due helper di installazione/finalizzazione una tantum.
 
 ## Stato operativo
@@ -159,10 +160,12 @@ non hanno riprodotto né spiegato la causa. [Planner](evidence/RETENTION-PLANNER
 **GitHub/remoto — ripresa del 20 ottobre.** Jacopo ha reso pubblica la repository
 e autorizzato il completamento immediato, superando il rinvio D-024 e la sola
 cadenza D-027. I nuovi workflow eseguono regolarmente test e analisi.
-Le PR #100/#112/#113/#114 e #26/#27/#109/#110 sono integrate, dopo controlli
-verdi e revisione indipendente. Le restanti consegne sono documentate nella
-[ricevuta GitHub](evidence/GITHUB-DELIVERY-2026-10-20.md), inclusi ricerca #116,
-CodeQL #111, sorgenti Arena #117, evidenza dati #118 e documentazione #101.
+Le PR #100/#112/#113/#114, #26/#27/#109/#110, ricerca #116, CodeQL #111
+ed evidenza dati #118 sono integrate, dopo controlli verdi e revisione
+indipendente. #98 è chiusa perché superata da #111. La consegna finale comprende
+patch Arena #117 e documentazione #101; i metadati delle due PR riportano
+controlli finali e integrazione. La [ricevuta GitHub](evidence/GITHUB-DELIVERY-2026-10-20.md)
+collega SHA, verifiche e issue riconciliate.
 Il vecchio tentativo mattutino respinto è conservato come
 [checkpoint storico](evidence/GITHUB-WEEKLY-2026-10-20.md).
 Il completamento remoto non equivale a una nuova installazione sulla VPS.
@@ -221,8 +224,8 @@ Il completamento remoto non equivale a una nuova installazione sulla VPS.
    documentato. Lo spot-check manuale ha coperto la lacuna; alert e carico della
    fase sono conclusi.
    [QA](evidence/QA-REMAINING-2026-10-18.md)
-5. Completare la consegna GitHub autorizzata da D-030; eliminare solo
-   `completa-consegna-github-nla` al primo completamento riuscito. Conservare
+5. La consegna GitHub D-030 si chiude con #117 e #101 fuse e controlli verdi;
+   a quel punto eliminare solo `completa-consegna-github-nla`. Conservare
    la chat e l'automazione VPS, lasciata invariata (calendario salvato: domenica
    alle 09:00; il riferimento alle 48 ore nel prompt è storico).
 

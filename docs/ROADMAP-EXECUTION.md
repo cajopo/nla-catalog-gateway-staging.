@@ -40,6 +40,10 @@ Dal 19 ottobre D-027 supera il rinvio per i tentativi settimanali autorizzati:
 martedì alle 09:00 Europe/Rome, fino al primo completamento riuscito.
 Il 20 ottobre D-030 autorizza la ripresa immediata dopo il passaggio della
 repository a pubblica. Nessun acquisto di minuti o modifica alla fatturazione.
+Le integrazioni e le issue riconciliate sono nella
+[ricevuta finale](evidence/GITHUB-DELIVERY-2026-10-20.md); #117 e #101 chiudono
+il pacchetto con controlli sul rispettivo head finale. Il backlog futuro resta
+distinto dalla consegna del lavoro già completato.
 
 Priorità ribadita da Jacopo: semplificare e ridurre i token. La
 [pagina di stato](STATUS-CURRENT.md) riassume disponibile, mancante e prossimo
@@ -157,6 +161,9 @@ verificato il 18 ottobre alle 00:52 UTC; monitor su `/opsz` e UP confermato da J
 
 ## Stato GitHub verificato — 16 ottobre
 
+Checkpoint storico, superato per lo stato delle PR dalla
+[consegna del 20 ottobre](evidence/GITHUB-DELIVERY-2026-10-20.md).
+
 La lettura metadata-only registra PR #108 chiusa e fusa il 4 ottobre 2026 alle
 12:16:49 UTC, merge commit `90f4f49bf2094fa2af51dff3a998b82054d93c76`:
 [PR #108](https://github.com/cajopo/nla-catalog-gateway-staging./pull/108).
@@ -178,7 +185,7 @@ non attesta CI nuova; i risultati CI delle nuove PR sono nelle evidenze dedicate
 
 | Priorità | Attività | Responsabile della fase | Criterio di accettazione | Vincolo |
 | --- | --- | --- | --- | --- |
-| Completato localmente | Consolidare la documentazione e registrare i limiti delle prove | PM Codex | Stato, roadmap, decisioni e fonti coerenti; cronologia preservata; [verifica finale](evidence/MAINTENANCE-CLOSURE-2026-10-18.md) | #34 resta separata e aperta fino alla consegna GitHub differita |
+| Consegna #101 | Consolidare la documentazione e registrare i limiti delle prove | PM Codex | Stato, roadmap, decisioni e fonti coerenti; cronologia preservata; [verifica finale](evidence/MAINTENANCE-CLOSURE-2026-10-18.md) | #34 chiusa dalla consegna documentale dopo controlli finali e revisione |
 | P1 | Gestire la segnalazione corrente sui backup e mantenere le garanzie operative | PM; Jacopo referente iniziale degli alert | Market e refresh completi; `/readyz` 200 ma `/opsz` 503 per `backup_attention` il 20 ottobre. [Verifica](evidence/OPERATIONAL-CHECK-2026-10-20.md) | Recapito TEST già verificato; nessuna nuova simulazione di incidente o soppressione dell'alert |
 | P1 | Mantenere lo spazio VPS | PM per verifica; retention ordinaria sulla VPS | Pulizia legacy 3,65 GB verificata; corrente/precedente e reference protetti; controllo Codex attivo, calendario salvato domenica 09:00 Europe/Rome (D-027) | Retention ordinaria dopo i refresh distinta dal controllo Codex; riserva 6 GiB solo pre-cattura, nessuna garanzia sul picco. [Prove](evidence/RETENTION-2026-09-30.md), [incidente](evidence/INCIDENT-2026-10-03.md) |
 | Ripresa — D-030 | Chiudere i residui GitHub con review e controlli sul head finale | Autori e reviewer indipendenti | Nuovi workflow attivi; integrazioni e SHA nella [ricevuta](evidence/GITHUB-DELIVERY-2026-10-20.md) | Nessun deploy o modifica di visibilità; eliminare solo l'automazione GitHub al successo completo |
@@ -202,9 +209,10 @@ I limiti senza gate confermato non ampliano il perimetro.
 
 ## Consegna GitHub ripresa il 3 ottobre
 
-Procedura riattivata da D-027 per i tentativi settimanali del 19 ottobre:
-applicarla nell'automazione autorizzata, senza attese ripetitive sul budget.
-Il blocco di pagamento persistente rinvia il tentativo alla settimana successiva.
+Procedura storica riattivata da D-027 per i tentativi settimanali del 19 ottobre,
+poi da D-030 per il completamento immediato nella repository pubblica.
+Al completamento del pacchetto #117/#101 eliminare esclusivamente l'automazione
+GitHub. La manutenzione VPS e questa chat rimangono attive.
 
 1. Congelare gli attuali sorgenti dei workstream e le ricevute del servizio;
    distinguere codice installato, rami locali e anteprima integrata.
