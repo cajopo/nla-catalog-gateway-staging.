@@ -926,3 +926,13 @@ backup `/opt/nla-staging/nla-market-catalog-before-d7e6fc9.service`.
 Only package/SHA changed; no starts/restarts/schedule changes. At17:04:32UTC,
 separate recovery PID263793 still uses66c82ee, unit hash unchanged; its existing
 refresh20260928t164953z-e53698bc continues. No final recovery receipt yet.
+
+### CardTrader capture interruption — 2026-10-15
+
+The October 14 market failure occurred before any Shopify stage; the pending
+marker then blocked the next market invocation. The ordinary October 15 refresh
+completed successfully. Bounded retries and sanitized failure context address the
+source-capture failure path; inspected recovery remains explicit. See the
+[incident evidence and recovery controls](evidence/MARKET-SOURCE-2026-10-15.md).
+This correction is tracked on `agent/market-source-recovery-97` against current
+main; the historical GitHub hold above no longer applies to this authorized fix.

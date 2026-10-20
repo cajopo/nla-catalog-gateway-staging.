@@ -112,7 +112,7 @@ def test_failed_capture_retains_evidence_without_secret_in_progress(tmp_path, mo
 
         def get(kind, **kwargs):
             if kind == "blueprints" and kwargs["expansion_id"] == 4:
-                raise CardTraderCatalogError("secret-token-test", 429)
+                raise CardTraderCatalogError("request_failed", 429)
             return original(kind, **kwargs)
 
         api.collection = get
@@ -132,7 +132,194 @@ def test_failed_capture_retains_evidence_without_secret_in_progress(tmp_path, mo
     assert result["status"] == "failed" and "secret-token-test" not in encoded
     if case == "network":
         assert result["completedExpansions"] == 1 and result["httpStatus"] == 429
+        assert result["failure"] == dict(
+            reason="request_failed",
+            catalogKind="blueprints",
+            expansionId=4,
+            attempts=3,
+            retries=2,
+            httpStatus=429,
+        )
+        assert result["requestRetries"] == 2
         assert (root / "blueprints-1.json").exists()
+
+
+@pytest.mark.parametrize(
+    ("reason", "http_status"),
+    [("request_failed", status) for status in (None, 408, 429, 500, 502, 503, 504)]
+    + [("unexpected_status", 503)],
+)
+def test_transient_source_failures_retry_then_complete_with_bounded_backoff(
+    tmp_path, monkeypatch, reason, http_status
+):
+    api = Source()
+    original = api.collection
+    failures = 0
+    sleeps = []
+
+    def collection(kind, **kwargs):
+        nonlocal failures
+        if kind == "blueprints" and kwargs["expansion_id"] == 1 and failures < 2:
+            failures += 1
+            raise CardTraderCatalogError(reason, http_status)
+        return original(kind, **kwargs)
+
+    api.collection = collection
+    monkeypatch.setattr(capture.time, "sleep", sleeps.append)
+    result = capture.capture_catalog(api, tmp_path / "run")
+    encoded = (tmp_path / "run" / "progress.json").read_text()
+    assert result["status"] == "complete"
+    assert result["requestRetries"] == 2
+    assert result["requestAttempts"] == 9
+    assert sleeps.count(2) == 1 and sleeps.count(5) == 1
+    assert "failure" not in result
+    assert "secret URL and token" not in encoded
+
+
+@pytest.mark.parametrize(
+    ("reason", "http_status", "safe_reason"),
+    [
+        ("secret response body", 401, "catalog_request_failed"),
+        ("request_failed", 401, "request_failed"),
+        ("request_failed", 403, "request_failed"),
+        ("invalid_json", None, "invalid_json"),
+        ("invalid_collection", None, "invalid_collection"),
+        ("response_too_large", None, "response_too_large"),
+        ([], "secret response body", "catalog_request_failed"),
+        ("request_failed", True, "request_failed"),
+    ],
+)
+def test_permanent_request_failure_is_not_retried_and_has_sanitized_receipt(
+    tmp_path, reason, http_status, safe_reason
+):
+    api = Source()
+    original = api.collection
+    calls = 0
+
+    def collection(kind, **kwargs):
+        nonlocal calls
+        if kind == "blueprints" and kwargs["expansion_id"] == 1:
+            calls += 1
+            raise CardTraderCatalogError(reason, http_status)
+        return original(kind, **kwargs)
+
+    api.collection = collection
+    with pytest.raises(RuntimeError, match="catalog_capture_failed"):
+        capture.capture_catalog(api, tmp_path / "run")
+    encoded = (tmp_path / "run" / "progress.json").read_text()
+    result = json.loads(encoded)
+    assert calls == 1
+    assert result["failure"] == dict(
+        reason=safe_reason,
+        catalogKind="blueprints",
+        expansionId=1,
+        attempts=1,
+        retries=0,
+        httpStatus=http_status if type(http_status) is int else None,
+    )
+    assert "secret response body" not in encoded
+
+
+def test_retry_backoff_cannot_cross_capture_deadline(tmp_path, monkeypatch):
+    api = Source()
+    original = api.collection
+    calls = 0
+    elapsed = 0
+
+    def collection(kind, **kwargs):
+        nonlocal calls
+        if kind == "blueprints" and kwargs["expansion_id"] == 1:
+            calls += 1
+            raise CardTraderCatalogError("request_failed", None)
+        return original(kind, **kwargs)
+
+    def sleep(seconds):
+        nonlocal elapsed
+        elapsed += seconds
+
+    api.collection = collection
+    monkeypatch.setattr(capture, "MAX_SECONDS", 5)
+    monkeypatch.setattr(capture.time, "monotonic", lambda: elapsed)
+    monkeypatch.setattr(capture.time, "sleep", sleep)
+    with pytest.raises(RuntimeError, match="catalog_capture_failed"):
+        capture.capture_catalog(api, tmp_path / "run")
+    result = json.loads((tmp_path / "run" / "progress.json").read_text())
+    assert calls == 1
+    assert result["failure"] == dict(
+        reason="capture_deadline",
+        catalogKind="blueprints",
+        expansionId=1,
+        attempts=1,
+        retries=0,
+        httpStatus=None,
+    )
+
+
+@pytest.mark.parametrize("stage", ["failed_request", "retry_pacing", "successful_retry"])
+def test_deadline_receipt_identifies_current_request_and_attempt(tmp_path, monkeypatch, stage):
+    api = Source()
+    original = api.collection
+    elapsed = 0
+    calls = 0
+
+    def sleep(seconds):
+        nonlocal elapsed
+        elapsed += seconds
+
+    def collection(kind, **kwargs):
+        nonlocal calls, elapsed
+        if kind == "blueprints" and kwargs["expansion_id"] == 1:
+            calls += 1
+            if calls == 1:
+                if stage == "failed_request":
+                    elapsed = 9
+                raise CardTraderCatalogError("request_failed", 503)
+            elapsed = 9
+        return original(kind, **kwargs)
+
+    api.collection = collection
+    monkeypatch.setattr(capture, "time", SimpleNamespace(monotonic=lambda: elapsed, sleep=sleep))
+    monkeypatch.setattr(capture, "MAX_SECONDS", 7 if stage == "retry_pacing" else 9)
+    with pytest.raises(RuntimeError, match="catalog_capture_failed"):
+        capture.capture_catalog(api, tmp_path / "run")
+    result = json.loads((tmp_path / "run" / "progress.json").read_bytes())
+    attempts = 2 if stage == "successful_retry" else 1
+    assert calls == attempts
+    assert result["failure"] == dict(
+        reason="capture_deadline",
+        catalogKind="blueprints",
+        expansionId=1,
+        attempts=attempts,
+        retries=attempts - 1,
+        httpStatus=None if stage == "successful_retry" else 503,
+    )
+    assert result["status"] == "failed"
+    assert not (tmp_path / "run" / "blueprints-1.json").exists()
+
+
+def test_successful_first_request_crossing_deadline_keeps_request_context(tmp_path, monkeypatch):
+    elapsed = 0
+
+    class SlowSource:
+        def collection(self, kind, **kwargs):
+            nonlocal elapsed
+            elapsed = capture.MAX_SECONDS
+            return []
+
+    monkeypatch.setattr(
+        capture, "time", SimpleNamespace(monotonic=lambda: elapsed, sleep=lambda _: None)
+    )
+    with pytest.raises(RuntimeError, match="catalog_capture_failed"):
+        capture.capture_catalog(SlowSource(), tmp_path / "run")
+    result = json.loads((tmp_path / "run" / "progress.json").read_bytes())
+    assert result["failure"] == dict(
+        reason="capture_deadline",
+        catalogKind="games",
+        expansionId=None,
+        attempts=1,
+        retries=0,
+        httpStatus=None,
+    )
 
 
 def test_absolute_new_directory_required():
@@ -152,13 +339,20 @@ class DeferredSource(Source):
         return rows
 
 
-def test_final_export_404_cannot_bypass_capture_deadline(tmp_path, monkeypatch):
+@pytest.mark.parametrize("expires_at", ["request", "deferral"])
+def test_final_export_404_cannot_bypass_capture_deadline(tmp_path, monkeypatch, expires_at):
     api = DeferredSource({15})
-    monkeypatch.setattr(
-        capture.time,
-        "monotonic",
-        lambda: capture.MAX_SECONDS if len(api.calls) == 7 else 0,
-    )
+    final_checks = 0
+
+    def clock():
+        nonlocal final_checks
+        if len(api.calls) == 7:
+            final_checks += 1
+            if expires_at == "request" or final_checks > 1:
+                return capture.MAX_SECONDS
+        return 0
+
+    monkeypatch.setattr(capture, "time", SimpleNamespace(monotonic=clock, sleep=lambda _: None))
     with pytest.raises(RuntimeError, match="catalog_capture_failed"):
         capture.capture_catalog(api, tmp_path / "run")
     result = json.loads((tmp_path / "run/progress.json").read_bytes())

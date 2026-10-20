@@ -1,0 +1,14 @@
+# OPTIONAL: place inside the existing site only after independent review and
+# separate deployment approval. Never import this into nla_catalog_upstreams.
+@operational_health {
+    method GET HEAD
+    path /opsz
+}
+handle @operational_health {
+    reverse_proxy 127.0.0.1:10002 {
+        transport http {
+            dial_timeout 1s
+            response_header_timeout 2s
+        }
+    }
+}
