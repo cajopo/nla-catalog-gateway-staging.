@@ -22,6 +22,8 @@
   "nla_wishlist": {
     "kicker": "YOUR NEXT MOVE",
     "title": "Wishlist",
+    "expand": "Open wishlist",
+    "collapse": "Close wishlist",
     "intro": "Build your list, find available cards and bring your next deck to the arena.",
     "mixed_games": "All your games, one list",
     "your_lists": "Your lists",

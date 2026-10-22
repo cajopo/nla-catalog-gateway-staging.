@@ -22,6 +22,8 @@
   "nla_wishlist": {
     "kicker": "LA TUA PROSSIMA MOSSA",
     "title": "Wishlist",
+    "expand": "Apri wishlist",
+    "collapse": "Chiudi wishlist",
     "intro": "Costruisci la tua lista, trova le carte disponibili e porta il tuo prossimo deck nell’arena.",
     "mixed_games": "Tutti i tuoi giochi, una lista",
     "your_lists": "Le tue liste",

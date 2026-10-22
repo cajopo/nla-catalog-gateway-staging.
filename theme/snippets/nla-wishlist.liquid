@@ -38,6 +38,12 @@
       <span class="wl-game-note"><span aria-hidden="true">✦</span> {{ 'nla_wishlist.mixed_games' | t }}</span>
     </header>
 
+    <details class="wl-disclosure">
+      <summary class="wl-disclosure__toggle">
+        <span class="wl-disclosure__open">{{ 'nla_wishlist.expand' | t }}</span>
+        <span class="wl-disclosure__close">{{ 'nla_wishlist.collapse' | t }}</span>
+        <svg class="wl-disclosure__chevron" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
+      </summary>
     <div class="wl-panel">
       <div class="wl-toolbar">
         <div class="wl-field wl-field--list">
@@ -142,6 +148,7 @@
     </div>
     <p class="wl-storage-note">{{ 'nla_wishlist.storage_note' | t }}</p>
     <noscript><p class="wl-noscript">{{ 'nla_wishlist.javascript_required' | t }}</p></noscript>
+    </details>
 
     <dialog class="wl-editor" data-wl="editor" aria-labelledby="{{ wl_id }}-editor-title">
       <form data-wl="editor-form" method="dialog">
