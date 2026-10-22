@@ -1,0 +1,48 @@
+{%- layout none -%}
+{%- comment -%}
+  Public, read-only wishlist data. Expose only the two existing source IDs and
+  storefront variant facts; never serialize the complete metafields collection.
+{%- endcomment -%}
+{%- assign wl_power = product.metafields.powertools.id -%}
+{%- assign wl_sync = product.metafields.sync.productid -%}
+{%- assign wl_catalog_only = false -%}
+{%- if product.tags contains 'nla_catalog_only' -%}{%- assign wl_catalog_only = true -%}{%- endif -%}
+{%- capture wl_json -%}
+{%- paginate product.variants by 250 -%}
+{
+  "contractVersion": 1,
+  "productId": {{ product.id | append: '' | prepend: 'gid://shopify/Product/' | json }},
+  "handle": {{ product.handle | json }},
+  "title": {{ product.title | json }},
+  "currency": {{ cart.currency.iso_code | json }},
+  "catalogOnly": {{ wl_catalog_only | json }},
+  "requiresSellingPlan": {{ product.requires_selling_plan | json }},
+  "image": {% if product.featured_image %}{{ product.featured_image | image_url: width: 360 | json }}{% else %}null{% endif %},
+  "sourceIds": {
+    "powerTools": { "type": {{ wl_power.type | json }}, "value": {{ wl_power.value | append: '' | json }} },
+    "sync": { "type": {{ wl_sync.type | json }}, "value": {{ wl_sync.value | append: '' | json }} }
+  },
+  "page": {{ paginate.current_page | json }},
+  "pages": {{ paginate.pages | json }},
+  "variantCount": {{ product.variants_count | json }},
+  "variants": [
+    {%- for variant in product.variants -%}
+    {
+      "id": {{ variant.id | append: '' | json }},
+      "price": {{ variant.price | json }},
+      "available": {{ variant.available | json }},
+      "inventoryQuantity": {{ variant.inventory_quantity | json }},
+      "inventoryPolicy": {{ variant.inventory_policy | json }},
+      "inventoryManagement": {{ variant.inventory_management | json }},
+      "selectedOptions": [
+        {%- for option in variant.options_with_values -%}
+          { "name": {{ option.name | json }}, "value": {{ option.value | json }} }{% unless forloop.last %},{% endunless %}
+        {%- endfor -%}
+      ]
+    }{% unless forloop.last %},{% endunless %}
+    {%- endfor -%}
+  ]
+}
+{%- endpaginate -%}
+{%- endcapture -%}
+{{- wl_json | replace: '<', '\u003c' | replace: '>', '\u003e' | replace: '&', '\u0026' -}}

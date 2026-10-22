@@ -1,0 +1,9 @@
+# Apply only to the verified Wishlist source theme baseline.
+# git -c core.autocrlf=false apply --unidiff-zero <path-to-this-patch>
+# Zero-context insertion; complete Shopify snapshots remain private under output/.
+
+diff --git a/sections/nla-home.liquid b/sections/nla-home.liquid
+--- a/sections/nla-home.liquid
++++ b/sections/nla-home.liquid
+@@ -46,0 +47 @@
++  {% render 'nla-wishlist', instance_id: section.id %}

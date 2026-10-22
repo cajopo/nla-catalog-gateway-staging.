@@ -1,0 +1,172 @@
+{% doc %}
+  Render the mixed-game wishlist workspace.
+  @param {string} instance_id - Unique parent section identifier.
+  @example
+  {% render 'nla-wishlist', instance_id: section.id %}
+{% enddoc %}
+
+{%- assign wl_id = instance_id | default: 'home' | prepend: 'wl-' -%}
+{{ 'nla-wishlist.css' | asset_url | stylesheet_tag }}
+<script src="{{ 'nla-wishlist-core.js' | asset_url }}" defer></script>
+<script src="{{ 'nla-wishlist-data.js' | asset_url }}" defer></script>
+<script src="{{ 'nla-wishlist.js' | asset_url }}" defer></script>
+
+<section class="wl-section" id="wishlist" aria-labelledby="{{ wl_id }}-title">
+  <nla-wishlist class="wl-workspace" data-endpoint="/apps/nla-catalog" data-locale="{{ request.locale.iso_code | escape }}">
+    <script type="application/json" data-wl="strings">
+      {
+        "edit": {{ 'nla_wishlist.edit' | t | json }},
+        "remove": {{ 'nla_wishlist.remove' | t | json }},
+        "exact_version": {{ 'nla_wishlist.exact_version' | t | json }},
+        "available": {{ 'nla_wishlist.available' | t | json }},
+        "cards": {{ 'nla_wishlist.cards' | t | json }},
+        "save": {{ 'nla_wishlist.save' | t | json }},
+        "cancel": {{ 'nla_wishlist.cancel' | t | json }},
+        "empty_title": {{ 'nla_wishlist.empty_title' | t | json }},
+        "empty_body": {{ 'nla_wishlist.empty_body' | t | json }},
+        "any": {{ 'nla_wishlist.any' | t | json }},
+        "yes": {{ 'nla_wishlist.yes' | t | json }},
+        "no": {{ 'nla_wishlist.no' | t | json }}
+      }
+    </script>
+    <header class="wl-heading">
+      <div>
+        <p class="wl-kicker">{{ 'nla_wishlist.kicker' | t }}</p>
+        <h2 id="{{ wl_id }}-title">{{ 'nla_wishlist.title' | t }}</h2>
+        <p class="wl-intro">{{ 'nla_wishlist.intro' | t }}</p>
+      </div>
+      <span class="wl-game-note"><span aria-hidden="true">✦</span> {{ 'nla_wishlist.mixed_games' | t }}</span>
+    </header>
+
+    <div class="wl-panel">
+      <div class="wl-toolbar">
+        <div class="wl-field wl-field--list">
+          <label for="{{ wl_id }}-list">{{ 'nla_wishlist.your_lists' | t }}</label>
+          <select id="{{ wl_id }}-list" data-wl="list-select"><option value="">{{ 'nla_wishlist.default_list' | t }}</option></select>
+        </div>
+        <div class="wl-field wl-field--name">
+          <label for="{{ wl_id }}-name">{{ 'nla_wishlist.list_name' | t }}</label>
+          <input id="{{ wl_id }}-name" data-wl="list-name" value="{{ 'nla_wishlist.default_list' | t | escape }}" maxlength="80" autocomplete="off">
+        </div>
+        <button type="button" class="wl-button wl-button--quiet" data-wl="new-list"><span aria-hidden="true">+</span> {{ 'nla_wishlist.new_list' | t }}</button>
+      </div>
+
+      <div class="wl-search-row">
+        <div class="wl-field wl-field--game">
+          <label for="{{ wl_id }}-game">{{ 'nla_wishlist.game' | t }}</label>
+          <select id="{{ wl_id }}-game" data-wl="game">
+            <option value="">{{ 'nla_wishlist.all_games' | t }}</option>
+            <option value="magic">Magic: The Gathering</option>
+            <option value="pokemon">Pokémon</option>
+            <option value="one-piece">One Piece</option>
+            <option value="yugioh">Yu-Gi-Oh!</option>
+          </select>
+        </div>
+        <div class="wl-field wl-field--search">
+          <label for="{{ wl_id }}-search">{{ 'nla_wishlist.add_card' | t }}</label>
+          <div class="wl-search-wrap">
+            <svg class="wl-search-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 5 5"/></svg>
+            <input id="{{ wl_id }}-search" data-wl="search" type="search" placeholder="{{ 'nla_wishlist.search_placeholder' | t | escape }}" autocomplete="off" spellcheck="false" aria-expanded="false" aria-controls="{{ wl_id }}-search-results" aria-describedby="{{ wl_id }}-search-help">
+          </div>
+          <ul id="{{ wl_id }}-search-results" class="wl-search-results" data-wl="search-results" aria-label="{{ 'nla_wishlist.search_results' | t | escape }}" hidden></ul>
+        </div>
+        <button type="button" class="wl-button wl-button--import" data-wl="import">
+          <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M12 16V3m-5 5 5-5 5 5M4 16v4h16v-4"/></svg>
+          {{ 'nla_wishlist.import_file' | t }}
+        </button>
+        <input type="file" data-wl="file" accept=".csv,.txt,.tsv,.json,.xml,.dek,text/csv,text/plain,application/json,application/xml" hidden>
+      </div>
+      <p class="wl-help" id="{{ wl_id }}-search-help">{{ 'nla_wishlist.search_help' | t }}</p>
+
+      <details class="wl-paste">
+        <summary>{{ 'nla_wishlist.paste_list' | t }}</summary>
+        <div class="wl-paste__body">
+          <div class="wl-field">
+            <label for="{{ wl_id }}-paste-game">{{ 'nla_wishlist.import_game' | t }}</label>
+            <select id="{{ wl_id }}-paste-game" data-wl="paste-game">
+              <option value="">{{ 'nla_wishlist.mixed_from_file' | t }}</option>
+              <option value="magic">Magic: The Gathering</option>
+              <option value="pokemon">Pokémon</option>
+              <option value="one-piece">One Piece</option>
+              <option value="yugioh">Yu-Gi-Oh!</option>
+            </select>
+          </div>
+          <div class="wl-field">
+            <label for="{{ wl_id }}-paste">{{ 'nla_wishlist.list_text' | t }}</label>
+            <textarea id="{{ wl_id }}-paste" data-wl="paste-text" rows="5" placeholder="{{ 'nla_wishlist.paste_placeholder' | t | escape }}" spellcheck="false"></textarea>
+          </div>
+          <p class="wl-help">{{ 'nla_wishlist.import_help' | t }}</p>
+          <button type="button" class="wl-button" data-wl="paste-import">{{ 'nla_wishlist.preview_import' | t }}</button>
+        </div>
+      </details>
+
+      <section class="wl-import-preview" data-wl="import-preview" aria-label="{{ 'nla_wishlist.import_preview' | t | escape }}" hidden>
+        <div class="wl-import-preview__content" data-wl="import-preview-content"></div>
+        <div class="wl-actions">
+          <button type="button" class="wl-button wl-button--primary" data-wl="import-confirm">{{ 'nla_wishlist.confirm_import' | t }}</button>
+          <button type="button" class="wl-button wl-button--quiet" data-wl="import-cancel">{{ 'nla_wishlist.cancel' | t }}</button>
+        </div>
+      </section>
+
+      <div class="wl-options">
+        <label class="wl-exact" for="{{ wl_id }}-exact">
+          <input id="{{ wl_id }}-exact" data-wl="exact" type="checkbox" checked aria-describedby="{{ wl_id }}-exact-help">
+          <span>{{ 'nla_wishlist.exact_version' | t }}</span>
+        </label>
+        <p class="wl-help" id="{{ wl_id }}-exact-help">{{ 'nla_wishlist.exact_help' | t }}</p>
+        <button type="button" class="wl-button wl-button--text" data-wl="export">{{ 'nla_wishlist.export' | t }} <span aria-hidden="true">↗</span></button>
+      </div>
+
+      <p class="wl-status" data-wl="status" role="status" aria-live="polite" aria-atomic="true"></p>
+      <div class="wl-rows" data-wl="rows">
+        <div class="wl-empty">
+          <svg class="wl-empty__icon" width="48" height="48" viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><rect x="8" y="9" width="25" height="33" rx="4" transform="rotate(-10 8 9)"/><rect x="16" y="5" width="25" height="33" rx="4" fill="var(--wl-panel, #171b25)"/><path d="M23 16h11M23 22h7M23 28h9"/></svg>
+          <h3>{{ 'nla_wishlist.empty_title' | t }}</h3>
+          <p>{{ 'nla_wishlist.empty_body' | t }}</p>
+        </div>
+      </div>
+
+      <footer class="wl-checkout">
+        <div class="wl-summary" data-wl="summary">
+          <span>{{ 'nla_wishlist.available' | t }}</span>
+          <strong>0 / 0 <small>{{ 'nla_wishlist.cards' | t }}</small></strong>
+        </div>
+        <div class="wl-checkout__action">
+          <button type="button" class="wl-button wl-button--primary wl-button--cart" data-wl="add-all" disabled>
+            <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M3 3h2l3 13h10l3-9H6"/><circle cx="9" cy="21" r="1"/><circle cx="18" cy="21" r="1"/></svg>
+            {{ 'nla_wishlist.add_all' | t }}
+          </button>
+          <a class="wl-cart-link" data-wl="cart-link" href="{{ routes.cart_url }}">{{ 'nla_wishlist.view_cart' | t }} <span aria-hidden="true">→</span></a>
+        </div>
+      </footer>
+    </div>
+    <p class="wl-storage-note">{{ 'nla_wishlist.storage_note' | t }}</p>
+    <noscript><p class="wl-noscript">{{ 'nla_wishlist.javascript_required' | t }}</p></noscript>
+
+    <dialog class="wl-editor" data-wl="editor" aria-labelledby="{{ wl_id }}-editor-title">
+      <form data-wl="editor-form" method="dialog">
+        <header class="wl-editor__header">
+          <div><p class="wl-kicker">{{ 'nla_wishlist.card_preferences' | t }}</p><h3 id="{{ wl_id }}-editor-title">{{ 'nla_wishlist.edit_card' | t }}</h3></div>
+          <button type="button" class="wl-icon-button" data-wl="editor-cancel" aria-label="{{ 'nla_wishlist.close' | t | escape }}">×</button>
+        </header>
+        <div class="wl-editor__grid">
+          <div class="wl-field wl-field--wide"><label for="{{ wl_id }}-edit-name">{{ 'nla_wishlist.card_name' | t }}</label><input id="{{ wl_id }}-edit-name" name="name" required maxlength="250"></div>
+          <div class="wl-field"><label for="{{ wl_id }}-edit-game">{{ 'nla_wishlist.game' | t }}</label><select id="{{ wl_id }}-edit-game" name="game" required><option value="magic">Magic: The Gathering</option><option value="pokemon">Pokémon</option><option value="one-piece">One Piece</option><option value="yugioh">Yu-Gi-Oh!</option></select></div>
+          <div class="wl-field"><label for="{{ wl_id }}-edit-qty">{{ 'nla_wishlist.quantity' | t }}</label><input id="{{ wl_id }}-edit-qty" name="quantity" type="number" min="1" max="999" step="1" inputmode="numeric" required></div>
+          <div class="wl-field"><label for="{{ wl_id }}-edit-set">{{ 'nla_wishlist.set' | t }}</label><input id="{{ wl_id }}-edit-set" name="set" maxlength="160"></div>
+          <div class="wl-field"><label for="{{ wl_id }}-edit-number">{{ 'nla_wishlist.collector_number' | t }}</label><input id="{{ wl_id }}-edit-number" name="collectorNumber" maxlength="80"></div>
+          <div class="wl-field"><label for="{{ wl_id }}-edit-languages">{{ 'nla_wishlist.languages' | t }}</label><input id="{{ wl_id }}-edit-languages" name="languages" placeholder="{{ 'nla_wishlist.languages_placeholder' | t | escape }}" maxlength="160" aria-describedby="{{ wl_id }}-language-help"><span class="wl-help" id="{{ wl_id }}-language-help">{{ 'nla_wishlist.languages_help' | t }}</span></div>
+          <div class="wl-field"><label for="{{ wl_id }}-edit-condition">{{ 'nla_wishlist.min_condition' | t }}</label><select id="{{ wl_id }}-edit-condition" name="minCondition"><option value="">{{ 'nla_wishlist.any' | t }}</option><option value="MT">Mint</option><option value="NM">Near Mint</option><option value="EX">Excellent</option><option value="GD">Good</option><option value="LP">Light Played</option><option value="PL">Played</option><option value="PO">Poor</option></select></div>
+          <div class="wl-field"><label for="{{ wl_id }}-edit-foil">{{ 'nla_wishlist.foil' | t }}</label><select id="{{ wl_id }}-edit-foil" name="foil"><option value="any">{{ 'nla_wishlist.any' | t }}</option><option value="yes">{{ 'nla_wishlist.yes' | t }}</option><option value="no">{{ 'nla_wishlist.no' | t }}</option></select></div>
+          <div class="wl-field"><label for="{{ wl_id }}-edit-signed">{{ 'nla_wishlist.signed' | t }}</label><select id="{{ wl_id }}-edit-signed" name="signed"><option value="any">{{ 'nla_wishlist.any' | t }}</option><option value="yes">{{ 'nla_wishlist.yes' | t }}</option><option value="no">{{ 'nla_wishlist.no' | t }}</option></select></div>
+          <div class="wl-field"><label for="{{ wl_id }}-edit-altered">{{ 'nla_wishlist.altered' | t }}</label><select id="{{ wl_id }}-edit-altered" name="altered"><option value="any">{{ 'nla_wishlist.any' | t }}</option><option value="yes">{{ 'nla_wishlist.yes' | t }}</option><option value="no">{{ 'nla_wishlist.no' | t }}</option></select></div>
+          <div class="wl-field"><label for="{{ wl_id }}-edit-first-edition">{{ 'nla_wishlist.first_edition' | t }}</label><select id="{{ wl_id }}-edit-first-edition" name="firstEdition"><option value="any">{{ 'nla_wishlist.any' | t }}</option><option value="yes">{{ 'nla_wishlist.yes' | t }}</option><option value="no">{{ 'nla_wishlist.no' | t }}</option></select></div>
+          <div class="wl-field"><label for="{{ wl_id }}-edit-price">{{ 'nla_wishlist.max_price' | t }}</label><input id="{{ wl_id }}-edit-price" name="maxPrice" type="number" min="0" step="0.01" inputmode="decimal" placeholder="{{ 'nla_wishlist.no_limit' | t | escape }}"></div>
+          <label class="wl-exact" for="{{ wl_id }}-edit-exact"><input id="{{ wl_id }}-edit-exact" name="exact" type="checkbox"><span>{{ 'nla_wishlist.exact_version' | t }}</span></label>
+          <div class="wl-field wl-field--wide"><label for="{{ wl_id }}-edit-notes">{{ 'nla_wishlist.notes' | t }}</label><textarea id="{{ wl_id }}-edit-notes" name="notes" rows="3" maxlength="1000"></textarea></div>
+        </div>
+        <div class="wl-editor__footer"><button type="button" class="wl-button wl-button--quiet" data-wl="editor-cancel">{{ 'nla_wishlist.cancel' | t }}</button><button type="submit" class="wl-button wl-button--primary" data-wl="editor-save">{{ 'nla_wishlist.save' | t }}</button></div>
+      </form>
+    </dialog>
+  </nla-wishlist>
+</section>
