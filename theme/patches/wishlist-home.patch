@@ -1,0 +1,31 @@
+# Apply only to the verified current Hot Buylist theme baseline.
+# git -c core.autocrlf=false apply --unidiff-zero <path-to-this-patch>
+# Removes the catalog block and renders Wishlist last, before the footer.
+# Complete Shopify files remain private under output/.
+
+diff --git a/sections/nla-home.liquid b/sections/nla-home.liquid
+--- a/sections/nla-home.liquid
++++ b/sections/nla-home.liquid
+@@ -48,19 +47,0 @@
+-  {% if magic_collection != blank %}
+-    <section class="nla-products" aria-labelledby="NlaProductsHeading">
+-      <div class="nla-home__shell">
+-        <div class="nla-section-heading nla-section-heading--row">
+-          <div>
+-            <span class="nla-kicker">{{ section.settings.products_kicker | escape }}</span>
+-            <h2 id="NlaProductsHeading">{{ section.settings.products_heading | escape }}</h2>
+-          </div>
+-          <a href="{{ magic_collection.url }}">{{ section.settings.view_all_label | escape }} →</a>
+-        </div>
+-        <div class="nla-product-grid">
+-          {% for product in magic_collection.products limit: 8 %}
+-            {% render 'nla-product-card', product: product %}
+-          {% endfor %}
+-        </div>
+-      </div>
+-    </section>
+-  {% endif %}
+-
+@@ -95,0 +77,2 @@
++
++  {% render 'nla-wishlist', instance_id: section.id %}
