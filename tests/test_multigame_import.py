@@ -2,6 +2,8 @@
 
 import json
 from copy import deepcopy
+from dataclasses import replace
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -10,6 +12,7 @@ from scripts import prepare_cardtrader_reference as preparation
 from scripts.compare_cardtrader_catalog import CATEGORIES
 
 import test_import_cardtrader_drafts as import_tests
+import test_pagination as page_tests
 import test_refresh_market_catalog as market_tests
 from nla_catalog_gateway import cardtrader_capture as capture
 from nla_catalog_gateway.canonical_names import (
@@ -21,13 +24,16 @@ from nla_catalog_gateway.canonical_names import (
 from nla_catalog_gateway.cardtrader_candidates import compare_catalog
 from nla_catalog_gateway.cardtrader_catalog import CardTraderCatalogError
 from nla_catalog_gateway.cardtrader_scope import GAMES, LEGACY_GAME_IDS, game_ids_for_scope
+from nla_catalog_gateway.runtime_contract import CatalogFiltersV1, RequestFamily
 from nla_catalog_gateway.shopify_draft_import import CREATE_DRAFT, PRODUCT_TYPES
+from nla_catalog_gateway.taxonomy import Game
 from test_shopify_draft_import import FakeShopify
 from test_shopify_draft_import import run as create_draft
 
 import_case = import_tests.setup
 market_case = market_tests.setup
 SINGLE_CATEGORIES = {1: 1, 4: 44, 5: 73, 15: 192, 18: 214, 22: 258}
+NEW_EXPANSION_CODES = {18: "ch1", 22: "ogn"}
 
 
 class SixGameSource:
@@ -36,7 +42,13 @@ class SixGameSource:
         self.unavailable = set()
         self.games = [{"id": game_id} for game_id in GAMES]
         self.expansions = [
-            {"id": 100 + game_id, "game_id": game_id, "name": "Synthetic Set"} for game_id in GAMES
+            {
+                "id": 100 + game_id,
+                "game_id": game_id,
+                "name": "Synthetic Set",
+                "code": NEW_EXPANSION_CODES.get(game_id, "legacy-source-code"),
+            }
+            for game_id in GAMES
         ]
         self.rows = {
             100 + game_id: [
@@ -192,17 +204,8 @@ def test_cross_game_cardmarket_collision_is_quarantined(source, other_game):
     assert [r["decision"] for r in report] == ["shared_cardmarket_id"] * 2
 
 
-def test_six_game_capture_to_reference_to_import_preview(import_case, source):
-    args, original, api, events = import_case
-    root = args["capture"].with_name("six-capture")
-    capture.capture_catalog(source, root, game_scope="six-games")
-    args["capture"] = root
-    result = importer.run_locked(**args, max_attempts=100)
-    assert result["status"] == "preview" and result["candidates"] == result["selected"] == 6
-    assert result["exceptions"] == 0 and result["attempts"] == []
+def _prepared_reference(args):
     prepared = json.loads((args["run"] / "reference" / "preparation.json").read_bytes())
-    assert prepared["gameScope"] == "six-games"
-    assert {c["game"] for c in prepared["candidates"]} == set(GAMES.values())
     bundle = args["run"] / "reference" / "bundle"
     manifest = load_canonical_names_manifest(
         (bundle / MANIFEST_FILENAME).read_bytes(),
@@ -210,12 +213,109 @@ def test_six_game_capture_to_reference_to_import_preview(import_case, source):
     )
     assert manifest.schema_version == 2
     with (bundle / SIDECAR_FILENAME).open("rb") as stream:
-        records = load_canonical_names(stream, manifest=manifest)
+        return prepared, load_canonical_names(stream, manifest=manifest)
+
+
+def test_six_game_capture_to_reference_to_import_preview(import_case, source, tmp_path):
+    args, original, api, events = import_case
+    parent = Path(original["reference"])
+    old_manifest = (parent / MANIFEST_FILENAME).read_bytes()
+    old_sidecar = (parent / SIDECAR_FILENAME).read_bytes()
+    root = args["capture"].with_name("six-capture")
+    capture.capture_catalog(source, root, game_scope="six-games")
+    args["capture"] = root
+    result = importer.run_locked(**args, max_attempts=100)
+    assert result["status"] == "preview" and result["candidates"] == result["selected"] == 6
+    assert result["exceptions"] == 0 and result["attempts"] == []
+    prepared, records = _prepared_reference(args)
+    assert prepared["gameScope"] == "six-games"
+    assert {c["game"] for c in prepared["candidates"]} == set(GAMES.values())
     added = [record for record in records.values() if int(record.source_id) >= 2000]
     assert len(added) == 6
     assert all(record.card_metadata.rarity == "Rare" for record in added)
     assert all(record.card_metadata.collector_number == "012" for record in added)
     assert all(record.canonical_card_name == "Shared Card" for record in added)
+    assert all(
+        record.card_metadata.expansion_code is None
+        for record in added
+        if record.game not in (Game.LORCANA, Game.RIFTBOUND)
+    )
+    assert (parent / MANIFEST_FILENAME).read_bytes() == old_manifest
+    assert (parent / SIDECAR_FILENAME).read_bytes() == old_sidecar
+    merged_lines = (args["run"] / "reference" / "bundle" / SIDECAR_FILENAME).read_bytes()
+    assert (
+        b"".join(
+            line
+            for line in merged_lines.splitlines(keepends=True)
+            if int(json.loads(line)["sourceId"]) < 2000
+        )
+        == old_sidecar
+    )
+    projected = []
+    for record in added:
+        product = page_tests._record(record.source_id, game=record.game)
+        projected.append(
+            replace(
+                product,
+                canonical_card_name=record.canonical_card_name,
+                card_metadata=record.card_metadata,
+                powertools_source_id=record.source_id,
+                sync_source_id=record.source_id,
+                total_inventory=0,
+                variants=(replace(product.variants[0], inventory_quantity=0),),
+            )
+        )
+    projection = page_tests._projection(tmp_path, tuple(projected))
+    for game_id, expansion_code in NEW_EXPANSION_CODES.items():
+        request = page_tests._request(
+            game=Game(GAMES[game_id]), family=RequestFamily.SINGLE, query="Shared Card"
+        )
+        sets, rarities = projection.metadata_facets(request)
+        assert [(value.value, value.count) for value in sets.values] == [(expansion_code, 1)]
+        assert [(value.value, value.count) for value in rarities.values] == [("Rare", 1)]
+        selected = replace(
+            request,
+            filters=CatalogFiltersV1(False, None, expansion_code=expansion_code, rarity="Rare"),
+        )
+        page = page_tests._paginator(projection).fetch_page(selected).page
+        assert [item.product_gid for item in page.items] == [
+            f"gid://shopify/Product/{2000 + game_id}"
+        ]
+        wrong = replace(selected, filters=replace(selected.filters, expansion_code="missing"))
+        assert page_tests._paginator(projection).fetch_page(wrong).page.items == ()
+    assert json.loads(args["config_path"].read_bytes()) == original
+    assert not api.calls and not events
+
+
+@pytest.mark.parametrize("code", ["absent", None, "", 123, True, [], {}])
+def test_preparation_new_expansion_codes_preserve_missing_and_quarantine_invalid(
+    import_case, source, code
+):
+    args, original, api, events = import_case
+    for expansion in source.expansions:
+        if expansion["game_id"] in NEW_EXPANSION_CODES:
+            if code == "absent":
+                del expansion["code"]
+            else:
+                expansion["code"] = code
+    root = args["capture"].with_name("six-capture")
+    capture.capture_catalog(source, root, game_scope="six-games")
+    args["capture"] = root
+    result = importer.run_locked(**args, max_attempts=100)
+    invalid = code not in ("absent", None, "")
+    assert result["status"] == "preview"
+    assert result["exceptions"] == (2 if invalid else 0)
+    assert result["candidates"] == (4 if invalid else 6)
+    prepared = json.loads((args["run"] / "reference" / "preparation.json").read_bytes())
+    if invalid:
+        assert {row["blueprintId"] for row in prepared["exceptions"]} == {1018, 1022}
+    else:
+        _, records = _prepared_reference(args)
+        assert all(
+            record.card_metadata.expansion_code is None
+            for record in records.values()
+            if int(record.source_id) >= 2000
+        )
     assert json.loads(args["config_path"].read_bytes()) == original
     assert not api.calls and not events
 

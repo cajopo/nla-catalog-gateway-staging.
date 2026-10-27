@@ -121,7 +121,9 @@ def prepare(capture, projection, projection_sha, parent, parent_sha, output, gen
                     row["name"],
                     CardMetadataV1(
                         optional(properties.get("collector_number")),
-                        None,
+                        optional(expansion.get("code"))
+                        if game in (Game.LORCANA, Game.RIFTBOUND)
+                        else None,
                         optional(expansion["name"]),
                         optional(properties.get(RARITY[game.value])),
                     ),

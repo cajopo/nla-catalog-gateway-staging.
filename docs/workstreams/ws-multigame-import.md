@@ -37,6 +37,15 @@ blueprint exports by expansion ID. It documents Cardmarket IDs and image URLs,
 but does not document `fixed_properties`. Those keys were checked through bounded
 read-only exports after reviewing the public contract.
 
+The official Expansion object documents `code` as a string identifying its
+expansion. Preparation copies that exact captured value into `expansionCode`
+for new Lorcana and Riftbound records. The pinned expansions export contains
+`ch1` for Lorcana expansion 3469 and `ogn` for Riftbound expansion 4166. These
+are CardTrader expansion codes, without an assumption that other providers use
+the same codes. Missing, null or empty values remain null; invalid types become
+explicit preparation exceptions. No code is inferred from a title. The legacy
+four-game preparation behavior and every existing canonical record are preserved.
+
 The retained 2026-10-23 source catalog and fresh sample exports establish:
 
 | Game | CardTrader ID | Importable single categories | Fixed rarity key |
@@ -100,6 +109,9 @@ rejected incomplete scopes, wrong-game quarantine, deferred export retry,
 complete-set/sealed exclusions, cross-game identity collisions, actual
 capture-to-reference-to-import preview, new-game creation idempotency and
 zero-stock publication with terminal handoff. Test data contains no source dumps.
+The preview test also carries actual prepared metadata into the runtime SQLite
+projection and checks expansion and rarity facet counts, combined filtering,
+sold-out visibility, exact game isolation and preservation of parent record bytes.
 
 The local targeted integration run passed 561 tests, with no skips or
 deselections, in 136.61 seconds. It exercised the multigame tests and the existing
@@ -112,6 +124,17 @@ reviewed dependency commit `8a51da9f4b5287b52abcddec0605bd20bf828818` by fast-fo
 Repository preflight, `ruff check .` and `ruff format --check .` passed.
 After the fast-forward, the targeted multigame import, reference preparation,
 capture CLI and capture suites passed all 126 tests in 62.58 seconds.
+The subsequent expansion-code correction passed all 30 multigame import tests
+in 19.59 seconds, including the prepared-reference-to-runtime filter proof and
+seven missing/invalid-code cases. The final backend dependency is
+`e997a70a4da3ed4eb8dd0f3eef64d399e81c7118`. Final Python 3.12/3.13 full-suite
+coverage must pass in CI against the exact pull-request commit; the earlier
+Windows full-suite run was stopped when the expansion-code correction changed
+its inputs and is not final validation evidence.
+With that dependency integrated, the final combined multigame-import, reference
+preparation, multigame-data and runtime-contract suites passed all 147 tests in
+101.59 seconds. Ruff passed, and independent review of the expansion-code delta
+found no actionable defects.
 
 An independent reviewer found no actionable defects and separately ran the
 multigame import, Shopify draft publication and CardTrader candidate suites:
