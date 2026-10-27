@@ -147,7 +147,7 @@ e le quattro voci di ciascun nuovo menu. Alle 17:26:54 UTC i link Singole
 conservavano gioco e famiglia e generavano POST reali a `/apps/nla-catalog` con
 contratto versione 2. Il backend ancora precedente rispondeva HTTP 400 e la UI
 mostrava catalogo temporaneamente indisponibile: la prova del menu è passata,
-quella dei cataloghi reali non è ancora passata.
+quella dei cataloghi reali allora non era ancora passata.
 La ricevuta finale UI ha SHA-256
 `8edfbe2c1c781924439c4624d2101b33ee82d123302eca3e0a5d8d1e9a67ebc7`;
 la lettura di conferma dell'installazione ha SHA-256
@@ -229,8 +229,28 @@ terminato alle 18:42:18 UTC con `complete`, integrità `read-data/passed` e ness
 job conservato. La ricevuta coincide con `last-success.json`, SHA-256
 `f8e1f3d7af34360ebce576eb08454994d67f0745426b6d15655b6eb284536992`;
 lo stato dell'installazione è ancora identico all'intento iniziale. Il backup
-non viene rilanciato. Resta la verifica separata della copia remota, mantenendo
+non viene rilanciato. Restava la verifica separata della copia remota, mantenendo
 la ricevuta di arresto originale dell'osservatore.
+
+La successiva diagnosi ha confermato i dodici controlli strutturali del manifesto
+e gli hash delle prime tredici voci dell'inventario. Il verificatore si fermava
+sulla voce successiva, gestita da Caddy con UID 10002, perché imponeva anche lì
+la proprietà root. L'ispezione separata ha confermato percorso e proprietario
+attesi: era un rifiuto del verificatore, senza uno scarto degli hash già
+controllati, e non un errore dello snapshot. La correzione mantiene i vincoli
+specifici di ciascun percorso; non cambia proprietari o contenuti del backup.
+
+Alle 19:08:13 UTC la verifica finale è conclusa con
+`postinstall_http_backup_verified`, sullo stesso backup e con una sola dispatch.
+Il manifesto del checkpoint, le immagini e i riferimenti del catalogo risultano
+legati allo snapshot
+`028030d5659dea04c50936e5d7e4be77444edab55e30f303139ea5fc0eb3584c`.
+La ricevuta finale ha SHA-256
+`dc178195e06c23a8da46c7bbb136014526946a9c3ae9a542887c71a345e30adb`,
+il legame verificato con il manifesto
+`f4f1b2f83475eb734d220272300358d89dd8b915eb4149d6152189744b2562c7`.
+La ricevuta originale di arresto resta conservata. Non è stato avviato un
+secondo backup per superare il rifiuto del verificatore.
 
 Alle 18:43:59 UTC è conclusa anche la verifica reale del clone dopo il deploy:
 20 casi di base (due nuovi giochi, quattro famiglie, desktop/mobile, più i quattro
@@ -247,6 +267,38 @@ sono state riutilizzate soltanto dopo confronto degli hash e della generazione.
 I nuovi giochi mostrano lo stato vuoto previsto, mentre i controlli dei giochi
 esistenti restituiscono prodotti. MAIN e clone non sono stati modificati durante
 questa verifica. Resta distinta la successiva accettazione dei cataloghi popolati.
+
+## Avvio del primo ciclo a sei giochi
+
+La catena di verifica del backup, avvio unico e supervisione è stata sottoposta
+a 135 test mirati e 40 sottocasi, con Ruff, formattazione e revisione indipendente
+passati. Il launcher eseguito ha SHA-256
+`a634bf574dd6085a85d9fb37f05d19e2b7d6219979b07d3f15948275a85dea07`;
+il supervisore
+`a34a7f211db74ccfe5dd6712d7e5a281eb4c69c07263193a94487408239ceb26`.
+Il preflight reale ha verificato il backup finale e il ledger con 4.917 creazioni
+e altrettante pubblicazioni verificate prima di avviare nuovi lavori.
+
+Alle 19:08:35 UTC è partito il ciclo
+`market-20261027t190835z-3e6d72d1`, invocazione
+`5e5bb9ec057d48b7b1c45cabb85d4fc2`, con una sola dispatch del servizio market
+e una del supervisore. Il piano del ciclo ha SHA-256
+`5641cc758ccd4110cd0b48fd612f42f63c8e27d92cc699d56979864d707148d3`.
+La dispatch attesta l'avvio, non il completamento dell'acquisizione,
+dell'importazione o dell'accettazione.
+
+La lettura delle 19:09:37 UTC conferma lo stesso run e invocazione, marker
+pendente coerente e stabile durante l'osservazione, servizio market in esecuzione
+(`activating/start`) e supervisore `active/running`. L'acquisizione dichiara
+esplicitamente `six-games`: 48 espansioni completate su 2.493, 6.832 blueprint,
+zero retry e nessuna espansione rinviata a quel momento. Non sono ancora presenti
+ricevute terminali, di pubblicazione o di catalogo popolato; nessuna ricevuta di
+arresto è presente per questo run. È un checkpoint della fase iniziale, non una
+stima dei tempi residui. L'osservazione conservata ha SHA-256
+`5a6dcd66d9a8db1c3f42b7abf7656f2e4450b0f30df095a92cb8da61f1a60d63`.
+Il lettore restituisce soltanto stati e aggregati, con otto test locali e revisione
+indipendente passati. Le prove UI restano quelle dello stato vuoto delle 18:43 UTC:
+HTTP e interfaccia con dati popolati richiedono l'esito del primo ciclo.
 
 Questo documento attesta l'installazione del gateway, ma non ancora un ciclo
 a sei giochi completato o la pubblicazione del tema.
