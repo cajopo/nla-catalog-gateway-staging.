@@ -15,8 +15,9 @@ from nla_catalog_gateway.cardtrader_catalog import (
     CardTraderCatalogError,
     catalog_rows,
 )
+from nla_catalog_gateway.cardtrader_scope import LEGACY_GAME_IDS, game_ids_for_scope
 
-GAME_IDS = frozenset((1, 4, 5, 15))
+GAME_IDS = LEGACY_GAME_IDS
 MAX_BYTES = 2 * 1024**3
 MIN_FREE_BYTES = 4 * 1024**3
 MAX_SECONDS = 10800
@@ -54,6 +55,9 @@ def compare_captured_catalog(destination: Path, products, categories: dict, *, n
         raise ValueError("invalid_capture_progress")
     encoded = progress.read_bytes()
     status = json.loads(encoded)
+    game_scope = status.get("gameScope", "legacy")
+    game_ids = game_ids_for_scope(game_scope)
+    categories = {key: value for key, value in categories.items() if value[0] in game_ids}
     count_keys = (
         "totalExpansions",
         "completedExpansions",
@@ -98,7 +102,7 @@ def compare_captured_catalog(destination: Path, products, categories: dict, *, n
         return catalog_rows(json.loads(data))
 
     games = read("games.json")
-    if not GAME_IDS <= {r.get("id") for r in games if type(r.get("id")) is int}:
+    if not game_ids <= {r.get("id") for r in games if type(r.get("id")) is int}:
         raise ValueError("missing_games")
     category_rows = read("categories.json")
     for identifier, (game, name, _) in categories.items():
@@ -108,14 +112,14 @@ def compare_captured_catalog(destination: Path, products, categories: dict, *, n
     selected = [
         r
         for r in read("expansions.json")
-        if type(r.get("game_id")) is int and r["game_id"] in GAME_IDS
+        if type(r.get("game_id")) is int and r["game_id"] in game_ids
     ]
     if (
         not selected
         or len(selected) > 10000
         or any(type(r.get("id")) is not int or not 0 < r["id"] < 2**63 for r in selected)
         or len({r["id"] for r in selected}) != len(selected)
-        or {r["game_id"] for r in selected} != GAME_IDS
+        or {r["game_id"] for r in selected} != game_ids
         or len(selected) != status["totalExpansions"]
     ):
         raise ValueError("invalid_capture_expansions")
@@ -190,6 +194,7 @@ def compare_captured_catalog(destination: Path, products, categories: dict, *, n
             item["decision"] = "source_export_conflict"
     return dict(
         status="read_only_comparison_complete",
+        gameScope=game_scope,
         sourceRows=len(rows),
         sourceAnomalyCount=len(quarantined),
         sourceComplete=not deferred,
@@ -202,22 +207,26 @@ def compare_captured_catalog(destination: Path, products, categories: dict, *, n
     )
 
 
-def capture_catalog(client: CardTraderCatalogClient, destination: Path) -> dict:
+def capture_catalog(
+    client: CardTraderCatalogClient, destination: Path, *, game_scope: str = "legacy"
+) -> dict:
     """Use a NEW private directory each run; bounded GET retries, no deletion or Shopify calls.
 
-    Query every expansion of the four approved games, including old expansions:
+    Query every expansion of the explicitly selected games, including old expansions:
     source IDs are not release dates, and old sets can receive new blueprints.
     Preserve all source rows and explicit per-export anomaly indices. Consumers
     require accounted-for coverage, all files/hashes/counts and current identities.
     A listed expansion's HTTP404 is deferred, never represented as an empty export.
     Each new cycle tries it again. Other errors still stop the capture.
     """
+    game_ids = game_ids_for_scope(game_scope)
     if not isinstance(destination, Path) or not destination.is_absolute():
         raise ValueError("absolute_capture_directory_required")
     destination.mkdir(mode=0o700, exist_ok=False)
     started = time.monotonic()
     status = {
         "status": "running",
+        "gameScope": game_scope,
         "startedAt": datetime.now(UTC).isoformat(),
         "completedExpansions": 0,
         "blueprints": 0,
@@ -338,21 +347,21 @@ def capture_catalog(client: CardTraderCatalogClient, destination: Path) -> dict:
 
     try:
         games = get("games")
-        if not GAME_IDS <= {r.get("id") for r in games if type(r.get("id")) is int}:
+        if not game_ids <= {r.get("id") for r in games if type(r.get("id")) is int}:
             raise ValueError("missing_games")
         save("games.json", games)
         save("categories.json", get("categories"))
         expansions = get("expansions")
         save("expansions.json", expansions)
         selected = [
-            r for r in expansions if type(r.get("game_id")) is int and r["game_id"] in GAME_IDS
+            r for r in expansions if type(r.get("game_id")) is int and r["game_id"] in game_ids
         ]
         if (
             not selected
             or len(selected) > 10000
             or any(type(r.get("id")) is not int or not 0 < r["id"] < 2**63 for r in selected)
             or len({r["id"] for r in selected}) != len(selected)
-            or {r["game_id"] for r in selected} != GAME_IDS
+            or {r["game_id"] for r in selected} != game_ids
         ):
             raise ValueError("invalid_expansions")
         status["totalExpansions"] = len(selected)

@@ -168,6 +168,7 @@ def test_operator_main_binds_arguments_and_redacts_failures(
                 max_attempts=2,
                 max_batches=3,
                 publish_online_store="gid://shopify/Publication/12",
+                game_scope="legacy",
             )
         if case == "failure":
             raise RuntimeError("private-error-must-not-be-printed")

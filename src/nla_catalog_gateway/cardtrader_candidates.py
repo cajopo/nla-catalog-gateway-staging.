@@ -3,7 +3,7 @@
 from collections import Counter, defaultdict
 from collections.abc import Iterable, Mapping
 
-GAMES = {1: "magic", 4: "yugioh", 5: "pokemon", 15: "one-piece"}
+from nla_catalog_gateway.cardtrader_scope import GAMES
 
 
 def _id(value: object) -> bool:

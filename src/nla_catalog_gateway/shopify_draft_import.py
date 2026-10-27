@@ -74,6 +74,9 @@ PRODUCT_TYPES = {
     "pokemon": "Pokémon Single",
     "yugioh": "Yu-Gi-Oh! Single",
     "one-piece": "One Piece Single",
+    # Controlled importer types, not claimed to be observed PowerTools output.
+    "lorcana": "Lorcana Single",
+    "riftbound": "Riftbound Single",
 }
 
 

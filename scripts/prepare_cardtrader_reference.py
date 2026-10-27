@@ -18,6 +18,7 @@ from nla_catalog_gateway.canonical_names import (
 from nla_catalog_gateway.canonical_reference_extension import build_extended_reference
 from nla_catalog_gateway.card_metadata import CardMetadataV1
 from nla_catalog_gateway.cardtrader_candidates import GAMES
+from nla_catalog_gateway.cardtrader_scope import game_ids_for_scope
 from nla_catalog_gateway.taxonomy import Game
 from scripts.compare_cardtrader_catalog import compare_projection
 
@@ -26,6 +27,8 @@ RARITY = {
     "pokemon": "pokemon_rarity",
     "yugioh": "yugioh_rarity",
     "one-piece": "onepiece_rarity",
+    "lorcana": "lorcana_rarity",
+    "riftbound": "riftbound_rarity",
 }
 
 
@@ -35,6 +38,7 @@ def prepare(capture, projection, projection_sha, parent, parent_sha, output, gen
     if hashlib.sha256(raw).hexdigest() != comparison["captureSha256"]:
         raise ValueError("capture_changed")
     progress = json.loads(raw)
+    game_ids = game_ids_for_scope(progress.get("gameScope", "legacy"))
 
     def source(name):
         path = capture / name
@@ -49,7 +53,7 @@ def prepare(capture, projection, projection_sha, parent, parent_sha, output, gen
     expansions = {
         r["id"]: r
         for r in source("expansions.json")
-        if type(r.get("game_id")) is int and r["game_id"] in GAMES
+        if type(r.get("game_id")) is int and r["game_id"] in game_ids
     }
     manifest = load_canonical_names_manifest(
         (parent / MANIFEST_FILENAME).read_bytes(), expected_sha256=parent_sha
@@ -117,7 +121,9 @@ def prepare(capture, projection, projection_sha, parent, parent_sha, output, gen
                     row["name"],
                     CardMetadataV1(
                         optional(properties.get("collector_number")),
-                        None,
+                        optional(expansion.get("code"))
+                        if game in (Game.LORCANA, Game.RIFTBOUND)
+                        else None,
                         optional(expansion["name"]),
                         optional(properties.get(RARITY[game.value])),
                     ),
@@ -189,6 +195,7 @@ def prepare(capture, projection, projection_sha, parent, parent_sha, output, gen
         captureSha256=comparison["captureSha256"],
         projectionSha256=projection_sha,
         sourceStartedAt=comparison["sourceStartedAt"],
+        gameScope=progress.get("gameScope", "legacy"),
         candidates=candidates,
         exceptions=exceptions,
         creationApproved=False,
