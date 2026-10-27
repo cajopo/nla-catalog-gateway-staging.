@@ -159,11 +159,102 @@ Revisione indipendente del documento: commit, unioni, archivio, diagnostiche e
 ricevuta del clone verificati; nessun rilievo bloccante. La revisione del documento
 non sostituisce quella degli helper eseguibili né le verifiche dopo il deploy.
 
-Questo documento registra preparazione e controlli iniziali. Non attesta ancora
-un deploy del gateway, un ciclo a sei giochi completato o la pubblicazione del tema.
+## Compatibilità e recupero dell'installazione
+
+Il controllo delle due generazioni conservate, eseguito in sequenza con la nuova
+immagine e accesso ai dati in sola lettura, è concluso con
+`retained_generations_compatible`: 296.712 prodotti nella generazione attuale e
+296.583 nella precedente. Entrambi i vincoli con il runtime sono validi; i
+container di verifica sono stati rimossi. La ricevuta del tentativo
+`20261027t174741z-c464d3fd` ha SHA-256
+`c90cc2d78c3e5adb7c77d59d937cbf35a504213c5081f508abc55b344915e785`.
+
+Alle 18:06 UTC l'installazione si è fermata dopo la creazione del candidato,
+prima del suo avvio. Il runtime precedente è rimasto sano, con risposta 200;
+i tre timer operativi sono rimasti fermi secondo il percorso di errore previsto.
+La ricevuta originale `stopped.json`, conservata senza riscritture, ha SHA-256
+`24d8f2dcb8cced07473ae9ac9b1b13d2a80b43a186060fcd3734b86eeeb5730d`.
+La diagnostica in sola lettura ha individuato un confronto troppo restrittivo
+delle variabili predefinite delle immagini Python: la nuova aggiunge `LANG` e
+cambia `PYTHON_VERSION` e `PYTHON_SHA256`. Entrambi i container contengono
+esattamente le variabili della propria immagine e lo stesso ambiente operativo
+accettato, senza modifiche a credenziali o configurazione applicativa.
+
+Il recupero circoscritto riutilizza esclusivamente il candidato mai avviato;
+verifica identità, immagini, configurazione, sicurezza, ricevute e stato originale
+prima di acquisire i lock e avviarlo. Non ricrea container, non ricostruisce
+immagini e non ripete l'installazione fallita. L'helper ha SHA-256
+`581795c8f878e9d29d49f6da6fc52f4abb7aa54eb238593e114e723d035c03e4`;
+63 test mirati, Ruff e formattazione sono passati, con revisione indipendente
+senza rilievi. Anche il launcher a dispatch unica è revisionato: SHA-256
+`eae1643cf7e1e0b9aff0cb35fe3ef14ba56442ad2ce67f12f131b4ab9590975b`,
+16 test passati. Dopo il preflight remoto in sola lettura, alle 18:25:54 UTC
+è stata effettuata una sola dispatch del recupero, invocazione systemd
+`bfa60121ea2b448ab8cf0b72d49e29f2`. La dispatch non attesta il deploy:
+l'applicazione e le verifiche successive richiedono le proprie ricevute.
+
+Alle 18:35 UTC il recupero è concluso con
+`recovered_installed_timers_restored`: nuovo runtime disponibile con HTTP 200,
+vecchio runtime conservato e fermo, tre timer ripristinati, marker pendente
+archiviato. Generazione, puntatore e ambiente accettato sono invariati. La ricevuta
+di installazione ha SHA-256
+`d2a33eb0aa3b962d9a3538cf76745411bce3c2a86cdd636d889263d790a65e03`,
+quella finale del recupero
+`dfe3988319ee01482feed382d988179d4d45cc9a8e077bd867cab075c265bb64`.
+Il controllo successivo conferma immagine attesa, nessun riavvio o OOM e HTTP 200
+anche sull'endpoint pubblico. La precedente ricevuta di errore resta conservata
+come prova storica. Il dataset servito è ancora quello dei quattro giochi:
+installazione del software e completamento del primo ciclo sono prove distinte.
+
+Alle 18:40 UTC il controllo HTTP dopo l'installazione è passato: 39 richieste,
+stato invariato, regressione sui quattro giochi esistenti e risposte valide per
+entrambi i nuovi giochi e tutte le famiglie. I due nuovi cataloghi sono ancora
+vuoti, come nella proiezione indipendente; questa prova verifica i contratti,
+non il popolamento. Ricevuta `http-code-only.json` SHA-256
+`ea92064665154e76625d952da3e5cfb25a7556c9cd93b5263e6a515a0ff30c8f`.
+
+Il preflight dei servizi è stato corretto per leggere l'identità systemd effettiva:
+il refresh usa l'utente root predefinito, rappresentato da `User=` vuoto,
+mentre gli altri servizi dichiarano root esplicitamente. Il gate verifica ora
+utente, gruppo e `DynamicUser=no` esatti per ciascun servizio, con lettura
+esplicita del gestore di sistema. Sono passati 90 controlli offline e il preflight
+reale, con revisione indipendente. Non sono stati modificati i servizi per
+adattarli al verificatore.
+
+Alle 18:40:39 UTC è partito un solo backup, invocazione
+`04ca66a70d104ada8aae13c25fe1c100`. Il suo osservatore si è fermato subito dopo
+la dispatch perché usava un lettore riservato a directory root per il puntatore
+del catalogo, la cui proprietà UID 10001 è corretta. Il backup stesso è poi
+terminato alle 18:42:18 UTC con `complete`, integrità `read-data/passed` e nessun
+job conservato. La ricevuta coincide con `last-success.json`, SHA-256
+`f8e1f3d7af34360ebce576eb08454994d67f0745426b6d15655b6eb284536992`;
+lo stato dell'installazione è ancora identico all'intento iniziale. Il backup
+non viene rilanciato. Resta la verifica separata della copia remota, mantenendo
+la ricevuta di arresto originale dell'osservatore.
+
+Alle 18:43:59 UTC è conclusa anche la verifica reale del clone dopo il deploy:
+20 casi di base (due nuovi giochi, quattro famiglie, desktop/mobile, più i quattro
+giochi esistenti) e sei prove aggiuntive di filtri, paginazione e cambio gioco.
+Tutte le 26 richieste effettive al proxy Shopify hanno restituito HTTP 200:
+19 con contratto 2 e sette con contratto 1, senza errori JavaScript o test saltati.
+La generazione è rimasta
+`sha256:dd6b999dfc75270917ef0cfebbad3cf3ae353a71ecaeaac50b6f28ec274e65d7`.
+La ricevuta aggregata ha SHA-256
+`f696fc19ffa4fa296931ce4e70ed147134d73982784e7bd0268fa0c195a8280e`;
+collega tre ricevute, 38 screenshot e l'harness. Due arresti del solo harness
+durante la navigazione sono stati riprodotti e corretti; le prove già complete
+sono state riutilizzate soltanto dopo confronto degli hash e della generazione.
+I nuovi giochi mostrano lo stato vuoto previsto, mentre i controlli dei giochi
+esistenti restituiscono prodotti. MAIN e clone non sono stati modificati durante
+questa verifica. Resta distinta la successiva accettazione dei cataloghi popolati.
+
+Questo documento attesta l'installazione del gateway, ma non ancora un ciclo
+a sei giochi completato o la pubblicazione del tema.
 
 Riferimenti operativi: [sostituzione immagine](ws-09-code-only-replacement.md),
 [importatore](ws-multigame-import.md), [tema](ws-10-multigame-20261027.md).
 Contratti ufficiali consultati: [merge GitHub](https://docs.github.com/en/rest/pulls/pulls#merge-a-pull-request),
 [duplicazione tema Shopify 2026-07](https://shopify.dev/docs/api/admin-graphql/2026-07/mutations/themeDuplicate),
-[scrittura file tema Shopify 2026-07](https://shopify.dev/docs/api/admin-graphql/2026-07/mutations/themeFilesUpsert).
+[scrittura file tema Shopify 2026-07](https://shopify.dev/docs/api/admin-graphql/2026-07/mutations/themeFilesUpsert),
+[variabili delle immagini Docker](https://docs.docker.com/reference/dockerfile/#env),
+[ambiente del container Docker](https://docs.docker.com/reference/cli/docker/container/run/#env).
