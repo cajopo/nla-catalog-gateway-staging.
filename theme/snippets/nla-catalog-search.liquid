@@ -22,6 +22,8 @@ Renders game-scoped gateway search without native predictive-search fallback.
           <option value="pokemon">{{ 'nla_catalog.pokemon' | t }}</option>
           <option value="yugioh">{{ 'nla_catalog.yugioh' | t }}</option>
           <option value="one-piece">{{ 'nla_catalog.one_piece' | t }}</option>
+          <option value="riftbound">{{ 'nla_catalog.riftbound' | t }}</option>
+          <option value="lorcana">{{ 'nla_catalog.lorcana' | t }}</option>
         </select>
       </label>
       <label>
@@ -239,13 +241,18 @@ Renders game-scoped gateway search without native predictive-search fallback.
         this.input.setAttribute('aria-expanded', 'false'); this.input.removeAttribute('aria-activedescendant');
       }
 
+      contractVersion(game) {
+        if (['riftbound', 'lorcana'].includes(game)) return 2;
+        return ['magic', 'pokemon', 'yugioh', 'one-piece'].includes(game) ? 1 : null;
+      }
+
       request() {
         const filters = { inStock: this.stock.checked ? true : null, productSubtype: null };
         if (this.dataset.mode !== 'header' && this.family.value === 'single') {
           if (this.expansion.value) filters.expansionCode = this.expansion.value;
           if (this.rarity.value) filters.rarity = this.rarity.value;
         }
-        return { contractVersion: 1, game: this.game.value, productFamily: this.family.value, q: this.input.value.trim() || null,
+        return { contractVersion: this.contractVersion(this.game.value), game: this.game.value, productFamily: this.family.value, q: this.input.value.trim() || null,
           filters, pageSize: 24, sort: 'product_gid_asc' };
       }
 
@@ -340,7 +347,7 @@ Renders game-scoped gateway search without native predictive-search fallback.
           document.title = this.message('results') + (game?.value
             ? ` — ${game.textContent}${request.q ? ': ' + request.q : ''}` : '');
         }
-        if (!['magic', 'pokemon', 'yugioh', 'one-piece'].includes(request.game)) {
+        if (!this.contractVersion(request.game)) {
           this.metadataFilters.disabled = true;
           this.status.textContent = this.game.options[0].textContent; return;
         }
@@ -359,12 +366,13 @@ Renders game-scoped gateway search without native predictive-search fallback.
           const endpoint = new URL(this.dataset.endpoint, location.origin);
           if (!this.dataset.endpoint || endpoint.origin !== location.origin || !endpoint.pathname.startsWith('/apps/') || endpoint.search || endpoint.hash) throw new Error('unconfigured');
           if ((request.q?.length || 0) > 256 || (options.cursor?.length || 0) > 16384 || Boolean(options.cursor) !== Boolean(options.generation)) throw new Error('invalid');
-          if (options.invalid || ['expansionCode', 'rarity'].some(key => request.filters[key] !== undefined
+          if (options.invalid || request.contractVersion !== this.contractVersion(request.game)
+            || ['expansionCode', 'rarity'].some(key => request.filters[key] !== undefined
             && (!this.metadataValue(request.filters[key]) || request.productFamily !== 'single'))
             || !['all', 'single', 'sealed', 'accessory'].includes(request.productFamily)) throw new Error('invalid');
           const controller = new AbortController(); this.controller = controller;
           timer = setTimeout(() => controller.abort(), 8000);
-          const body = { contractVersion: 1, cursor: options.cursor || null, request };
+          const body = { contractVersion: request.contractVersion, cursor: options.cursor || null, request };
           if (request.productFamily === 'single') {
             if (request.q && !body.cursor) body.includeSuggestions = true;
             if (this.dataset.mode !== 'header' && !options.suggest) body.includeFacets = true;
@@ -412,17 +420,19 @@ Renders game-scoped gateway search without native predictive-search fallback.
 
       validate(data, body, generation) {
         const page = data.page;
+        const version = this.contractVersion(body.request.game);
         const same = (actual, expected) => actual && typeof actual === 'object'
           && Object.keys(actual).length === Object.keys(expected).length && Object.keys(expected).every(key =>
             typeof expected[key] === 'object' && expected[key] !== null ? same(actual[key], expected[key]) : actual[key] === expected[key]);
-        if (data.contractVersion !== 1 || page?.contractVersion !== 1 || !same(page.request, body.request)
+        if (!version || body.contractVersion !== version || body.request.contractVersion !== version
+          || data.contractVersion !== version || page?.contractVersion !== version || !same(page.request, body.request)
           || !/^sha256:[a-f0-9]{64}$/.test(page.datasetGeneration) || (generation && page.datasetGeneration !== generation)
           || !Array.isArray(page.items) || page.items.length > 24 || page.returnedProductCount !== page.items.length
           || typeof page.hasNextPage !== 'boolean' || page.hasNextPage !== (data.nextCursor !== null)
           || (data.nextCursor !== null && (typeof data.nextCursor !== 'string' || !data.nextCursor || data.nextCursor.length > 16384 || data.nextCursor === body.cursor))) throw new Error('unavailable');
         const ids = new Set();
         for (const item of page.items) {
-          if (!/^gid:\/\/shopify\/Product\/[1-9][0-9]*$/.test(item.productGid) || ids.has(item.productGid)
+          if (item.contractVersion !== version || !/^gid:\/\/shopify\/Product\/[1-9][0-9]*$/.test(item.productGid) || ids.has(item.productGid)
             || item.game !== body.request.game || !['single', 'sealed', 'accessory'].includes(item.productFamily)
             || (body.request.productFamily !== 'all' && item.productFamily !== body.request.productFamily)
             || typeof item.handle !== 'string' || !item.handle

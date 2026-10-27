@@ -26,6 +26,8 @@ class Component extends Element {
       { value: 'pokemon', textContent: 'Pokémon' },
       { value: 'yugioh', textContent: 'Yu-Gi-Oh!' },
       { value: 'one-piece', textContent: 'One Piece' },
+      { value: 'riftbound', textContent: 'Riftbound' },
+      { value: 'lorcana', textContent: 'Disney Lorcana' },
     ];
   }
   querySelector(selector) {
@@ -95,8 +97,23 @@ const beforeUnscoped = fetches;
 await page.load();
 assert.equal(context.document.title, 'Results', 'unscoped restore must discard native/previous counts');
 assert.equal(fetches, beforeUnscoped);
+for (const [game, label] of [['riftbound', 'Riftbound'], ['lorcana', 'Disney Lorcana']]) {
+  page.game.value = game; page.family.value = 'single'; page.input.value = 'Card';
+  header.controller = new AbortController();
+  const oldRequest = header.controller;
+  const before = fetches;
+  await page.load({ navigate: true });
+  assert.equal(page.request().contractVersion, 2);
+  assert.equal(header.request().contractVersion, 2);
+  assert.equal(header.game.value, game);
+  assert.equal(header.input.value, 'Card');
+  assert.equal(oldRequest.signal.aborted, true);
+  assert.equal(fetches, before + 1, `${game}: header synchronization must not refetch`);
+  assert.equal(context.document.title, `Results — ${label}: Card`);
+  assert.equal(new URL(location.href).searchParams.get('game'), game);
+}
 header.disconnectedCallback();
 location.href = 'https://example.test/search?game=one-piece&q=Luffy';
 window.dispatchEvent(new Event('nla:catalog-navigate'));
-assert.equal(header.game.value, 'pokemon', 'disconnected listener must be removed');
-console.log('PASS header/page URL synchronization, scoped document titles, abort, no duplicate fetch, error and cleanup');
+assert.equal(header.game.value, 'lorcana', 'disconnected listener must be removed');
+console.log('PASS six-game header/page URL synchronization, scoped document titles, abort, no duplicate fetch, error and cleanup');
