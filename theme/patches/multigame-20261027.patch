@@ -1,0 +1,72 @@
+--- a/sections/nla-header.liquid
++++ b/sections/nla-header.liquid
+@@ -41,2 +41,5 @@
+                 </li>
++                {% if forloop.index == 4 %}
++                  {% render 'nla-new-game-navigation', mode: 'mobile' %}
++                {% endif %}
+               {% endfor %}
+@@ -119,2 +122,5 @@
+           </li>
++          {% if forloop.index == 4 %}
++            {% render 'nla-new-game-navigation', mode: 'desktop' %}
++          {% endif %}
+         {% endfor %}
+--- a/assets/nla-wishlist-core.js
++++ b/assets/nla-wishlist-core.js
+@@ -41,3 +41,4 @@
+   [['magic', ['magic', 'mtg', 'magic the gathering', '1']], ['pokemon', ['pokemon', 'pokemon tcg']],
+-    ['yugioh', ['yugioh', 'yu-gi-oh!', 'yugioh tcg']], ['one-piece', ['one piece', 'one piece tcg', 'op']]]
++    ['yugioh', ['yugioh', 'yu-gi-oh!', 'yugioh tcg']], ['one-piece', ['one piece', 'one piece tcg', 'op']],
++    ['riftbound', ['riftbound', 'riftbound tcg']], ['lorcana', ['lorcana', 'disney lorcana', 'disney lorcana tcg']]]
+     .forEach(function (entry) { entry[1].forEach(function (s) { games[key(s)] = entry[0]; }); });
+--- a/assets/nla-wishlist-data.js
++++ b/assets/nla-wishlist-data.js
+@@ -9,2 +9,3 @@
+-  const GAMES = ['magic', 'pokemon', 'yugioh', 'one-piece'];
++  const GAMES = ['magic', 'pokemon', 'yugioh', 'one-piece', 'riftbound', 'lorcana'];
++  const contractVersion = game => ['riftbound', 'lorcana'].includes(game) ? 2 : GAMES.includes(game) ? 1 : null;
+   const PRODUCT_ID = /^gid:\/\/shopify\/Product\/[1-9][0-9]{0,63}$/;
+@@ -159,3 +160,3 @@
+     function validProduct(item, game) {
+-      if (!item || !PRODUCT_ID.test(item.productGid) || item.game !== game || item.productFamily !== 'single'
++      if (!item || item.contractVersion !== contractVersion(game) || !PRODUCT_ID.test(item.productGid) || item.game !== game || item.productFamily !== 'single'
+         || !validString(item.canonicalCardName) || !item.canonicalCardName.trim() || !Array.isArray(item.variants) || !item.variants.length) return false;
+@@ -175,3 +176,4 @@
+       for (const selectedGame of game ? [game] : GAMES) {
+-        const request = { contractVersion: 1, game: selectedGame, productFamily: 'single', q, filters: { inStock: null, productSubtype: null }, pageSize: PAGE_SIZE, sort: 'product_gid_asc' };
++        const version = contractVersion(selectedGame);
++        const request = { contractVersion: version, game: selectedGame, productFamily: 'single', q, filters: { inStock: null, productSubtype: null }, pageSize: PAGE_SIZE, sort: 'product_gid_asc' };
+         let cursor = null;
+@@ -181,5 +183,5 @@
+         for (let pageNumber = 0; pageNumber < searchPages; pageNumber++) {
+-          const data = await readJson(endpoint, { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json', Accept: 'application/json' }, body: JSON.stringify({ contractVersion: 1, cursor, request }) }, signal);
++          const data = await readJson(endpoint, { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json', Accept: 'application/json' }, body: JSON.stringify({ contractVersion: version, cursor, request }) }, signal);
+           const page = data.page;
+-          if (data.contractVersion !== 1 || page?.contractVersion !== 1 || canonical(page.request) !== canonical(request)
++          if (data.contractVersion !== version || page?.contractVersion !== version || canonical(page.request) !== canonical(request)
+             || !/^sha256:[a-f0-9]{64}$/.test(page.datasetGeneration) || (generation && generation !== page.datasetGeneration)
+--- a/assets/nla-wishlist.js
++++ b/assets/nla-wishlist.js
+@@ -128,3 +128,3 @@
+   function node(tag, cls, text) { var el = document.createElement(tag); if (cls) el.className = cls; if (text !== undefined) el.textContent = text; return el; }
+-  var games = { magic: 'Magic', pokemon: 'Pokémon', 'one-piece': 'One Piece', yugioh: 'Yu-Gi-Oh!' };
++  var games = { magic: 'Magic', pokemon: 'Pokémon', 'one-piece': 'One Piece', yugioh: 'Yu-Gi-Oh!', riftbound: 'Riftbound', lorcana: 'Disney Lorcana' };
+   var copy = {
+--- a/snippets/nla-wishlist.liquid
++++ b/snippets/nla-wishlist.liquid
+@@ -67,3 +67,3 @@
+             <option value="one-piece">One Piece</option>
+-            <option value="yugioh">Yu-Gi-Oh!</option>
++            <option value="yugioh">Yu-Gi-Oh!</option><option value="riftbound">{{ 'nla_catalog.riftbound' | t }}</option><option value="lorcana">{{ 'nla_catalog.lorcana' | t }}</option>
+           </select>
+@@ -96,3 +96,3 @@
+               <option value="one-piece">One Piece</option>
+-              <option value="yugioh">Yu-Gi-Oh!</option>
++              <option value="yugioh">Yu-Gi-Oh!</option><option value="riftbound">{{ 'nla_catalog.riftbound' | t }}</option><option value="lorcana">{{ 'nla_catalog.lorcana' | t }}</option>
+             </select>
+@@ -160,3 +160,3 @@
+           <div class="wl-field wl-field--wide"><label for="{{ wl_id }}-edit-name">{{ 'nla_wishlist.card_name' | t }}</label><input id="{{ wl_id }}-edit-name" name="name" required maxlength="250"></div>
+-          <div class="wl-field"><label for="{{ wl_id }}-edit-game">{{ 'nla_wishlist.game' | t }}</label><select id="{{ wl_id }}-edit-game" name="game" required><option value="magic">Magic: The Gathering</option><option value="pokemon">Pokémon</option><option value="one-piece">One Piece</option><option value="yugioh">Yu-Gi-Oh!</option></select></div>
++          <div class="wl-field"><label for="{{ wl_id }}-edit-game">{{ 'nla_wishlist.game' | t }}</label><select id="{{ wl_id }}-edit-game" name="game" required><option value="magic">Magic: The Gathering</option><option value="pokemon">Pokémon</option><option value="one-piece">One Piece</option><option value="yugioh">Yu-Gi-Oh!</option><option value="riftbound">{{ 'nla_catalog.riftbound' | t }}</option><option value="lorcana">{{ 'nla_catalog.lorcana' | t }}</option></select></div>
+           <div class="wl-field"><label for="{{ wl_id }}-edit-qty">{{ 'nla_wishlist.quantity' | t }}</label><input id="{{ wl_id }}-edit-qty" name="quantity" type="number" min="1" max="999" step="1" inputmode="numeric" required></div>

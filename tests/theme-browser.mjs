@@ -6,6 +6,10 @@ import { fileURLToPath } from 'node:url';
 import { spawn } from 'node:child_process';
 import { createServer } from 'node:http';
 import { once } from 'node:events';
+import { arenaFixture } from './theme-six-games-fixture.mjs';
+
+const [arenaTheme, liquidRuntime] = process.argv.slice(2);
+const arenaHtml = arenaTheme ? await arenaFixture(arenaTheme, liquidRuntime) : null;
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 const source = await readFile(join(root, 'theme/snippets/nla-catalog-search.liquid'), 'utf8');
@@ -28,7 +32,8 @@ const imageRequests = [];
 const imageFixtures = new Map();
 let activeImages = 0; let maxActiveImages = 0;
 function product(id, game, name, available = true) {
-  return { contractVersion: 1, productGid: `gid://shopify/Product/${id}`, handle: `card-${id}`, commercialTitle: name,
+  return { contractVersion: ['riftbound', 'lorcana'].includes(game) ? 2 : 1,
+    productGid: `gid://shopify/Product/${id}`, handle: `card-${id}`, commercialTitle: name,
     canonicalCardName: name, game, productFamily: 'single', productSubtype: null,
     cardMetadata: { expansionCode: id % 2 ? 'SET-B' : 'SET-A', rarity: id % 2 ? 'rare' : 'common' },
     variants: [{ variantGid: `gid://shopify/ProductVariant/${id}`, title: 'Default', selectedOptions: [],
@@ -38,6 +43,19 @@ function product(id, game, name, available = true) {
 
 const server = createServer(async (req, res) => {
   const url = new URL(req.url, 'http://localhost');
+  if (arenaHtml && url.pathname === '/arena-fixture') {
+    res.setHeader('Content-Type', 'text/html; charset=utf-8'); res.end(arenaHtml); return;
+  }
+  if (arenaHtml && url.pathname.startsWith('/assets/')) {
+    const name = url.pathname.slice('/assets/'.length);
+    if (!/^[a-z0-9.-]+$/.test(name)) { res.writeHead(404).end(); return; }
+    try {
+      const file = await readFile(join(arenaTheme, 'assets', name));
+      res.setHeader('Content-Type', name.endsWith('.js') ? 'text/javascript' : name.endsWith('.css') ? 'text/css' : 'image/png');
+      res.end(file);
+    } catch { res.writeHead(404).end(); }
+    return;
+  }
   const productMatch = url.pathname.match(/^\/(?:it\/)?products\/([^/]+)\.js$/);
   if (productMatch) {
     const handle = decodeURIComponent(productMatch[1]); imageRequests.push(url.pathname);
@@ -52,7 +70,7 @@ const server = createServer(async (req, res) => {
     } finally { activeImages -= 1; }
     return;
   }
-  if (url.pathname !== '/apps/nla/catalog') {
+  if (!['/apps/nla/catalog', '/apps/nla-catalog'].includes(url.pathname)) {
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
     res.end(fixtureHtml(url.searchParams.get('mode') || 'page', url.searchParams.has('unconfigured') ? '' : '/apps/nla/catalog'));
     return;
@@ -62,7 +80,9 @@ const server = createServer(async (req, res) => {
   const body = JSON.parse(raw); requests.push(body);
   const { request, cursor } = body;
   const q = request.q || '';
-  const names = request.game === 'magic' ? ['Lightning Bolt', 'Lightning Bolt (foil)'] : ['Pikachu', 'Pikachu (promo)'];
+  const names = { magic: ['Lightning Bolt', 'Lightning Bolt (foil)'], pokemon: ['Pikachu', 'Pikachu (promo)'],
+    yugioh: ['Dragon fixture', 'Dragon fixture (foil)'], 'one-piece': ['Pirate fixture', 'Pirate fixture (foil)'],
+    riftbound: ['Riftbound fixture', 'Riftbound fixture (foil)'], lorcana: ['Lorcana fixture', 'Lorcana fixture (foil)'] }[request.game];
   let items = names.map((name, index) => product(25000 + index, request.game, name, index === 0));
   if (q === 'empty') items = [];
   else if (q === 'xss') items = [product(25002, request.game, '<img src=x onerror="window.pwned=1">')];
@@ -90,8 +110,8 @@ const server = createServer(async (req, res) => {
   const allItems = items;
   if (cursor) items = items.slice(1); else items = items.slice(0, 1);
   const nextCursor = !cursor && allItems.length > 1 ? 'opaque-next-page' : null;
-  const data = { contractVersion: 1, nextCursor: q === 'loop' && cursor ? cursor : nextCursor,
-    page: { contractVersion: 1, datasetGeneration: generation, request, requestContextSha256: 'b'.repeat(64),
+  const data = { contractVersion: body.contractVersion, nextCursor: q === 'loop' && cursor ? cursor : nextCursor,
+    page: { contractVersion: body.contractVersion, datasetGeneration: generation, request, requestContextSha256: 'b'.repeat(64),
       returnedProductCount: items.length, returnedVariantCount: items.length, items,
       hasNextPage: q === 'loop' && cursor ? true : nextCursor !== null } };
   if (q === 'duplicate') { data.page.items = allItems; data.page.returnedProductCount = allItems.length; }
@@ -284,6 +304,50 @@ try {
     await writeFile(join(profile, 'catalog-fixture.png'), Buffer.from(screenshot.data, 'base64'));
     console.log(`SCREENSHOT ${join(profile, 'catalog-fixture.png')}`);
   });
+  for (const [game, title, other] of [['riftbound', 'Riftbound', 'lorcana'], ['lorcana', 'Lorcana', 'riftbound']]) {
+    await check(`${game} version 2 search, filters, cursor, back and reload`, async () => {
+      await navigate(`game=${game}&q=fixture`); await waitFor(visible);
+      assert.equal(requests.at(-1).contractVersion, 2);
+      assert.equal(requests.at(-1).request.contractVersion, 2);
+      assert.match(await evaluate(`${el}.results.textContent`), new RegExp(title));
+      assert.deepEqual(await evaluate(`Array.from(${el}.game.options, option => option.value)`),
+        ['', 'magic', 'pokemon', 'yugioh', 'one-piece', 'riftbound', 'lorcana']);
+      await evaluate(`${el}.querySelector('[data-action="next"]').click()`);
+      await waitFor(`${visible} && ${el}.results.firstChild?.dataset.productGid.endsWith('/25001')`);
+      await call('Page.reload');
+      await waitFor(`${visible} && ${el}.results.firstChild?.dataset.productGid.endsWith('/25001')`);
+      assert.equal(requests.at(-1).cursor, 'opaque-next-page');
+      await evaluate(`${el}.expansion.value='SET-B'; ${el}.expansion.dispatchEvent(new Event('change'))`);
+      await waitFor(`${visible} && location.search.includes('expansionCode=SET-B')`);
+      assert.equal(requests.at(-1).cursor, null);
+      await evaluate(`${el}.game.value='${other}'; ${el}.game.dispatchEvent(new Event('change'))`);
+      await waitFor(`${visible} && ${el}.pageRequest.game === '${other}'`);
+      assert.equal(requests.at(-1).request.filters.expansionCode, undefined);
+      assert.equal(requests.at(-1).request.filters.rarity, undefined);
+      assert.equal(requests.at(-1).cursor, null);
+      assert.doesNotMatch(await evaluate(`${el}.results.textContent`), new RegExp(title));
+      await evaluate('history.back()');
+      await waitFor(`${visible} && ${el}.pageRequest.game === '${game}'`);
+      assert.equal(await evaluate(`${el}.expansion.value`), 'SET-B');
+      assert.match(await evaluate(`${el}.results.textContent`), new RegExp(title));
+    });
+    await check(`${game} header keyboard suggestions and responsive selector`, async () => {
+      await navigate(`mode=header&game=${game}`);
+      await evaluate(`${el}.input.focus(); ${el}.input.value='fixture'; ${el}.input.dispatchEvent(new Event('input'))`);
+      await waitFor(`${el}.list.children.length === 2`);
+      assert.equal(requests.at(-1).request.game, game);
+      assert.equal(requests.at(-1).contractVersion, 2);
+      assert.match(await evaluate(`${el}.list.textContent`), new RegExp(title));
+      await call('Input.dispatchKeyEvent', { type: 'keyDown', key: 'ArrowDown', code: 'ArrowDown' });
+      await call('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Enter', code: 'Enter' });
+      await waitFor(`${visible} && ${el}.pageRequest.game === '${game}'`);
+      assert.equal(await evaluate(`${el}.input.value`), `${title} fixture`);
+      for (const width of [320, 375, 430, 1280]) {
+        await call('Emulation.setDeviceMetricsOverride', { width, height: 900, deviceScaleFactor: 1, mobile: width < 600 });
+        assert.equal(await evaluate('document.documentElement.scrollWidth <= innerWidth'), true, `${game} overflow at ${width}`);
+      }
+    });
+  }
   const renderImages = async items => {
     await evaluate(`(async () => { if (!${el}.testImageHook) { ${el}.testImageHook = ${el}.loadImages.bind(${el});
       ${el}.loadImages = (...args) => (${el}.testImagesReady = ${el}.testImageHook(...args)); }
@@ -337,6 +401,51 @@ try {
     assert.equal(await evaluate(`${el}.results.querySelector('img').alt`), 'New card');
     assert.equal(await evaluate(`${el}.imageCache.has(${JSON.stringify(old.productGid + '|' + old.handle)})`), false);
   });
+  if (arenaHtml) {
+    await check('current Arena desktop/mobile menus add two games before utility links', async () => {
+      await call('Page.navigate', { url: origin + '/arena-fixture' });
+      await waitFor('document.querySelector("[data-wl=refresh]") !== null');
+      const expected = ['Magic', 'Pokémon', 'One Piece', 'Yu-Gi-Oh!', 'Riftbound', 'Disney Lorcana', 'Eventi', 'Vendi carte', 'Il negozio'];
+      for (const selector of ['.nla-desktop-nav > ul', '.nla-mobile-menu__panel nav > ul']) {
+        const names = await evaluate(`Array.from(document.querySelector(${JSON.stringify(selector)}).children, node => node.querySelector('summary,a').textContent.trim())`);
+        assert.deepEqual(names, expected);
+        for (const game of ['riftbound', 'lorcana']) {
+          const links = await evaluate(`Array.from(document.querySelectorAll(${JSON.stringify(selector)} + ' a'), link => link.href).filter(href => new URL(href).searchParams.get('game') === '${game}')`);
+          assert.equal(links.length, 4);
+          assert.deepEqual(links.map(link => new URL(link).searchParams.get('family')), ['all', 'single', 'sealed', 'accessory']);
+          assert(links.every(link => new URL(link).pathname === '/it/search' && new URL(link).searchParams.get('view') === 'nla-catalog'));
+        }
+      }
+    });
+    await check('current Arena six-game navigation and wishlist fit desktop/mobile widths', async () => {
+      for (const width of [320, 375, 430, 1024, 1280]) {
+        await call('Emulation.setDeviceMetricsOverride', { width, height: 900, deviceScaleFactor: 1, mobile: width < 600 });
+        await evaluate(`document.querySelector('.nla-mobile-menu').open = ${width < 990}`);
+        await evaluate(`document.querySelectorAll('details').forEach(node => { if (node.querySelector('summary')?.textContent.trim() === 'Disney Lorcana') node.open = true; })`);
+        assert.equal(await evaluate('document.documentElement.scrollWidth <= innerWidth'), true, `Arena overflow at ${width}`);
+        const navigation = width < 990 ? '.nla-mobile-menu__panel' : '.nla-desktop-nav';
+        const bounds = await evaluate(`Array.from(document.querySelectorAll('${navigation} a')).filter(a => new URL(a.href).searchParams.get('game') === 'lorcana').map(a => { const b=a.getBoundingClientRect(); return [b.left,b.right,b.width,b.height]; })`);
+        assert(bounds.every(([left, right, size, height]) => left >= 0 && right <= width && size > 0 && height > 0), `Navigation outside viewport at ${width}`);
+        if ([375, 1280].includes(width)) {
+          const shot = await call('Page.captureScreenshot', { format: 'png' });
+          const path = join(profile, `navigation-${width}.png`);
+          await writeFile(path, Buffer.from(shot.data, 'base64')); console.log(`SCREENSHOT ${path}`);
+        }
+      }
+    });
+    for (const [game, label] of [['riftbound', 'Riftbound'], ['lorcana', 'Disney Lorcana']]) {
+      await check(`current wishlist ${game} search and keyboard selection`, async () => {
+        await evaluate(`document.querySelectorAll('nla-wishlist details').forEach(node => { node.open = true; })`);
+        await evaluate(`document.querySelector('[data-wl=game]').value='${game}'; document.querySelector('[data-wl=search]').value='fixture'; document.querySelector('[data-wl=game]').dispatchEvent(new Event('change'))`);
+        await waitFor(`document.querySelector('[data-wl=search-results]').textContent.includes('${label}')`);
+        assert.equal(requests.at(-1).contractVersion, 2);
+        assert.equal(requests.at(-1).request.game, game);
+        await evaluate(`document.querySelector('[data-wl=search]').focus()`);
+        await call('Input.dispatchKeyEvent', { type: 'keyDown', key: 'ArrowDown', code: 'ArrowDown' });
+        assert.equal(await evaluate(`document.activeElement.closest('[data-wl=search-results]') !== null`), true);
+      });
+    }
+  }
   assert.deepEqual(errors, []);
   console.log(`${passed} browser checks passed; fixture responses, not Shopify E2E.`);
 } finally {

@@ -1,0 +1,35 @@
+{% doc %}
+Adds game-scoped catalog links to the existing Arena navigation.
+@param {string} mode - Desktop or mobile navigation presentation.
+{% enddoc %}
+
+{% liquid
+  assign new_games = 'riftbound,lorcana' | split: ','
+  assign families = 'all,single,sealed,accessory' | split: ','
+%}
+{% for game in new_games %}
+  {% liquid
+    assign game_label = 'nla_catalog.' | append: game
+    assign catalog_url = routes.search_url | append: '?view=nla-catalog&game=' | append: game
+  %}
+  <li>
+    <details{% if mode == 'desktop' %} class="nla-desktop-nav__dropdown"{% endif %}>
+      <summary>{{ game_label | t }}</summary>
+      {% if mode == 'desktop' %}
+        <div class="nla-desktop-nav__panel">
+          {% for family in families %}
+            {% assign family_label = 'nla_catalog.family_' | append: family %}
+            <a{% if family == 'all' %} class="nla-desktop-nav__all"{% endif %} href="{{ catalog_url | append: '&family=' | append: family | escape }}">{{ family_label | t }}</a>
+          {% endfor %}
+        </div>
+      {% else %}
+        <ul role="list">
+          {% for family in families %}
+            {% assign family_label = 'nla_catalog.family_' | append: family %}
+            <li><a href="{{ catalog_url | append: '&family=' | append: family | escape }}">{{ family_label | t }}</a></li>
+          {% endfor %}
+        </ul>
+      {% endif %}
+    </details>
+  </li>
+{% endfor %}

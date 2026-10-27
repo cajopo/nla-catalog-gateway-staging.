@@ -29,6 +29,8 @@ class Component extends Element {
     this.querySelector('form').elements.game.options = [
       { value: '', textContent: 'Choose game' }, { value: 'magic', textContent: 'Magic' },
       { value: 'pokemon', textContent: 'Pokémon' },
+      { value: 'yugioh', textContent: 'Yu-Gi-Oh!' }, { value: 'one-piece', textContent: 'One Piece' },
+      { value: 'riftbound', textContent: 'Riftbound' }, { value: 'lorcana', textContent: 'Disney Lorcana' },
     ];
   }
   querySelector(selector) {
@@ -65,8 +67,8 @@ function component(mode = 'page') {
 function payload(body, { values, selectedCount = 1 } = {}) {
   const filters = body.request.filters;
   const result = {
-    contractVersion: 1, nextCursor: null,
-    page: { contractVersion: 1, datasetGeneration: generation, request: clone(body.request),
+    contractVersion: body.contractVersion, nextCursor: null,
+    page: { contractVersion: body.contractVersion, datasetGeneration: generation, request: clone(body.request),
       items: [], returnedProductCount: 0, hasNextPage: false },
   };
   if (body.includeFacets) result.facets = ['expansionCode', 'rarity'].map(dimension => ({
@@ -169,7 +171,7 @@ reject(value => { value.page.request.filters.expansionCode = 'OTHER'; });
 reject(value => { delete value.page.request.filters.rarity; });
 reject(value => { value.page.request.filters.extra = 'unexpected'; });
 reject(value => { value.page.datasetGeneration = `sha256:${'b'.repeat(64)}`; });
-const item = { productGid: 'gid://shopify/Product/1', game: 'magic', productFamily: 'single',
+const item = { contractVersion: 1, productGid: 'gid://shopify/Product/1', game: 'magic', productFamily: 'single',
   handle: 'bolt', canonicalCardName: 'Bolt', commercialTitle: 'Bolt print',
   cardMetadata: { expansionCode: 'SELECTED', rarity: 'Rare' },
   variants: [{ priceText: '0', inventoryQuantity: 0 }] };
@@ -321,5 +323,81 @@ assert.equal(page.expansion.value, 'NEW');
 page.game.value = ''; page.cancel();
 assert.equal(page.metadataFilters.disabled, true, 'no game cannot enable metadata controls');
 
+const games = ['magic', 'pokemon', 'yugioh', 'one-piece', 'riftbound', 'lorcana'];
+const gameSelect = source.match(/<select name="game"[^>]*>([\s\S]*?)<\/select>/)[1];
+assert.deepEqual([...gameSelect.matchAll(/<option value="([^"]+)"/g)].map(match => match[1]), games);
+transport = async body => ({ ok: true, json: async () => payload(body) });
+for (const [index, game] of games.entries()) {
+  const scoped = component();
+  scoped.game.value = game; scoped.stock.checked = true; scoped.input.value = 'Shared title';
+  scoped.resetMetadata('SET', 'Rare'); scoped.nextCursor = 'old-cursor'; scoped.generation = generation;
+  const aborted = new AbortController(); scoped.controller = aborted;
+  let change;
+  scoped.load = options => { change = { options, request: clone(scoped.request()) }; };
+  scoped.game.dispatchEvent(new Event('change'));
+  const version = index < 4 ? 1 : 2;
+  assert.equal(change.request.contractVersion, version, `${game}: select version explicitly`);
+  assert.equal(change.request.game, game);
+  assert.equal(change.request.q, 'Shared title');
+  assert.equal(change.request.filters.inStock, true);
+  assert.equal(change.request.filters.expansionCode, undefined);
+  assert.equal(change.request.filters.rarity, undefined);
+  assert.deepEqual(clone(change.options), { navigate: true }, `${game}: changing game discards the old cursor`);
+  assert.equal(aborted.signal.aborted, true);
+  scoped.resetMetadata('SET', 'Rare');
+  const saved = clone(scoped.request());
+  location.href = scoped.url(saved, 'opaque-game-page', generation).href;
+  scoped.restore();
+  assert.deepEqual(change.request, saved, `${game}: URL restores full request`);
+  assert.equal(change.options.cursor, 'opaque-game-page');
+  assert.equal(change.options.generation, generation);
+  delete scoped.load;
+  await scoped.load(change.options);
+  const actual = sent.at(-1).body;
+  assert.equal(actual.contractVersion, version);
+  assert.equal(actual.request.contractVersion, version);
+  assert.equal(actual.request.game, game);
+  assert.equal(actual.cursor, 'opaque-game-page');
+  assert.equal(scoped.page.hidden, false, `${game}: compatible response is accepted`);
+  const response = payload(actual);
+  response.page.items = [{ ...clone(item), contractVersion: version, game,
+    canonicalCardName: 'Shared title', cardMetadata: { expansionCode: 'SET', rarity: 'Rare' } }];
+  response.page.returnedProductCount = 1;
+  assert.doesNotThrow(() => scoped.validate(response, actual, generation));
+  const incompatible = version === 1 ? 2 : 1;
+  for (const mutate of [
+    value => { value.contractVersion = incompatible; },
+    value => { value.page.contractVersion = incompatible; },
+    value => { value.page.request.contractVersion = incompatible; },
+    value => { value.page.items[0].contractVersion = incompatible; },
+    value => { delete value.page.items[0].contractVersion; },
+    value => { value.page.request.game = games[(index + 1) % games.length]; },
+    value => { value.page.items[0].game = games[(index + 1) % games.length]; },
+  ]) {
+    const wrong = clone(response); mutate(wrong);
+    assert.throws(() => scoped.validate(wrong, actual, generation), /unavailable/, `${game}: reject incompatible response`);
+  }
+  const before = sent.length;
+  await scoped.load({ saved: { ...saved, contractVersion: incompatible } });
+  assert.equal(sent.length, before, `${game}: reject saved request with wrong version before fetch`);
+  assert.equal(scoped.recovery.hidden, false);
+  scoped.disconnectedCallback();
+}
+const crossGame = component();
+const crossPending = [];
+transport = body => new Promise(resolve => crossPending.push({ body, resolve }));
+crossGame.game.value = 'riftbound';
+const riftboundLoad = crossGame.load();
+const riftboundSignal = sent.at(-1).signal;
+crossGame.game.value = 'lorcana'; crossGame.resetMetadata('LOR', 'Rare');
+const lorcanaLoad = crossGame.load();
+assert.equal(riftboundSignal.aborted, true);
+crossPending[1].resolve({ ok: true, json: async () => payload(crossPending[1].body) });
+await lorcanaLoad;
+crossPending[0].resolve({ ok: true, json: async () => payload(crossPending[0].body) });
+await riftboundLoad;
+assert.equal(crossGame.pageRequest.game, 'lorcana', 'late Riftbound response must not replace Lorcana state');
+assert.equal(crossGame.expansion.value, 'LOR');
+
 for (const value of components) value.disconnectedCallback();
-console.log('PASS metadata + four-family URL/cursor restore, family/query/stock retention, single-only suggestions/facets, strict game/family validation, stale responses and cancellation');
+console.log('PASS six-game versioned requests/responses, four-family URL/cursor restore, filter reset, game isolation, stale responses and cancellation');
