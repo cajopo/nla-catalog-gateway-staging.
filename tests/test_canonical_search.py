@@ -411,8 +411,10 @@ def test_prepared_contains_search_over_30000_records_finishes_within_two_seconds
     assert elapsed < 2.0
 
 
+@pytest.mark.parametrize("query", ["lightning bolt", "colossus", "steel col"])
 def test_checkpoint_return_value_is_ignored_without_changing_results(
     records: tuple[CatalogProductRecordV1, ...],
+    query: str,
 ) -> None:
     calls = 0
 
@@ -424,7 +426,7 @@ def test_checkpoint_return_value_is_ignored_without_changing_results(
     search = search_single_cards(
         records,
         game=Game.MAGIC,
-        query="lightning bolt",
+        query=query,
         checkpoint=checkpoint,  # type: ignore[arg-type]
     )
     report = report_missing_canonical_names(
@@ -433,7 +435,7 @@ def test_checkpoint_return_value_is_ignored_without_changing_results(
         checkpoint=checkpoint,  # type: ignore[arg-type]
     )
 
-    assert search == search_single_cards(records, game=Game.MAGIC, query="lightning bolt")
+    assert search == search_single_cards(records, game=Game.MAGIC, query=query)
     assert report == report_missing_canonical_names(records, game=Game.MAGIC)
     assert calls > len(records) * 2
 
