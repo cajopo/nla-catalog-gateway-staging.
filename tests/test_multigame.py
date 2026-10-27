@@ -33,8 +33,10 @@ from nla_catalog_gateway.runtime_contract import (
     CapabilityState,
     CatalogFiltersV1,
     CatalogItemV1,
+    CatalogPageV1,
     CatalogProductRecordV1,
     CatalogRequestV1,
+    CursorContextV1,
     ProductStatus,
     RequestFamily,
     RuntimeContractError,
@@ -51,6 +53,12 @@ from nla_catalog_gateway.taxonomy import (
 )
 
 NEW_GAMES = (Game.LORCANA, Game.RIFTBOUND)
+
+
+def test_contract_version_helper_requires_canonical_game_and_preserves_unclassified_v1():
+    assert contract_version_for_game(None) == 1
+    with pytest.raises(RuntimeContractError, match="game must be canonical"):
+        contract_version_for_game("lorcana")
 
 
 def _new_records():
@@ -104,6 +112,34 @@ def test_new_game_requires_explicit_v2_and_legacy_capability_matrix_stays_frozen
         assert page_helpers._request(game=legacy).contract_version == 1
         with pytest.raises(RuntimeContractError):
             replace(page_helpers._request(game=legacy), contract_version=2)
+
+
+@pytest.mark.parametrize("game", (Game.MAGIC, *NEW_GAMES))
+def test_cursor_and_page_reject_cross_version_request_context(game):
+    request = page_helpers._request(game=game)
+    cursor = CursorContextV1.from_request(
+        request,
+        "sha256:" + "a" * 64,
+        last_product_gid=None,
+        expires_at="2026-10-27T12:00:00Z",
+    )
+    page = CatalogPageV1(
+        contract_version=request.contract_version,
+        dataset_generation=cursor.dataset_generation,
+        request=request,
+        request_context_sha256=cursor.request_context_sha256,
+        items=(),
+        returned_product_count=0,
+        returned_variant_count=0,
+        has_next_page=False,
+        next_cursor_context=None,
+    )
+    assert CursorContextV1.from_json_bytes(cursor.to_json_bytes()) == cursor
+    assert CatalogPageV1.from_json_bytes(page.to_json_bytes()) == page
+    wrong_version = 2 if request.contract_version == 1 else 1
+    for dto in (cursor, page):
+        with pytest.raises(RuntimeContractError, match="contractVersion must match request"):
+            replace(dto, contract_version=wrong_version)
 
 
 @pytest.mark.parametrize("game", NEW_GAMES)

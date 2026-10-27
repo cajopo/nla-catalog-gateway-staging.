@@ -744,7 +744,6 @@ class CatalogProductRecordV1(_JsonDto):
     )
 
     def __post_init__(self) -> None:
-        _game_contract_version(self.contract_version, self.game, "catalog product record")
         _gid(self.product_gid, "Product", "productGid")
         _string(self.handle, "product handle")
         _string(self.commercial_title, "commercialTitle")
@@ -761,6 +760,7 @@ class CatalogProductRecordV1(_JsonDto):
         _timestamp(self.updated_at, "product updatedAt")
         if self.game is not None and type(self.game) is not Game:
             raise _fail("game must be canonical")
+        _game_contract_version(self.contract_version, self.game, "catalog product record")
         if type(self.product_family) is not ProductFamily:
             raise _fail("productFamily must be a persisted taxonomy family")
         if self.card_metadata is not None and (
@@ -978,13 +978,13 @@ class CatalogItemV1(_JsonDto):
     )
 
     def __post_init__(self) -> None:
-        _game_contract_version(self.contract_version, self.game, "catalog item")
         _gid(self.product_gid, "Product", "productGid")
         _string(self.handle, "catalog item handle")
         _string(self.commercial_title, "commercialTitle")
         _nullable_string(self.canonical_card_name, "canonicalCardName", nonempty=True)
         if type(self.game) is not Game:
             raise _fail("catalog item game must be canonical")
+        _game_contract_version(self.contract_version, self.game, "catalog item")
         if type(self.product_family) is not ProductFamily:
             raise _fail("catalog item productFamily must be canonical ProductFamily")
         if self.product_family is ProductFamily.UNCLASSIFIED:
@@ -1214,9 +1214,9 @@ class CatalogRequestV1(_JsonDto):
     )
 
     def __post_init__(self) -> None:
-        _game_contract_version(self.contract_version, self.game, "catalog request")
         if type(self.game) is not Game:
             raise _fail("catalog request game must be canonical")
+        _game_contract_version(self.contract_version, self.game, "catalog request")
         if type(self.product_family) is not RequestFamily:
             raise _fail("catalog request productFamily must be canonical")
         _nullable_string(self.query, "catalog request q")
