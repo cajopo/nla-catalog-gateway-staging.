@@ -24,6 +24,26 @@ CATEGORIES = {
     255: (15, "One Piece DON Token", "single"),
     299: (15, "One Piece Oversized", "single"),
     54: (4, "Yu-Gi-Oh! Boosters Box", "sealed"),
+    214: (18, "Lorcana Singles", "single"),
+    230: (18, "Lorcana Oversized", "single"),
+    270: (18, "Lorcana Token", "single"),
+    258: (22, "Riftbound Singles", "single"),
+    284: (22, "Riftbound Oversized", "single"),
+    215: (18, "Lorcana Booster Boxes", "sealed"),
+    216: (18, "Lorcana Boosters", "sealed"),
+    217: (18, "Lorcana Bundles & Prerelease Kits", "sealed"),
+    218: (18, "Lorcana Box Sets", "sealed"),
+    219: (18, "Lorcana Starter Decks", "sealed"),
+    320: (18, "Lorcana Cases & Displays", "sealed"),
+    259: (22, "Riftbound Booster Boxes", "sealed"),
+    260: (22, "Riftbound Boosters", "sealed"),
+    261: (22, "Riftbound Bundles", "sealed"),
+    262: (22, "Riftbound Starter Decks", "sealed"),
+    263: (22, "Riftbound Box Sets", "sealed"),
+    325: (22, "Riftbound Cases & Displays", "sealed"),
+    # A complete set is not a single printing; do not infer its product family.
+    231: (18, "Lorcana Complete Sets", "unclassified"),
+    283: (22, "Riftbound Complete Sets", "unclassified"),
 }
 
 

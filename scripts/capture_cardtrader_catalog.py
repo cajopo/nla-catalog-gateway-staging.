@@ -8,11 +8,13 @@ from pathlib import Path
 
 from nla_catalog_gateway.cardtrader_capture import capture_catalog
 from nla_catalog_gateway.cardtrader_catalog import CardTraderCatalogClient
+from nla_catalog_gateway.cardtrader_scope import GAME_SCOPES
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--credential-file", type=Path, required=True)
+    parser.add_argument("--game-scope", choices=GAME_SCOPES, default="legacy")
     parser.add_argument(
         "--output", type=Path, required=True, help="New absolute private run directory"
     )
@@ -27,7 +29,7 @@ def main() -> int:
             raise ValueError("credential_not_private")
         credentials = json.loads(args.credential_file.read_bytes())
         client = CardTraderCatalogClient(credentials["api_token"])
-        result = capture_catalog(client, args.output)
+        result = capture_catalog(client, args.output, game_scope=args.game_scope)
         print(json.dumps({key: value for key, value in result.items() if key != "files"}))
         return 0
     except Exception:

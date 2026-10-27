@@ -11,6 +11,7 @@ from types import SimpleNamespace
 import pytest
 
 from nla_catalog_gateway import shopify_draft_publication as publication
+from nla_catalog_gateway.shopify_draft_import import PRODUCT_TYPES
 from test_shopify_draft_import import GID, SHOP, FakeShopify
 from test_shopify_draft_import import run as create_verified_draft
 
@@ -91,9 +92,10 @@ class FakePublication:
 
 
 @pytest.fixture
-def setup(tmp_path, monkeypatch):
+def setup(tmp_path, monkeypatch, request):
     api = FakeShopify()
-    assert create_verified_draft(tmp_path, api)["status"] == "draft_verified"
+    game = getattr(request, "param", "magic")
+    assert create_verified_draft(tmp_path, api, game=game)["status"] == "draft_verified"
     ledger = tmp_path / "ledger.sqlite"
     ledger.chmod(0o600)
     native_lstat = Path.lstat
@@ -107,7 +109,9 @@ def setup(tmp_path, monkeypatch):
         return facts
 
     monkeypatch.setattr(Path, "lstat", root_ledger_facts)
-    return ledger, FakePublication(api.product)
+    publisher = FakePublication(api.product)
+    publisher.product["productType"] = PRODUCT_TYPES[game]
+    return ledger, publisher
 
 
 def publish(ledger, api, **overrides):
@@ -253,6 +257,7 @@ def test_invalid_controls_do_not_contact_shopify(setup, overrides):
     assert not api.calls
 
 
+@pytest.mark.parametrize("setup", ["magic", "lorcana", "riftbound"], indirect=True)
 def test_publication_writes_only_status_and_one_channel_preserving_creation_ledger(setup):
     ledger, api = setup
     before = deepcopy(api.product)
@@ -299,6 +304,7 @@ def test_pending_reservation_is_committed_before_either_network_write(setup):
     assert stages == [publication.ACTIVATE, publication.PUBLISH]
 
 
+@pytest.mark.parametrize("setup", ["magic", "lorcana", "riftbound"], indirect=True)
 def test_successful_handoff_never_reads_or_reactivates_product_on_later_cycles(setup):
     ledger, api = setup
     assert publish(ledger, api)["published"] == 1

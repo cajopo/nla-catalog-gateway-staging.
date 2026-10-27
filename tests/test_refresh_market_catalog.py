@@ -24,8 +24,9 @@ def setup(tmp_path, monkeypatch):
     monkeypatch.setattr(market.refresh, "freshness", lambda _: {"status": "fresh"})
     behavior = dict(fail=None, identity_calls=0, batch_status="batch_complete")
 
-    def source(client, path):
+    def source(client, path, *, game_scope="legacy"):
         events.append("source")
+        behavior["game_scope"] = game_scope
         assert (tmp_path / "pending-market-run.json").exists()
         if behavior["fail"] == "source":
             raise ValueError("source failure")
@@ -107,8 +108,8 @@ def test_deferred_source_does_not_block_available_imports_or_next_cycle(setup, m
     original = market.capture_catalog
     deferred = [dict(expansionId=4, httpStatus=404, reason="export_http_404")]
 
-    def source(client, path):
-        return {**original(client, path), "deferredExpansions": deferred}
+    def source(client, path, **kwargs):
+        return {**original(client, path, **kwargs), "deferredExpansions": deferred}
 
     def batch(*inputs, **kwargs):
         events.append("batch")
@@ -393,8 +394,8 @@ def test_empty_batch_reuses_fresh_index_without_claiming_refresh(
     args, events, _ = setup
     original_source = market.capture_catalog
 
-    def source(*inputs):
-        result = original_source(*inputs)
+    def source(*inputs, **kwargs):
+        result = original_source(*inputs, **kwargs)
         result["deferredExpansions"] = (
             [] if source_complete else [dict(expansionId=4, httpStatus=404)]
         )

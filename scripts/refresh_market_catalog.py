@@ -20,6 +20,7 @@ from pathlib import Path
 
 from nla_catalog_gateway.cardtrader_capture import capture_catalog
 from nla_catalog_gateway.cardtrader_catalog import CardTraderCatalogClient
+from nla_catalog_gateway.cardtrader_scope import GAME_SCOPES, game_ids_for_scope
 from nla_catalog_gateway.shopify_capture_http import ShopifyCaptureHttp
 from nla_catalog_gateway.shopify_draft_publication import publish_verified_drafts
 from scripts import activate_staging_refresh as activation
@@ -242,6 +243,7 @@ def cycle(
     max_attempts=1,
     max_batches=1,
     publish_online_store=None,
+    game_scope="legacy",
     pause=time.sleep,
 ):
     """Caller holds state's pipeline lock; individual stages use refresh's lock.
@@ -249,6 +251,7 @@ def cycle(
     Bounded source capture and identity polling reuse their durable receipts.
     Any error/interruption retains pending-market-run.json for operator inspection.
     """
+    game_ids_for_scope(game_scope)
     if (
         type(apply_drafts) is not bool
         or type(max_attempts) is not int
@@ -291,6 +294,7 @@ def cycle(
     result = dict(
         run=name,
         status="incomplete",
+        gameScope=game_scope,
         startedAt=refresh.timestamp(),
         published=False,
         applyDrafts=apply_drafts,
@@ -305,7 +309,7 @@ def cycle(
         publicationEnabled=publish_online_store is not None,
     )
     try:
-        source = capture_catalog(cardtrader, run / "source")
+        source = capture_catalog(cardtrader, run / "source", game_scope=game_scope)
         result["sourceExpansions"] = source["completedExpansions"]
         result["sourceBlueprints"] = source["blueprints"]
         result["sourceDeferredExpansions"] = source.get("deferredExpansions", [])
@@ -476,6 +480,7 @@ def main():
     parser.add_argument("--max-batches", type=int, default=1)
     parser.add_argument("--apply-drafts", action="store_true")
     parser.add_argument("--publish-online-store", default=None)
+    parser.add_argument("--game-scope", choices=GAME_SCOPES, default="legacy")
     args = parser.parse_args()
     try:
         if not __debug__ or sys.platform != "linux" or os.geteuid() != 0:
@@ -504,6 +509,7 @@ def main():
                 max_attempts=args.max_attempts,
                 max_batches=args.max_batches,
                 publish_online_store=args.publish_online_store,
+                game_scope=args.game_scope,
             )
         print(json.dumps(result))
         return 0

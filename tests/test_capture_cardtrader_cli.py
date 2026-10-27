@@ -6,7 +6,8 @@ from scripts import capture_cardtrader_catalog as cli
 
 
 @pytest.mark.parametrize("case", ["success", "invalid_json", "invalid_token", "capture_error"])
-def test_cli_uses_private_file_and_never_prints_token(tmp_path, monkeypatch, capsys, case):
+@pytest.mark.parametrize("scope", ["legacy", "six-games"])
+def test_cli_uses_private_file_and_never_prints_token(tmp_path, monkeypatch, capsys, case, scope):
     secret = "test-only-secret"  # noqa: S105 -- synthetic log-redaction sentinel
     credential = tmp_path / "credential.json"
     credential.write_text(
@@ -16,12 +17,14 @@ def test_cli_uses_private_file_and_never_prints_token(tmp_path, monkeypatch, cap
     )
     credential.chmod(0o600)
     output = tmp_path / "capture"
-    monkeypatch.setattr(
-        sys, "argv", ["capture", "--credential-file", str(credential), "--output", str(output)]
-    )
+    argv = ["capture", "--credential-file", str(credential), "--output", str(output)]
+    if scope != "legacy":
+        argv.extend(["--game-scope", scope])
+    monkeypatch.setattr(sys, "argv", argv)
 
-    def capture(client, destination):
+    def capture(client, destination, *, game_scope):
         assert destination == output
+        assert game_scope == scope
         if case == "capture_error":
             raise RuntimeError(secret)
         return {"status": "complete", "shopifyChanged": False, "files": {"never_print": secret}}

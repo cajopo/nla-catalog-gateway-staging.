@@ -402,8 +402,8 @@ def test_cycle_boundaries_keep_pending_and_block_unsafe_next_stage(market_case, 
     elif case == "pending_before_identity":
         original = market.capture_catalog
 
-        def source(*a):
-            result = original(*a)
+        def source(*a, **kw):
+            result = original(*a, **kw)
             pending.touch()
             return result
 
