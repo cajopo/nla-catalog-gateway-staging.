@@ -56,6 +56,7 @@ from nla_catalog_gateway.runtime_contract import (
     ProductStatus,
     RequestFamily,
     SelectedOptionV1,
+    contract_version_for_game,
 )
 from nla_catalog_gateway.taxonomy import Game, ProductFamily
 
@@ -102,6 +103,7 @@ def _record(
     is_unclassified = family is ProductFamily.UNCLASSIFIED
     is_sealed = family is ProductFamily.SEALED
     return CatalogProductRecordV1(
+        contract_version=contract_version_for_game(game),
         product_gid=f"gid://shopify/Product/{product}",
         handle=handle or f"product-{product}",
         commercial_title="Synthetic product",
@@ -134,6 +136,7 @@ def _request(
     in_stock: bool | None = None,
 ) -> CatalogRequestV1:
     return CatalogRequestV1(
+        contract_version=contract_version_for_game(game),
         game=game,
         product_family=family,
         query=query,

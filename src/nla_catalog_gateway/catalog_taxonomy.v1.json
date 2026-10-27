@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "classificationRuleVersion": "2026-09-07.1",
+  "classificationRuleVersion": "2026-10-27.1",
   "gameAliases": {
     "magic": "magic",
     "magic: the gathering": "magic",
@@ -10,7 +10,10 @@
     "yugioh": "yugioh",
     "one piece": "one-piece",
     "one-piece": "one-piece",
-    "onepiece": "one-piece"
+    "onepiece": "one-piece",
+    "lorcana": "lorcana",
+    "disney lorcana": "lorcana",
+    "riftbound": "riftbound"
   },
   "productTypes": {
     "Magic Display": {
@@ -36,6 +39,16 @@
     "Yugioh Single": {
       "id": "product-type:yugioh-single",
       "game": "yugioh",
+      "productFamily": "single"
+    },
+    "Lorcana Single": {
+      "id": "product-type:lorcana-single",
+      "game": "lorcana",
+      "productFamily": "single"
+    },
+    "Riftbound Single": {
+      "id": "product-type:riftbound-single",
+      "game": "riftbound",
       "productFamily": "single"
     },
     "One Piece Single": {

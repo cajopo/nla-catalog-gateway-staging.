@@ -33,9 +33,10 @@ from nla_catalog_gateway.runtime_contract import (
     CatalogProductRecordV1,
     CatalogRequestV1,
     RequestFamily,
+    contract_version_for_game,
 )
 from nla_catalog_gateway.sync import SyncCore
-from nla_catalog_gateway.taxonomy import Game, ProductFamily
+from nla_catalog_gateway.taxonomy import LEGACY_GAMES, Game, ProductFamily
 
 _CONCRETE_PATH_TYPE = type(Path())
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
@@ -167,6 +168,7 @@ def _gid_key(product_gid: str) -> tuple[int, str]:
 
 def _request(game: Game, family: RequestFamily) -> CatalogRequestV1:
     return CatalogRequestV1(
+        contract_version=contract_version_for_game(game),
         game=game,
         product_family=family,
         query=None,
@@ -175,11 +177,17 @@ def _request(game: Game, family: RequestFamily) -> CatalogRequestV1:
     )
 
 
+def _evidence_games(records: tuple[CatalogProductRecordV1, ...]) -> tuple[Game, ...]:
+    """Always prove legacy coverage and every additional game present in this dataset."""
+    present = {record.game for record in records}
+    return tuple(game for game in Game if game in LEGACY_GAMES or game in present)
+
+
 def _expected_pagination(
     records: tuple[CatalogProductRecordV1, ...],
 ) -> dict[tuple[Game, RequestFamily], tuple[str, ...]]:
     expected: dict[tuple[Game, RequestFamily], tuple[str, ...]] = {}
-    for game in Game:
+    for game in _evidence_games(records):
         for family in _REQUEST_FAMILIES:
             product_family = None if family is RequestFamily.ALL else ProductFamily(family.value)
             gids = (
@@ -199,7 +207,7 @@ def _verify_pagination(
     expected_by_request: dict[tuple[Game, RequestFamily], tuple[str, ...]],
 ) -> int:
     page_count = 0
-    for game in Game:
+    for game in dict.fromkeys(game for game, _ in expected_by_request):
         for family in _REQUEST_FAMILIES:
             expected = expected_by_request[(game, family)]
             request = _request(game, family)
@@ -285,7 +293,9 @@ def _verify_search(
     if len(by_gid) != len(records):
         raise CatalogCoreEvidenceError(_ERROR)
     query_count = 0
-    for game in Game:
+    for game in _evidence_games(records):
+        if game not in LEGACY_GAMES:
+            query_count += _verify_commercial_search(records, paginator, game)
         scoped = tuple(
             sorted(
                 (
@@ -314,7 +324,11 @@ def _verify_search(
             if record.publishable and record.canonical_card_name is not None
         )
         if not searchable:
-            raise CatalogCoreEvidenceError(_ERROR)
+            if game in LEGACY_GAMES:
+                raise CatalogCoreEvidenceError(_ERROR)
+            # Draft-only or sealed-only onboarding must not invalidate a generation.
+            # Public singles, if present, still require canonical names at DTO validation.
+            continue
         facts = tuple(
             (
                 record,
@@ -421,6 +435,61 @@ def _verify_search(
     return query_count
 
 
+def _verify_commercial_search(
+    records: tuple[CatalogProductRecordV1, ...], paginator: CatalogPaginator, game: Game
+) -> int:
+    """Prove public new-game sealed/accessory search against record-derived expectations."""
+    count = 0
+    for family in (ProductFamily.SEALED, ProductFamily.ACCESSORY):
+        scoped = sorted(
+            (
+                record
+                for record in records
+                if record.game is game and record.product_family is family and record.publishable
+            ),
+            key=lambda record: _gid_key(record.product_gid),
+        )
+        samples = (
+            [scoped[index] for index in sorted({0, len(scoped) // 2, len(scoped) - 1})]
+            if scoped
+            else []
+        )
+        queries = {_expected_normalized_name(record.commercial_title)[:256] for record in samples}
+        queries.update(record.product_subtype for record in samples if record.product_subtype)
+        for query in sorted(queries):
+            for stock in (None, False, True):
+                expected = [
+                    record.product_gid
+                    for record in scoped
+                    if (
+                        query in _expected_normalized_name(record.commercial_title)
+                        or query in _expected_normalized_name(record.product_subtype or "")
+                    )
+                    and (
+                        stock is None
+                        or any(variant.inventory_quantity > 0 for variant in record.variants)
+                        is stock
+                    )
+                ]
+                request = replace(
+                    _request(game, RequestFamily(family.value)),
+                    query=query,
+                    filters=CatalogFiltersV1(stock, None),
+                )
+                actual = []
+                cursor = None
+                for _ in range(max(1, (len(expected) + _PAGE_SIZE - 1) // _PAGE_SIZE)):
+                    page = paginator.fetch_page(request, cursor=cursor)
+                    actual.extend(item.product_gid for item in page.page.items)
+                    cursor = page.next_cursor
+                    if cursor is None:
+                        break
+                if cursor is not None or actual != expected:
+                    raise CatalogCoreEvidenceError(_ERROR)
+                count += 1
+    return count
+
+
 def _facet(
     evaluation: FacetEvaluation,
     dimension: FacetDimension,
@@ -440,7 +509,7 @@ def _verify_facets(records: tuple[CatalogProductRecordV1, ...]) -> int:
     )
     items = tuple(CatalogItemV1.from_product_record(record) for record in public_records)
     evaluation_count = 0
-    for game in Game:
+    for game in _evidence_games(records):
         game_records = tuple(record for record in public_records if record.game is game)
         family_expected = tuple(
             (family.value, sum(record.product_family is family for record in game_records))

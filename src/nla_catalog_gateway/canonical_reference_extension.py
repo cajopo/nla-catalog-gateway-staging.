@@ -7,10 +7,10 @@ from collections.abc import Iterable
 from pathlib import Path
 
 from nla_catalog_gateway.canonical_names import (
-    CANONICAL_GAME_ORDER,
     CSV_HEADER,
     MANIFEST_FILENAME,
     SIDECAR_FILENAME,
+    SUPPORTED_GAME_ORDER,
     CanonicalNameRecordV1,
     build_canonical_name_sidecar,
     load_canonical_names,
@@ -30,7 +30,7 @@ def build_extended_reference(
 
     Caller supplies only verified missing mappings; existing keys, cross-game
     source-ID reuse and duplicate additions are errors, never replacements. Keep
-    source/provenance evidence alongside the output. Four derived CSVs are retained
+    source/provenance evidence alongside the output. Derived CSVs for the source roster are retained
     as the actual builder inputs, not misrepresented as original PowerTools exports.
     Output must not exist. Failed output is retained for inspection, not activated.
     """
@@ -54,7 +54,10 @@ def build_extended_reference(
         raise ValueError("no_canonical_additions")
     output_directory.mkdir(mode=0o700)
     sources = {}
-    for game in CANONICAL_GAME_ORDER:
+    source_games = {source.game for source in parent_manifest.sources} | {r.game for r in added}
+    for game in SUPPORTED_GAME_ORDER:
+        if game not in source_games:
+            continue
         path = output_directory / f"derived-{game.value}.csv"
         sources[game] = path
         with path.open("x", encoding="utf-8", newline="") as stream:
@@ -85,7 +88,7 @@ def build_extended_reference(
         verified = load_canonical_names(source, manifest=manifest)
     if verified != combined or any(verified[key] != value for key, value in existing.items()):
         raise ValueError("canonical_extension_roundtrip_changed_records")
-    added.sort(key=lambda r: (CANONICAL_GAME_ORDER.index(r.game), len(r.source_id), r.source_id))
+    added.sort(key=lambda r: (SUPPORTED_GAME_ORDER.index(r.game), len(r.source_id), r.source_id))
     addition_bytes = b"".join(record.to_json_bytes() + b"\n" for record in added)
     with (output_directory / "additions.v1.jsonl").open("xb") as stream:
         stream.write(addition_bytes)

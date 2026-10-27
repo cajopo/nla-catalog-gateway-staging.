@@ -27,4 +27,4 @@ def test_taxonomy_mapping_is_packaged() -> None:
     mapping = files("nla_catalog_gateway").joinpath("catalog_taxonomy.v1.json")
     payload = json.loads(mapping.read_text(encoding="utf-8"))
     assert payload["schemaVersion"] == 1
-    assert payload["classificationRuleVersion"] == "2026-09-07.1"
+    assert payload["classificationRuleVersion"] == "2026-10-27.1"

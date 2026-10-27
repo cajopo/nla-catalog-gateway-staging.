@@ -25,9 +25,10 @@ from nla_catalog_gateway.bulk import (
     SourceSnapshotManifest,
 )
 from nla_catalog_gateway.card_metadata import CardMetadataV1, optional_card_metadata
-from nla_catalog_gateway.taxonomy import Classification, Game, ProductFamily
+from nla_catalog_gateway.taxonomy import LEGACY_GAMES, Classification, Game, ProductFamily
 
 CONTRACT_VERSION = 1
+MULTIGAME_CONTRACT_VERSION = 2
 SOURCE_MANIFEST_SCHEMA_VERSION = 2
 MAX_CONTRACT_BYTES = 2 * 1024 * 1024
 MAX_SOURCE_MANIFEST_BYTES = 64 * 1024
@@ -145,7 +146,7 @@ FEATURE_CAPABILITIES_V1: tuple[tuple[str, CapabilityState], ...] = (
 
 REQUEST_CAPABILITIES_V1: tuple[tuple[str, CapabilityState], ...] = tuple(
     (f"{game.value}/{family.value}", CapabilityState.PROVISIONAL)
-    for game in Game
+    for game in LEGACY_GAMES
     for family in RequestFamily
 )
 
@@ -164,6 +165,18 @@ COMPATIBILITY_MATRIX_V1: Mapping[str, str] = MappingProxyType(
 
 def _fail(message: str) -> RuntimeContractError:
     return RuntimeContractError(message)
+
+
+def contract_version_for_game(game: Game | None) -> int:
+    """Keep v1 bytes frozen; new game vocabulary requires an explicit v2 payload."""
+    if game is not None and type(game) is not Game:
+        raise _fail("game must be canonical")
+    return CONTRACT_VERSION if game is None or game in LEGACY_GAMES else MULTIGAME_CONTRACT_VERSION
+
+
+def _game_contract_version(version: int, game: Game | None, context: str) -> None:
+    if type(version) is not int or version != contract_version_for_game(game):
+        raise _fail(f"{context} contractVersion does not match its game")
 
 
 def _canonical_json_bytes(value: Any) -> bytes:
@@ -731,8 +744,7 @@ class CatalogProductRecordV1(_JsonDto):
     )
 
     def __post_init__(self) -> None:
-        if type(self.contract_version) is not int or self.contract_version != CONTRACT_VERSION:
-            raise _fail("catalog product record contractVersion must be 1")
+        _game_contract_version(self.contract_version, self.game, "catalog product record")
         _gid(self.product_gid, "Product", "productGid")
         _string(self.handle, "product handle")
         _string(self.commercial_title, "commercialTitle")
@@ -842,6 +854,7 @@ class CatalogProductRecordV1(_JsonDto):
         if type(classification) is not Classification:
             raise _fail("classification must be a taxonomy Classification")
         return cls(
+            contract_version=contract_version_for_game(classification.game),
             product_gid=classification.product_gid,
             handle=handle,
             commercial_title=commercial_title,
@@ -965,8 +978,7 @@ class CatalogItemV1(_JsonDto):
     )
 
     def __post_init__(self) -> None:
-        if type(self.contract_version) is not int or self.contract_version != CONTRACT_VERSION:
-            raise _fail("catalog item contractVersion must be 1")
+        _game_contract_version(self.contract_version, self.game, "catalog item")
         _gid(self.product_gid, "Product", "productGid")
         _string(self.handle, "catalog item handle")
         _string(self.commercial_title, "commercialTitle")
@@ -1010,6 +1022,7 @@ class CatalogItemV1(_JsonDto):
         if not record.publishable or record.product_family is ProductFamily.UNCLASSIFIED:
             raise _fail("catalog item source must be active, published, and classified")
         return cls(
+            contract_version=record.contract_version,
             product_gid=record.product_gid,
             handle=record.handle,
             commercial_title=record.commercial_title,
@@ -1172,7 +1185,7 @@ class CapabilityMatrixV1(_JsonDto):
         if type(game) is not Game or type(family) is not RequestFamily:
             raise _fail("capability request arguments must be canonical enums")
         key = f"{game.value}/{family.value}"
-        return dict(self.requests)[key]
+        return dict(self.requests).get(key, CapabilityState.UNSUPPORTED)
 
 
 DEFAULT_CAPABILITIES_V1 = CapabilityMatrixV1()
@@ -1201,8 +1214,7 @@ class CatalogRequestV1(_JsonDto):
     )
 
     def __post_init__(self) -> None:
-        if type(self.contract_version) is not int or self.contract_version != CONTRACT_VERSION:
-            raise _fail("catalog request contractVersion must be 1")
+        _game_contract_version(self.contract_version, self.game, "catalog request")
         if type(self.game) is not Game:
             raise _fail("catalog request game must be canonical")
         if type(self.product_family) is not RequestFamily:
@@ -1225,7 +1237,8 @@ class CatalogRequestV1(_JsonDto):
         ) and self.product_family is not RequestFamily.SINGLE:
             raise _fail("card metadata filters are only compatible with single requests")
         if (
-            DEFAULT_CAPABILITIES_V1.request_state(self.game, self.product_family)
+            self.contract_version == 1
+            and DEFAULT_CAPABILITIES_V1.request_state(self.game, self.product_family)
             is CapabilityState.UNSUPPORTED
         ):
             raise _fail("game and productFamily request combination is unsupported")
@@ -1272,7 +1285,7 @@ def _request_context_dict(dataset_generation: str, request: CatalogRequestV1) ->
     if type(request) is not CatalogRequestV1:
         raise _fail("request context request must be CatalogRequestV1")
     context = {
-        "contractVersion": CONTRACT_VERSION,
+        "contractVersion": request.contract_version,
         "cursorVersion": 1,
         "datasetGeneration": dataset_generation,
         "endpoint": CatalogEndpoint.CATALOG.value,
@@ -1308,8 +1321,8 @@ class CursorContextV1(_JsonDto):
     )
 
     def __post_init__(self) -> None:
-        if type(self.contract_version) is not int or self.contract_version != CONTRACT_VERSION:
-            raise _fail("cursor context contractVersion must be 1")
+        if type(self.contract_version) is not int or self.contract_version not in (1, 2):
+            raise _fail("cursor context contractVersion must be 1 or 2")
         if type(self.cursor_version) is not int or self.cursor_version != 1:
             raise _fail("cursorVersion must be 1")
         _generation(self.dataset_generation, "datasetGeneration")
@@ -1317,6 +1330,8 @@ class CursorContextV1(_JsonDto):
             raise _fail("cursor endpoint must be canonical")
         if type(self.request) is not CatalogRequestV1:
             raise _fail("cursor context request must be CatalogRequestV1")
+        if self.contract_version != self.request.contract_version:
+            raise _fail("cursor context contractVersion must match request")
         if type(self.last_sort_values) is not tuple or any(
             type(value) is not str for value in self.last_sort_values
         ):
@@ -1338,6 +1353,7 @@ class CursorContextV1(_JsonDto):
         expires_at: str,
     ) -> Self:
         return cls(
+            contract_version=request.contract_version,
             dataset_generation=dataset_generation,
             endpoint=CatalogEndpoint.CATALOG,
             request=request,
@@ -1446,11 +1462,13 @@ class CatalogPageV1(_JsonDto):
     )
 
     def __post_init__(self) -> None:
-        if type(self.contract_version) is not int or self.contract_version != CONTRACT_VERSION:
-            raise _fail("catalog page contractVersion must be 1")
+        if type(self.contract_version) is not int or self.contract_version not in (1, 2):
+            raise _fail("catalog page contractVersion must be 1 or 2")
         _generation(self.dataset_generation, "datasetGeneration")
         if type(self.request) is not CatalogRequestV1:
             raise _fail("catalog page request must be CatalogRequestV1")
+        if self.contract_version != self.request.contract_version:
+            raise _fail("catalog page contractVersion must match request")
         _sha256(self.request_context_sha256, "requestContextSha256")
         expected_request_digest = hashlib.sha256(
             _canonical_json_bytes(_request_context_dict(self.dataset_generation, self.request))
@@ -1474,6 +1492,8 @@ class CatalogPageV1(_JsonDto):
         if len(self.items) > self.request.page_size:
             raise _fail("catalog page exceeds the bound pageSize")
         for item in self.items:
+            if item.contract_version != self.contract_version:
+                raise _fail("catalog page item contractVersion must match page")
             if item.game is not self.request.game:
                 raise _fail("catalog page item leaks across the requested game")
             if (

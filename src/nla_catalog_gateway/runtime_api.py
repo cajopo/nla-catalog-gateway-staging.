@@ -888,10 +888,12 @@ class CatalogRequestEnvelopeV1:
     FIELDS = frozenset({"contractVersion", "cursor", "request"})
 
     def __post_init__(self) -> None:
-        if type(self.contract_version) is not int or self.contract_version != CONTRACT_VERSION:
-            raise RuntimeApiContractError("request envelope contractVersion must be 1")
+        if type(self.contract_version) is not int or self.contract_version not in (1, 2):
+            raise RuntimeApiContractError("request envelope contractVersion must be 1 or 2")
         if type(self.request) is not CatalogRequestV1:
             raise RuntimeApiContractError("request envelope request must be canonical")
+        if self.contract_version != self.request.contract_version:
+            raise RuntimeApiContractError("request envelope version must match request")
         _validate_request_scope(self.request)
         _validated_cursor(self.cursor, MAX_CURSOR_CHARS)
         if type(self.include_suggestions) is not bool:
@@ -946,11 +948,8 @@ class CatalogRequestEnvelopeV1:
         value = _load_json_object(raw, byte_limit=byte_limit)
         fields = cls.FIELDS | ({"includeSuggestions", "includeFacets"} & value.keys())
         _exact_keys(value, fields)
-        if (
-            type(value["contractVersion"]) is not int
-            or value["contractVersion"] != CONTRACT_VERSION
-        ):
-            raise RuntimeApiContractError("request envelope contractVersion must be 1")
+        if type(value["contractVersion"]) is not int or value["contractVersion"] not in (1, 2):
+            raise RuntimeApiContractError("request envelope contractVersion must be 1 or 2")
         request_value = value["request"]
         if _raw_request_is_incompatible(request_value):
             raise IncompatibleCatalogRequestError("catalog request fields are incompatible")
@@ -961,6 +960,7 @@ class CatalogRequestEnvelopeV1:
         _validate_request_scope(request)
         cursor = _validated_cursor(value["cursor"], cursor_char_limit)
         return cls(
+            contract_version=value["contractVersion"],
             request=request,
             cursor=cursor,
             include_suggestions=value.get("includeSuggestions", False),
@@ -1091,8 +1091,8 @@ class CatalogResponseEnvelopeV1:
     FIELDS = frozenset({"contractVersion", "nextCursor", "page"})
 
     def __post_init__(self) -> None:
-        if type(self.contract_version) is not int or self.contract_version != CONTRACT_VERSION:
-            raise RuntimeApiContractError("response envelope contractVersion must be 1")
+        if type(self.contract_version) is not int or self.contract_version not in (1, 2):
+            raise RuntimeApiContractError("response envelope contractVersion must be 1 or 2")
         if type(self.page) is CatalogPageV1:
             page = _PublicCatalogPageV1.from_catalog_page(self.page)
         elif type(self.page) is _PublicCatalogPageV1:
@@ -1108,6 +1108,8 @@ class CatalogResponseEnvelopeV1:
             )
         else:
             raise RuntimeApiContractError("response envelope page must be canonical")
+        if self.contract_version != page.contract_version:
+            raise RuntimeApiContractError("response envelope version must match page")
         cursor = _validated_cursor(self.next_cursor, MAX_CURSOR_CHARS)
         if page.has_next_page != (cursor is not None):
             raise RuntimeApiContractError("opaque cursor must match terminal page state")
@@ -1119,7 +1121,7 @@ class CatalogResponseEnvelopeV1:
     def as_dict(self) -> dict[str, Any]:
         if (
             type(self.contract_version) is not int
-            or self.contract_version != CONTRACT_VERSION
+            or self.contract_version not in (1, 2)
             or type(self.page) is not _PublicCatalogPageV1
         ):
             raise RuntimeApiContractError("response envelope is invalid")
@@ -1133,6 +1135,8 @@ class CatalogResponseEnvelopeV1:
             returned_variant_count=self.page.returned_variant_count,
             has_next_page=self.page.has_next_page,
         )
+        if self.contract_version != page.contract_version:
+            raise RuntimeApiContractError("response envelope version must match page")
         cursor = _validated_cursor(self.next_cursor, MAX_CURSOR_CHARS)
         if page.has_next_page != (cursor is not None):
             raise RuntimeApiContractError("opaque cursor must match terminal page state")
@@ -1171,16 +1175,14 @@ class CatalogResponseEnvelopeV1:
         value = _load_json_object(raw, byte_limit=byte_limit)
         fields = cls.FIELDS | ({"suggestions", "facets"} & value.keys())
         _exact_keys(value, fields)
-        if (
-            type(value["contractVersion"]) is not int
-            or value["contractVersion"] != CONTRACT_VERSION
-        ):
-            raise RuntimeApiContractError("response envelope contractVersion must be 1")
+        if type(value["contractVersion"]) is not int or value["contractVersion"] not in (1, 2):
+            raise RuntimeApiContractError("response envelope contractVersion must be 1 or 2")
         page_value = value["page"]
         if type(page_value) is not dict:
             raise RuntimeApiContractError("response envelope page must be an object")
         page = _PublicCatalogPageV1.from_dict(page_value)
         result = cls(
+            contract_version=value["contractVersion"],
             page=page,
             next_cursor=_validated_cursor(value["nextCursor"], MAX_CURSOR_CHARS),
             suggestions=(
@@ -2180,7 +2182,9 @@ def _validated_result(
         next_request_bytes = (
             None
             if next_cursor is None
-            else CatalogRequestEnvelopeV1(request=request, cursor=next_cursor).to_json_bytes()
+            else CatalogRequestEnvelopeV1(
+                contract_version=request.contract_version, request=request, cursor=next_cursor
+            ).to_json_bytes()
         )
     except Exception as exc:
         raise _OutputContractFailure from exc
@@ -2194,7 +2198,11 @@ def _validated_result(
         raise _OutputContractFailure
     try:
         return CatalogResponseEnvelopeV1(
-            page=page, next_cursor=next_cursor, suggestions=value.suggestions, facets=value.facets
+            contract_version=request.contract_version,
+            page=page,
+            next_cursor=next_cursor,
+            suggestions=value.suggestions,
+            facets=value.facets,
         )
     except RuntimeApiContractError as exc:
         raise _OutputContractFailure from exc

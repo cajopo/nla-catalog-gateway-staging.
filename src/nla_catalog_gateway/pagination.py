@@ -40,6 +40,7 @@ from nla_catalog_gateway.runtime_contract import (
     CursorContextV1,
     DatasetManifestV1,
     RuntimeContractError,
+    contract_version_for_game,
 )
 from nla_catalog_gateway.search_sql import (
     normalized_query,
@@ -762,6 +763,7 @@ class CatalogProjection:
                 else None
             )
             page = CatalogPageV1(
+                contract_version=request.contract_version,
                 dataset_generation=self.dataset_generation,
                 request=request,
                 request_context_sha256=context.request_context_sha256,
@@ -949,6 +951,7 @@ class CatalogProjection:
         row: sqlite3.Row, variants: tuple[CatalogVariantItemV1, ...]
     ) -> CatalogItemV1:
         return CatalogItemV1(
+            contract_version=contract_version_for_game(Game(row["game"])),
             product_gid=row["product_gid"],
             handle=row["handle"],
             commercial_title=row["commercial_title"],
