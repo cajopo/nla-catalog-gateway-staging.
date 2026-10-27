@@ -30,6 +30,12 @@ class Game(StrEnum):
     POKEMON = "pokemon"
     YUGIOH = "yugioh"
     ONE_PIECE = "one-piece"
+    LORCANA = "lorcana"
+    RIFTBOUND = "riftbound"
+
+
+# Frozen v1 roster. Newly supported games use the explicit v2 wire contract.
+LEGACY_GAMES = (Game.MAGIC, Game.POKEMON, Game.YUGIOH, Game.ONE_PIECE)
 
 
 class ProductFamily(StrEnum):
@@ -257,9 +263,9 @@ def _parse_game_aliases(value: Any) -> dict[str, Game]:
         alias: _parse_game(game, f"gameAliases.{alias}")
         for alias, game in _normalized_entries(value, "gameAliases")
     }
-    if set(aliases.values()) != set(Game):
+    if not set(LEGACY_GAMES) <= set(aliases.values()):
         raise TaxonomyError("gameAliases must cover every supported game")
-    for game in Game:
+    for game in set(aliases.values()):
         canonical_key = _normalize(game.value)
         if aliases.get(canonical_key) is not game:
             raise TaxonomyError(f"gameAliases canonical key {game.value!r} must map to itself")

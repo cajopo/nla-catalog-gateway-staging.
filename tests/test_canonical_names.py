@@ -224,7 +224,7 @@ def test_manifest_constructor_rejects_invalid_invariants() -> None:
     empty = b""
     manifest = _manifest_for_sidecar(empty, [])
     with pytest.raises(CanonicalNamesError, match="schemaVersion"):
-        replace(manifest, schema_version=2)
+        replace(manifest, schema_version=3)
     with pytest.raises(CanonicalNamesError, match="generatorCodeSha"):
         replace(manifest, generator_code_sha="b" * 41)
     with pytest.raises(CanonicalNamesError, match="source evidence"):

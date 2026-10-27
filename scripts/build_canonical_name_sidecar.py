@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build the pinned canonical-name sidecar from four authoritative CSV exports."""
+"""Build pinned canonical names from the legacy four and optional new-game exports."""
 
 from __future__ import annotations
 
@@ -19,6 +19,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--pokemon", required=True, type=Path, help="Authoritative Pokemon CSV")
     parser.add_argument("--yugioh", required=True, type=Path, help="Authoritative Yu-Gi-Oh CSV")
     parser.add_argument("--one-piece", required=True, type=Path, help="Authoritative One Piece CSV")
+    parser.add_argument("--lorcana", type=Path, help="Verified Lorcana CSV (schema v2)")
+    parser.add_argument("--riftbound", type=Path, help="Verified Riftbound CSV (schema v2)")
     parser.add_argument(
         "--output",
         required=True,
@@ -53,6 +55,8 @@ def main(argv: list[str] | None = None) -> int:
                 Game.POKEMON: args.pokemon,
                 Game.YUGIOH: args.yugioh,
                 Game.ONE_PIECE: args.one_piece,
+                **({Game.LORCANA: args.lorcana} if args.lorcana is not None else {}),
+                **({Game.RIFTBOUND: args.riftbound} if args.riftbound is not None else {}),
             },
             output_directory=args.output,
             generator_code_sha=args.generator_code_sha,

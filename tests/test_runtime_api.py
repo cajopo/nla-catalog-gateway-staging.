@@ -523,9 +523,9 @@ def test_response_envelope_rejects_invalid_type_version_page_and_cursor_state() 
         CatalogResponseEnvelopeV1.from_json_bytes(
             b'{"contractVersion":1,"nextCursor":null,"page":null}'
         )
-    with pytest.raises(RuntimeApiContractError):
+    with pytest.raises(RuntimeApiContractError, match="response envelope contractVersion"):
         CatalogResponseEnvelopeV1.from_json_bytes(
-            b'{"contractVersion":2,"nextCursor":null,"page":{}}'
+            b'{"contractVersion":3,"nextCursor":null,"page":{}}'
         )
     with pytest.raises(RuntimeApiContractError):
         CatalogResponseEnvelopeV1.from_json_bytes(

@@ -30,7 +30,7 @@ from nla_catalog_gateway.runtime_contract import (
     CatalogRequestV1,
     RequestFamily,
 )
-from nla_catalog_gateway.taxonomy import Game, ProductFamily
+from nla_catalog_gateway.taxonomy import LEGACY_GAMES, Game, ProductFamily
 
 ERROR = "catalog core evidence verification failed"
 CODE_SHA = "c" * 40
@@ -40,7 +40,7 @@ SUMMARY_SHA = "d" * 64
 def _records() -> tuple[CatalogProductRecordV1, ...]:
     records: list[CatalogProductRecordV1] = []
     product_id = 1
-    for game in Game:
+    for game in LEGACY_GAMES:
         for sample in range(3):
             record = replace(
                 bundle_helpers._product(str(product_id)),

@@ -21,6 +21,7 @@ from nla_catalog_gateway.runtime_contract import (
     CatalogRequestV1,
     RequestFamily,
     RuntimeContractError,
+    contract_version_for_game,
 )
 from nla_catalog_gateway.taxonomy import Game, ProductFamily
 
@@ -306,6 +307,7 @@ def parse_url_state(query_string: str) -> CatalogRequestV1:
         raise FacetContractError("catalog URL pageSize value is invalid")
     try:
         request = CatalogRequestV1(
+            contract_version=contract_version_for_game(Game(values["game"])),
             game=Game(values["game"]),
             product_family=RequestFamily(values["productFamily"]),
             query=values.get("q"),
@@ -351,6 +353,7 @@ def switch_game(request: CatalogRequestV1, game: Game) -> CatalogRequestV1:
     return replace(
         request,
         game=game,
+        contract_version=contract_version_for_game(game),
         filters=replace(request.filters, product_subtype=None, expansion_code=None, rarity=None),
     )
 

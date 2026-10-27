@@ -27,7 +27,7 @@ from typing import Any, BinaryIO, ClassVar, Final
 from nla_catalog_gateway import bulk
 from nla_catalog_gateway import runtime_contract as runtime
 from nla_catalog_gateway.canonical_names import (
-    CANONICAL_GAME_ORDER,
+    SUPPORTED_GAME_ORDER,
     CanonicalNameRecordV1,
     CanonicalNamesManifestV1,
 )
@@ -248,7 +248,7 @@ class CanonicalNamesInputV1:
         if len(validated) != self.manifest.sidecar.record_count:
             raise ReconciliationContractError("canonical-name mapping count is invalid")
 
-        game_order = {game: index for index, game in enumerate(CANONICAL_GAME_ORDER)}
+        game_order = {game: index for index, game in enumerate(SUPPORTED_GAME_ORDER)}
         digest = hashlib.sha256()
         byte_count = 0
         per_game: Counter[Game] = Counter()

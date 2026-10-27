@@ -19,7 +19,7 @@ from types import MappingProxyType
 from typing import Any, BinaryIO, ClassVar
 
 from nla_catalog_gateway.card_metadata import CardMetadataV1, optional_card_metadata
-from nla_catalog_gateway.taxonomy import Game
+from nla_catalog_gateway.taxonomy import LEGACY_GAMES, Game
 
 SCHEMA_VERSION = 1
 SIDECAR_FILENAME = "canonical-names.v1.jsonl"
@@ -41,7 +41,8 @@ CSV_HEADER = (
     "scryfallId",
     "tcgplayerId",
 )
-CANONICAL_GAME_ORDER = (Game.MAGIC, Game.POKEMON, Game.YUGIOH, Game.ONE_PIECE)
+CANONICAL_GAME_ORDER = LEGACY_GAMES
+SUPPORTED_GAME_ORDER = tuple(Game)
 
 _SHA256_RE = re.compile(r"[0-9a-f]{64}\Z")
 _GENERATOR_CODE_SHA_RE = re.compile(r"(?:[0-9a-f]{40}|[0-9a-f]{64})\Z")
@@ -314,8 +315,8 @@ class CanonicalNamesManifestV1:
     )
 
     def __post_init__(self) -> None:
-        if type(self.schema_version) is not int or self.schema_version != SCHEMA_VERSION:
-            raise CanonicalNamesError("canonical-name manifest schemaVersion must be 1")
+        if type(self.schema_version) is not int or self.schema_version not in (1, 2):
+            raise CanonicalNamesError("canonical-name manifest schemaVersion must be 1 or 2")
         if (
             type(self.generator_code_sha) is not str
             or _GENERATOR_CODE_SHA_RE.fullmatch(self.generator_code_sha) is None
@@ -325,7 +326,13 @@ class CanonicalNamesManifestV1:
             type(source) is not CanonicalNameSourceEvidenceV1 for source in self.sources
         ):
             raise CanonicalNamesError("canonical-name manifest source evidence is invalid")
-        if tuple(source.game for source in self.sources) != CANONICAL_GAME_ORDER:
+        games = tuple(source.game for source in self.sources)
+        expected = tuple(game for game in SUPPORTED_GAME_ORDER if game in games)
+        if (
+            games != expected
+            or not set(CANONICAL_GAME_ORDER) <= set(games)
+            or (self.schema_version == 1) != (games == CANONICAL_GAME_ORDER)
+        ):
             raise CanonicalNamesError("canonical-name manifest sources are invalid")
         if type(self.sidecar) is not CanonicalNameSidecarEvidenceV1:
             raise CanonicalNamesError("canonical-name manifest sidecar evidence is invalid")
@@ -383,7 +390,7 @@ def load_canonical_names_manifest(raw: bytes, *, expected_sha256: str) -> Canoni
 
 def _record_order_key(record: CanonicalNameRecordV1) -> tuple[int, int, str]:
     return (
-        CANONICAL_GAME_ORDER.index(record.game),
+        SUPPORTED_GAME_ORDER.index(record.game),
         len(record.source_id),
         record.source_id,
     )
@@ -503,7 +510,7 @@ def build_canonical_name_sidecar(
     if (
         type(sources) is not dict
         or any(type(game) is not Game for game in sources)
-        or set(sources) != set(CANONICAL_GAME_ORDER)
+        or not set(CANONICAL_GAME_ORDER) <= set(sources)
     ):
         raise CanonicalNamesError("canonical-name CSV source mapping is invalid")
     if type(output_directory) is not _CONCRETE_PATH_TYPE:
@@ -518,7 +525,8 @@ def build_canonical_name_sidecar(
         final_directory = parent / output_directory.name
         if not parent.is_dir() or os.path.lexists(final_directory):
             raise CanonicalNamesError("canonical-name output boundary is invalid")
-        originals = [sources[game] for game in CANONICAL_GAME_ORDER]
+        source_games = tuple(game for game in SUPPORTED_GAME_ORDER if game in sources)
+        originals = [sources[game] for game in source_games]
         if any(
             type(source) is not _CONCRETE_PATH_TYPE or source.is_symlink() for source in originals
         ):
@@ -542,7 +550,7 @@ def build_canonical_name_sidecar(
         sidecar_count = 0
         source_evidence: list[CanonicalNameSourceEvidenceV1] = []
         with sidecar_path.open("xb") as output:
-            for game, resolved in zip(CANONICAL_GAME_ORDER, resolved_sources, strict=True):
+            for game, resolved in zip(source_games, resolved_sources, strict=True):
                 records, raw = _load_csv_source(resolved, game)
                 source_evidence.append(
                     CanonicalNameSourceEvidenceV1(
@@ -562,6 +570,7 @@ def build_canonical_name_sidecar(
             os.fsync(output.fileno())
 
         manifest = CanonicalNamesManifestV1(
+            schema_version=1 if source_games == CANONICAL_GAME_ORDER else 2,
             generator_code_sha=generator_code_sha,
             sources=tuple(source_evidence),
             sidecar=CanonicalNameSidecarEvidenceV1(
