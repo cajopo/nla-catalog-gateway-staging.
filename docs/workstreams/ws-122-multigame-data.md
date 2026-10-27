@@ -90,8 +90,10 @@ $testRoot = 'C:/Users/umbri/AppData/Local/Temp/nla-multigame-' + [guid]::NewGuid
 ```
 
 Local verification on 27 October 2026: the expanded regression selection passed
-628 tests; the final multigame selection passed all 16 tests. Ruff lint and format
-checks passed, repository preflight passed, and `python -m build` produced both
+628 tests; the final multigame selection contains 20 tests, included in the
+265-test contract/search/transport regression run that passed after the coverage
+follow-up. Ruff lint and format checks passed, repository preflight passed, and
+`python -m build` produced both
 distribution formats. The full foundation suite and its 100% coverage gate remain
 required before merge; the subset's diagnostic coverage is not that gate.
 
