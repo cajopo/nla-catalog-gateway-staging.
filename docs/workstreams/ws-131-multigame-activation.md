@@ -329,12 +329,100 @@ incluse 38 anomalie: le identità assenti dalla proiezione sono 3.356 Lorcana,
 1.780 Riftbound e 345 Yu-Gi-Oh!. I record senza ID verificabile, le categorie
 non carta e quelle non classificate restano esplicitamente distinti.
 
-La correzione [#133](https://github.com/cajopo/nla-catalog-gateway-staging./issues/133)
-deve proseguire con una baseline completa nuova dopo progressi verificati,
-conservare i rinvii e le loro risoluzioni e fermarsi senza progressi o con
-scritture incerte. Non autorizza ad aggirare i controlli di identità.
+La correzione [#133](https://github.com/cajopo/nla-catalog-gateway-staging./issues/133),
+[PR #134](https://github.com/cajopo/nla-catalog-gateway-staging./pull/134), è stata
+unita nel commit `f2c22ae28c10572ee8a7995463d485805f267624`. Prosegue con una
+baseline completa nuova dopo progressi verificati, conserva i rinvii e le loro
+risoluzioni e si ferma senza progressi o con scritture incerte. I controlli di
+identità restano invariati. La revisione indipendente è positiva; CI sullo head
+`2b2214c6787067ce116f20f25f9adfd253519cf0`: 4.569 test passati, zero saltati e
+copertura statement/branch 100% sia su Python 3.12 sia su 3.13. Ruff, preflight,
+build, container, dipendenze e CodeQL sono verdi. Su 3.13 resta un ResourceWarning
+del test preesistente `test_metadata_facet_counts`, senza test falliti.
 
-Questo documento attesta l'installazione del gateway e due cicli parziali, ma non
+L'archivio dell'importatore ha SHA-256
+`eaacbb01364f7f42c7a421512fcc71d74aac1c74a1979804718dbcad7424041a` e contiene
+284 file. Il coordinatore archiviato ha SHA-256
+`72d3d39db900e6abe1799ca8c84d234de2f558beefe40d9bc9ce28f98b458394`:
+28.070 byte con 623 terminatori CRLF. Il blob Git, normalizzato a LF, ha invece
+SHA-256 `7dd2b0d9c24c5f718ee9ad03109226ef4bacb4bb054713c2ef1b0db08f20a34f`.
+Il controllo finale deve usare i byte effettivi dell'archivio verificato.
+Il pacchetto runtime/refresh resta sul commit `8b23217f23d7c4f15cf032c6d4f8f3826b56fc5e`.
+Il budget dell'importatore passa da 60 a 100 batch, entro il massimo già
+validato, mantenendo 100 tentativi per batch: le 5.481 candidate osservate e i
+batch rinviati devono poter essere trattati nello stesso ciclo.
+
+Il primo tentativo di installazione ha scritto esclusivamente la nuova unità
+market e il relativo inventario del backup, poi si è fermato su
+`unrelated_unit_changed`. La diagnosi in sola lettura conferma che
+`daemon-reload` ha azzerato soltanto i campi storici di esecuzione di `ExecStart`
+nei servizi refresh/backup. I loro file, comandi, invocazioni e gli altri campi
+sono invariati; dataset, runtime, riferimento e ledger sono identici al preflight.
+L'unità market ha l'hash previsto
+`5e29b271aa506377b8bf2d1b72c10b5e671e750b99ab68baab69666698171c47`,
+la configurazione backup
+`a7aa6c0e3cdf09cb73caadc0b4a57393b16adca4fc2c95eff3721738a4603a22`.
+Nessun servizio è stato avviato. L'intento e la ricevuta di arresto restano
+conservati; l'installazione non è stata ripetuta. La finalizzazione separata,
+helper SHA-256 `bc40aa695b310fb7fbd5213b9d89b331204c39401c441f4aa5ff5c25ac322e0d`,
+ha superato 21 test e due revisioni indipendenti. Ha accettato soltanto
+l'azzeramento dei campi storici osservato, mantenendo comandi, argomenti,
+invocazioni, altri campi e hash esatti, con un nuovo controllo sotto i tre lock.
+Il preflight reale e l'unica applicazione sono riusciti: tutte e tre le
+pianificazioni sono di nuovo attive, nessun servizio è stato avviato dalla
+finalizzazione e nessun file di configurazione è stato riscritto.
+La ricevuta di installazione completata ha SHA-256
+`65dba7b99fcace3555cf26d5e7a21c57d688adede9afb82abcf2ffa928f38f4c`;
+le ricevute originali di intento e arresto sono rimaste identiche.
+
+Il backup precedente alla ripresa è stato avviato una sola volta alle 09:59:30
+UTC, invocazione `b09dac6dcc8b498a89c1572968735254`. La verifica separata della
+copia remota conferma `read-data/passed`, inventario, immagini, generazione e
+riferimento esatti. Ricevuta backup SHA-256
+`352b8892cc21065c184f14181da36449df3011d796e966b7359789367fc676b3`, snapshot
+`9143ed90dff4cf8882241b155b4f1b639e34fbeea4044af8e89e75e69e52d246`, manifesto
+`75c1f51aec92ca8987298b6ce91583d28ef64e9a156c8261613908931ca0fc64`.
+La ricevuta della verifica separata ha SHA-256
+`08d44a746da7b0dc189fe20fc636824ac25b6b0cc313e78625cad3c31eff9a4f`.
+
+Alle 10:02:51 UTC è stato avviato una sola volta il ciclo
+`market-20261028t100251z-527602c9`, invocazione
+`286804351c5a47939d2641d62e09c88e`, con il nuovo importatore. La ricevuta di avvio
+ha SHA-256 `6d9849cf2766afdbc088abc3134b2b30a10d556726a573b8a9765f938360bb1f`.
+L'operatore prosegue fino all'esito del ciclo, alla riconciliazione e alle prove
+HTTP/UI con dati popolati; questa ricevuta attesta soltanto la dispatch.
+
+L'audit indipendente delle categorie nei 46 export conservati del ciclo delle
+02:00 non ha trovato categorie di singole escluse per errore. Le 229 righe Lorcana
+con categoria non mappata dall'importatore sono 211 accessori e 18 Complete Sets;
+le 127 Riftbound sono 125 accessori e due Complete Sets. Singles, Oversized e
+Token sono tutte mappate. I 169 record Lorcana e 116 Riftbound senza Cardmarket ID
+restano distinti; non si tenta di ricavarne l'identità dal titolo. Nessuna API o
+mutazione è stata necessaria per questo audit. Sigillati e accessori restano
+navigabili quando presenti in Shopify, secondo l'ambito approvato in #123.
+
+L'audit dei consumer ha trovato un'omissione nel footer del clone, che leggeva
+direttamente il menu globale a quattro giochi. La correzione separata #135,
+PR #136, commit di merge `8a9ed264100c7e53048a0cc15848fd061809b8c2`, aggiunge
+soltanto i due link mancanti, localizzati e senza duplicati, preservando menu
+globale, stile e contenuto promozionale. Revisione indipendente, 21 prove Liquid,
+quattro prove Chrome desktop/mobile e tutti i cinque controlli CI sono passati
+sullo head `5cb22c72f2e73d8317e20773251e8b6eac6af93d`. Entrambe le versioni
+Python hanno completato 4.569 test senza skip e con copertura 100%.
+
+Alle 10:28 UTC sono stati installati nel solo clone i due payload del footer.
+Il controllo precedente alla scrittura, la rilettura dei payload e il confronto
+completo degli inventari sono riusciti: clone UNPUBLISHED con 330 file, di cui
+328 invariati; MAIN ancora identico con 328 file e lo stesso `updatedAt`.
+L'anteprima reale ha restituito HTTP 200 e ha superato entrambe le prove a 375 e
+1280 pixel: nove link visibili, destinazioni e focus corretti, nessun overflow o
+errore JavaScript. Nessuna richiesta catalogo o mutazione carrello in questa prova.
+Ricevuta aggregata SHA-256
+`67a8aacefd86620958e04558ee539e7038a405a794163e8e88b8f4f852b09878`, ricevuta UI
+`392b8b4fcc53ef64e2984a6b69b4db3f313baea34b33cb6e9d3ef0c5fd8ef5c8`.
+Queste prove del footer non sostituiscono l'accettazione del catalogo popolato.
+
+Questo documento attesta l'installazione, due cicli parziali e il terzo ciclo in corso, ma non
 ancora l'integrazione dati completa o la pubblicazione del tema.
 
 Riferimenti operativi: [sostituzione immagine](ws-09-code-only-replacement.md),
