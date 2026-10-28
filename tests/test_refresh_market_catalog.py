@@ -202,8 +202,14 @@ def test_readonly_deferral_finalizes_partial_only_with_a_verified_ledger(
     args, events, behavior = setup
     args["shopify"] = SimpleNamespace(graphql=object())
     with closing(sqlite3.connect(args["ledger"])) as db:
-        db.execute("CREATE TABLE draft_attempts(state TEXT NOT NULL)")
-        db.execute("INSERT INTO draft_attempts VALUES ('draft_verified')")
+        db.execute(
+            "CREATE TABLE draft_attempts(shop TEXT,cardmarket_id INTEGER,blueprint_id INTEGER,"
+            "product_gid TEXT,state TEXT NOT NULL)"
+        )
+        db.execute(
+            "INSERT INTO draft_attempts VALUES (?,?,?,?,'draft_verified')",
+            ("test.myshopify.com", 42, 9, "gid://shopify/Product/9"),
+        )
         db.commit()
     deferred = [dict(cardmarketId=43, blueprintId=10, reason="inconsistent_identity_page")]
 
@@ -213,8 +219,6 @@ def test_readonly_deferral_finalizes_partial_only_with_a_verified_ledger(
         with closing(sqlite3.connect(args["ledger"])) as db:
             if failure == "ledger":
                 db.execute("UPDATE draft_attempts SET state='needs_reconciliation'")
-            elif verified:
-                db.execute("INSERT INTO draft_attempts VALUES ('draft_verified')")
             db.commit()
         return dict(
             status="batch_deferred",
@@ -246,7 +250,7 @@ def test_readonly_deferral_finalizes_partial_only_with_a_verified_ledger(
     options = dict(
         apply_drafts=True,
         max_attempts=3,
-        max_batches=10,
+        max_batches=1,
         publish_online_store="gid://shopify/Publication/12",
     )
     if failure is None:
@@ -276,7 +280,12 @@ def test_readonly_deferral_finalizes_partial_only_with_a_verified_ledger(
     assert events.count("source") == events.count("batch") == 1
     assert result["remaining"] == 4 - verified
     assert result["deferred"] == deferred
-    assert result["completionReason"] == "precreate_identity_deferred"
+    if failure == "ledger":
+        assert "completionReason" not in result
+    else:
+        assert result["completionReason"] == (
+            "batch_budget_exhausted" if verified else "precreate_identity_deferred"
+        )
     assert len(result["batches"]) == 1 and result["exceptions"] == 2
 
 

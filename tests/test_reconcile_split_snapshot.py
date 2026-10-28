@@ -3133,9 +3133,11 @@ def test_output_writer_rejects_unapproved_names_and_nonregular_handles(
 
     fake = FakeHandle()
     monkeypatch.setattr(cli, "_native_binary_file", lambda *_args, **_kwargs: fake)
-    monkeypatch.setattr(os, "fstat", lambda _fd: SimpleNamespace(st_mode=0, st_nlink=1))
-    with pytest.raises(cli.ReconciliationCliError, match="regular"):
-        cli._open_output_file(output, identity, "dataset-manifest.v1.json", [])
+    # Restore stdlib functions before pytest inspects its own capture handles.
+    with monkeypatch.context() as patch:
+        patch.setattr(os, "fstat", lambda _fd: SimpleNamespace(st_mode=0, st_nlink=1))
+        with pytest.raises(cli.ReconciliationCliError, match="regular"):
+            cli._open_output_file(output, identity, "dataset-manifest.v1.json", [])
     assert fake.closed is True
 
 
