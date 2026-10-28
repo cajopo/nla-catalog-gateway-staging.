@@ -1518,10 +1518,12 @@ def test_pinned_handle_rejects_non_regular_or_multiply_linked_objects(
     monkeypatch: pytest.MonkeyPatch, mode: int, links: int
 ) -> None:
     facts = type("Facts", (), {"st_mode": mode, "st_nlink": links})()
-    monkeypatch.setattr(reconciliation.os, "fstat", lambda _descriptor: facts)
     handle = type("Handle", (), {"fileno": lambda _self: 7})()
-    with pytest.raises(ReconciliationDataError, match="not one regular file"):
-        reconciliation._verify_pinned_handle(handle, "input")  # type: ignore[arg-type]
+    # Restore stdlib functions before pytest inspects its own capture handles.
+    with monkeypatch.context() as patch:
+        patch.setattr(reconciliation.os, "fstat", lambda _descriptor: facts)
+        with pytest.raises(ReconciliationDataError, match="not one regular file"):
+            reconciliation._verify_pinned_handle(handle, "input")  # type: ignore[arg-type]
 
 
 def test_part_reader_revalidates_pinned_state_after_consuming_input(
