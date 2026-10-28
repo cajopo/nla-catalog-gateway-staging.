@@ -300,8 +300,42 @@ Il lettore restituisce soltanto stati e aggregati, con otto test locali e revisi
 indipendente passati. Le prove UI restano quelle dello stato vuoto delle 18:43 UTC:
 HTTP e interfaccia con dati popolati richiedono l'esito del primo ciclo.
 
-Questo documento attesta l'installazione del gateway, ma non ancora un ciclo
-a sei giochi completato o la pubblicazione del tema.
+## Esito dei cicli e diagnosi del 28 ottobre
+
+Il primo ciclo è terminato alle 22:04:14 UTC del 27 ottobre con
+`draft_cycle_partial`: 148 carte create, verificate e pubblicate, 5.293 candidate
+rimanenti. Il secondo batch si è fermato prima della creazione di CM729357,
+blueprint259051, perché tre scansioni di identità Shopify non hanno superato il
+controllo `inconsistent_identity_page`. La ricevuta terminale ha SHA-256
+`5a9744be3079958d8f11817905331536d372e6d9be2a0ff5f5d25a6001ab532a`.
+Il supervisore ha correttamente rifiutato l'accettazione; la sua ricevuta di arresto
+resta conservata e non è stato avviato un backup di accettazione.
+
+Il ciclo `market-20261028t020006z-784ef4ce` è partito alle 02:00:06 UTC.
+Questo ciclo è terminato alle 04:47:31 con lo stesso motivo, dopo altre 158
+creazioni e pubblicazioni verificate e con 5.481 candidate rimanenti. La ricevuta
+ha SHA-256 `50400a8359a3dc5ae766e3406a384407ad5d25e847bdc6a1c81e9fb04815fd8a`.
+Il nuovo rinvio riguarda CM745061, blueprint268282, senza alcuna prenotazione
+nel ledger. CM729357 è invece stata creata e pubblicata dopo una baseline nuova:
+il rinvio precedente non dimostrava un'identità ambigua della carta.
+
+L'ispezione delle 08:57 UTC conferma 5.223 creazioni verificate e altrettante
+pubblicazioni, senza scritture incerte e senza ciclo market pendente. La proiezione delle
+09:05 UTC contiene 306 singole Lorcana pubbliche, tutte esaurite; Riftbound è ancora
+assente. Generazione `sha256:fd3d512650ee0da28e012dcbe73493726c6c0388696fb5b9125eae1adf4fdda3`,
+manifesto `a048452f3c1ff006c24ed7cf8103e14fee68f7e772e782366f318e7984548228`.
+La riconciliazione in sola lettura contabilizza tutte le 264.238 righe sorgente,
+incluse 38 anomalie: le identità assenti dalla proiezione sono 3.356 Lorcana,
+1.780 Riftbound e 345 Yu-Gi-Oh!. I record senza ID verificabile, le categorie
+non carta e quelle non classificate restano esplicitamente distinti.
+
+La correzione [#133](https://github.com/cajopo/nla-catalog-gateway-staging./issues/133)
+deve proseguire con una baseline completa nuova dopo progressi verificati,
+conservare i rinvii e le loro risoluzioni e fermarsi senza progressi o con
+scritture incerte. Non autorizza ad aggirare i controlli di identità.
+
+Questo documento attesta l'installazione del gateway e due cicli parziali, ma non
+ancora l'integrazione dati completa o la pubblicazione del tema.
 
 Riferimenti operativi: [sostituzione immagine](ws-09-code-only-replacement.md),
 [importatore](ws-multigame-import.md), [tema](ws-10-multigame-20261027.md).
