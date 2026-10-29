@@ -422,8 +422,93 @@ Ricevuta aggregata SHA-256
 `392b8b4fcc53ef64e2984a6b69b4db3f313baea34b33cb6e9d3ef0c5fd8ef5c8`.
 Queste prove del footer non sostituiscono l'accettazione del catalogo popolato.
 
-Questo documento attesta l'installazione, due cicli parziali e il terzo ciclo in corso, ma non
-ancora l'integrazione dati completa o la pubblicazione del tema.
+## Spazio disponibile per completare il ciclo
+
+Il 28 ottobre alle 13:12 UTC è stata completata una sola archiviazione reversibile
+di 11 payload storici, dopo inventario, hash integrali e controllo dei riferimenti
+attivi. Sono stati liberati 6.181.117.952 byte netti; la lettura indipendente delle
+13:13 UTC rileva 17.501.163.520 byte disponibili. Le sei prove native conservano
+gli hash originali. Tre database temporanei incompleti sono preservati come
+evidenza incompleta, senza attribuire loro validità o correggerne i contenuti.
+
+Ogni gzip è stato verificato mediante decompressione integrale, dimensione e
+SHA-256 prima di rimuovere il relativo originale; intenzioni e ricevute sono
+persistite prima della rimozione. Il controllo successivo ha verificato tutti gli
+11 hash dei gzip e l'assenza di riferimenti attivi, senza una nuova decompressione.
+Nessuna modifica a servizi, timer, catalogo attuale, Shopify o PowerTools. Gli
+archivi sono locali: non è attestata una loro copia offsite. Prima di riusare i
+vecchi consumer occorre il ripristino esplicito del singolo payload, verificato
+e senza sovrascrivere destinazioni esistenti; inode e ctime saranno nuovi.
+
+| Prova privata conservata | SHA-256 |
+| --- | --- |
+| Piano dei soli payload storici | `adcf873edbf1b9b7db00435e3192d2dc05d2cc33f99d1c4c8f217b84be71e529` |
+| Ricevuta dell'unica archiviazione | `eeb01c8a8c148ef701cfd9466397663427655dfbd4917be1383c87c27fc76c98` |
+| Controllo successivo in sola lettura | `d2e161167fa81d8dd2cf108abcb03ebc7f1090df127d54f929b2e896cf662aa4` |
+| Chiusura e calcolo della capacità | `32579bbca9efcf4ee0a6747093ae8e9a0ec81ad87d619214c371d515f5c49387` |
+
+Le revisioni indipendenti sono positive: 39 test di inventario/archiviazione,
+23 di trasporto e nove del controllo successivo passati, con Ruff verde. Lo
+scenario conservativo fino a 100 batch conserva spazio per il picco di refresh
+osservato; eventuali backup successivi richiedono spazio e retention effettivi.
+Questa operazione non costituisce accettazione del catalogo.
+
+## Progresso del ciclo e verifiche
+
+Il 28 ottobre alle 19:44 UTC il ledger contiene 10.704 prodotti verificati,
+di cui 5.481 creati nel ciclo corrente. La pubblicazione è in corso; la ricevuta
+privata dell'osservazione ha SHA-256
+`110ed154427b03e636ec66df1761bd24953c07ceabd607d64ff540422a843a3c`.
+La creazione completata non attesta ancora il catalogo pubblicato o il refresh.
+
+Alle 22:20 UTC la pubblicazione risulta completata: 5.481 pubblicati e zero
+rimanenti. Il refresh del catalogo è in corso. La ricevuta privata
+dell'osservazione ha SHA-256
+`4d139211653cdb93d63404391e0d65cde2bda4d8e31b03e5a46954c6addaddc2`.
+
+Per anticipare il collaudo senza attendere un eventuale refresh successivo,
+i verificatori possono operare sulla generazione già attiva durante quel refresh,
+controllando identità del ciclo, ledger e invariabilità della generazione. La
+modalità ordinaria resta invariata; 178 test mirati sono passati anche nella
+revisione indipendente. La ricevuta privata di preparazione ha SHA-256
+`b0f9357aa1962e4c584894c8fd8ae0aa86d045d7494b95614aa9cfac1635c9c0`.
+## Esito del ciclo e collaudo del catalogo
+
+Il ciclo `market-20261028t100251z-527602c9` è terminato: 5.481 prodotti
+creati e pubblicati, 10.704 verificati nel ledger, nessun prodotto idoneo
+rimanente e refresh dell'indice completato. I rinvii del ciclo sono stati
+risolti. Il controllo indipendente dei dati e quello HTTP sono passati sulla
+stessa generazione `sha256:a43adeed9fdc827cd72eda34850f26b9d30714511093a57d2141844f237ebb08`.
+Il secondo comprende 151 richieste, paginazione completa dei nuovi giochi,
+ricerca, filtri e verifiche campionate dei giochi precedenti. Anche il collaudo
+del clone con catalogo popolato è passato: 26 casi desktop e mobile.
+
+Nel catalogo pubblico risultano 3.662 singole Lorcana e 1.780 Riftbound,
+tutte esaurite; per entrambi i giochi non risultano sigillati o accessori
+pubblici. Le rispettive categorie sono supportate, ma questo non attesta la
+disponibilità di prodotti. Alcuni record della fonte non hanno un identificativo
+Cardmarket verificabile e rimangono esclusi, senza identità o prezzi inventati.
+La fonte contiene inoltre 159 sigillati Lorcana e 84 Riftbound: l'importer
+autorizzato è limitato alle carte singole e non li ha creati. I record senza ID
+Cardmarket sono 169 Lorcana e 116 Riftbound, comprese categorie diverse dalle
+stampe ordinarie, come Oversized e Token; richiedono associazioni verificabili
+prima di un eventuale import.
+
+Il 29 ottobre alle 00:32 UTC una lettura in sola lettura ha confermato attivi
+i timer: import alle 02:00 e 14:00 UTC, refresh alle 03:00 e 15:00 UTC.
+L'import successivo resta soggetto agli stessi controlli di identità e ambito.
+
+| Prova privata | SHA-256 |
+| --- | --- |
+| Accettazione dati | `f2f3ef7b3359283601bab29ff69ad90e6f3f840351bd9f546eb0d53fe36ceda0` |
+| Accettazione HTTP | `84dd02eb5f665c994e76ca78fa09dbbb1b81bccd4561b4a9eda7c204e615026b` |
+| Collaudo clone popolato | `4f1c3012cd2c62467966d2e281f7932f41773838b7b6bcdcbcc8f49dd214bc1a` |
+| Stato timer in sola lettura | `90d4e05a8936273b8365291d574def36ec34691ce22da80267bd082cc9d08163` |
+
+Il tema resta sul clone non pubblicato; il passaggio del negozio al tema è
+riservato al proprietario secondo il gate di cutover. I due casi wishlist hanno
+superato il controllo di identità e dell'indisponibilità, ma il collaudo completo
+si è arrestato sulla pagina prodotto per `DetailsDisclosure is not defined`.
 
 Riferimenti operativi: [sostituzione immagine](ws-09-code-only-replacement.md),
 [importatore](ws-multigame-import.md), [tema](ws-10-multigame-20261027.md).
