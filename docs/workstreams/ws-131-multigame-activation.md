@@ -489,7 +489,9 @@ pubblici. Le rispettive categorie sono supportate, ma questo non attesta la
 disponibilità di prodotti. Alcuni record della fonte non hanno un identificativo
 Cardmarket verificabile e rimangono esclusi, senza identità o prezzi inventati.
 La fonte contiene inoltre 159 sigillati Lorcana e 84 Riftbound: l'importer
-autorizzato è limitato alle carte singole e non li ha creati. I record senza ID
+installato era limitato alle carte singole e non li ha creati. Il 29 ottobre il
+proprietario ha autorizzato l'estensione ai sigillati, con le stesse verifiche
+e pubblicazione a stock zero. I record senza ID
 Cardmarket sono 169 Lorcana e 116 Riftbound, comprese categorie diverse dalle
 stampe ordinarie, come Oversized e Token; richiedono associazioni verificabili
 prima di un eventuale import.
