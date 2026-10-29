@@ -518,8 +518,9 @@ riservato al proprietario secondo il gate di cutover. La pagina prodotto del
 clone è stata corretta caricando un asset già presente, dopo che il collaudo
 aveva rilevato `DetailsDisclosure is not defined`. Il nuovo collaudo wishlist e
 pagine prodotto è passato su quattro casi e la stessa generazione, senza errori
-runtime o mutazioni. Il validatore Liquid non era disponibile per una dipendenza
-mancante; la correzione ha superato test mirati e verifica browser reale.
+runtime o mutazioni. Il layout corretto ha superato la validazione Liquid
+stateless, con un warning preesistente; asset e ordine sono stati verificati
+separatamente. Sono passati anche test mirati e verifica browser reale.
 
 Riferimenti operativi: [sostituzione immagine](ws-09-code-only-replacement.md),
 [importatore](ws-multigame-import.md), [tema](ws-10-multigame-20261027.md).
