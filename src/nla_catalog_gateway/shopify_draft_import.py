@@ -36,7 +36,9 @@ mutation NlaSetNewDraftIdentities($metafields: [MetafieldsSetInput!]!) {
 VERIFY_DRAFT = """
 query NlaVerifyNewDraft($id: ID!) {
   product(id: $id) {
-    id handle status totalInventory publishedAt
+    id handle productType status totalInventory publishedAt
+    nlaGame: metafield(namespace: "nla", key: "game") { type value }
+    sourceRecordType: metafield(namespace: "nla", key: "source_record_type") { type value }
     syncProductId: metafield(namespace: "sync", key: "productid") { type value }
     powertoolsId: metafield(namespace: "powertools", key: "id") { type value }
     variants(first: 2) {
@@ -78,6 +80,18 @@ PRODUCT_TYPES = {
     "lorcana": "Lorcana Single",
     "riftbound": "Riftbound Single",
 }
+
+
+def verify_sealed_classification(product: dict, expected: dict) -> None:
+    """Check new sealed metadata without changing legacy single request contracts."""
+    fields = expected.get("metafields")
+    if fields is None:
+        return
+    if product.get("productType") != "" or any(
+        product.get(alias) != {"type": field["type"], "value": field["value"]}
+        for alias, field in zip(("nlaGame", "sourceRecordType"), fields, strict=True)
+    ):
+        raise ValueError("sealed_classification_mismatch")
 
 
 def _safe_draft(product: dict, handle: str) -> str:
@@ -178,6 +192,7 @@ def inspect_draft_attempt(
             product.get("powertoolsId") != {"type": "single_line_text_field", "value": expected}
         ):
             return {**result, "status": "identity_fields_require_review"}
+        verify_sealed_classification(product, json.loads(encoded)["variables"]["product"])
         return {**result, "status": "recorded_draft_matches", "published": False}
     except Exception:
         return {**result, "status": "inspection_unconfirmed"}
@@ -195,6 +210,7 @@ def create_draft_once(
     graphql: Callable[[str, dict], dict],
     verify_missing: Callable[[], bool],
     enabled: bool = False,
+    product_family: str = "single",
 ) -> dict:
     """Create only after the caller's reviewed current-identity check succeeds.
 
@@ -224,6 +240,7 @@ def create_draft_once(
         raise ValueError("invalid_import_identity")
     if (
         game not in PRODUCT_TYPES
+        or product_family not in ("single", "sealed")
         or not isinstance(title, str)
         or not title.strip()
         or len(title) > 255
@@ -248,6 +265,16 @@ def create_draft_once(
         },
         "media": [{"mediaContentType": "IMAGE", "originalSource": image_url, "alt": title}],
     }
+    if product_family == "sealed":
+        # The already deployed taxonomy accepts these structured fields with an
+        # empty productType; a new unrecognized productType would be unclassified.
+        variables["product"].update(
+            productType="",
+            metafields=[
+                {"namespace": "nla", "key": key, "type": "single_line_text_field", "value": value}
+                for key, value in (("game", game), ("source_record_type", "sealed"))
+            ],
+        )
     encoded = json.dumps({"blueprintId": blueprint_id, "variables": variables}, sort_keys=True)
     digest = hashlib.sha256(encoded.encode()).hexdigest()
     # SQLite commits the reservation before the first network write. A crash at
@@ -324,6 +351,7 @@ def create_draft_once(
                 if verified[alias] != {"type": field["type"], "value": field["value"]}:
                     raise ValueError("initial_identities_not_confirmed")
             variant = _initial_variant(verified)
+            verify_sealed_classification(verified, variables["product"])
             if not variant["inventoryItem"]["tracked"]:
                 initialized = graphql(
                     INITIALIZE_VARIANT,

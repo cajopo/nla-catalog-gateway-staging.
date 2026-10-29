@@ -180,15 +180,13 @@ def test_new_game_export_404_is_accounted_and_retried_next_cycle(tmp_path, sourc
     )
 
 
-@pytest.mark.parametrize("game_id,category", [(18, 231), (22, 283), (18, 215), (22, 259)])
-def test_complete_sets_and_sealed_never_become_printing_candidates(source, game_id, category):
+@pytest.mark.parametrize("game_id,category", [(18, 231), (22, 283)])
+def test_complete_sets_never_become_printing_candidates(source, game_id, category):
     row = {**source.rows[100 + game_id][0], "category_id": category}
     result = compare_catalog(
         [row], [], {i: (g, f) for i, (g, _, f) in CATEGORIES.items()}, {100 + game_id: game_id}
     )
-    assert result[0]["decision"] == (
-        "unclassified_category" if category in (231, 283) else "non_card_category"
-    )
+    assert result[0]["decision"] == "unclassified_category"
 
 
 @pytest.mark.parametrize("other_game", [1, 18])

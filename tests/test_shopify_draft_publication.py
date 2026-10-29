@@ -569,6 +569,31 @@ def test_lost_response_resumes_from_readback_without_repeating_applied_mutation(
     assert publication_rows(ledger)[0][3] == "published"
 
 
+@pytest.mark.parametrize("new_value", [None, {"type": "single_line_text_field", "value": "sealed"}])
+def test_old_pending_snapshot_ignores_only_new_null_metafields(setup, new_value):
+    ledger, api = setup
+
+    def interrupted(query, variables):
+        result = api(query, variables)
+        if query == publication.ACTIVATE:
+            raise TimeoutError("response lost")
+        return result
+
+    assert publish(ledger, interrupted)["status"] == "publication_stopped_inspect"
+    snapshot = json.loads(publication_rows(ledger)[0][2])
+    assert "nlaGame" not in snapshot and "sourceRecordType" not in snapshot
+    api.product.update(nlaGame=None, sourceRecordType=new_value)
+    api.calls.clear()
+    result = publish(ledger, api)
+    if new_value is None:
+        assert result["status"] == "publication_complete"
+        assert [q for q, _ in writes(api)] == [publication.PUBLISH]
+    else:
+        assert result["status"] == "publication_stopped_inspect"
+        assert result["results"][0]["reason"] == "publication_snapshot_changed"
+        assert not writes(api)
+
+
 @pytest.mark.parametrize("mutation", [publication.ACTIVATE, publication.PUBLISH])
 def test_commercial_drift_after_mutation_stops_without_compensating_writes(setup, mutation):
     ledger, api = setup

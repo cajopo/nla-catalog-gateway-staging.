@@ -20,7 +20,7 @@ from nla_catalog_gateway.card_metadata import CardMetadataV1
 from nla_catalog_gateway.cardtrader_candidates import GAMES
 from nla_catalog_gateway.cardtrader_scope import game_ids_for_scope
 from nla_catalog_gateway.taxonomy import Game
-from scripts.compare_cardtrader_catalog import compare_projection
+from scripts.compare_cardtrader_catalog import CATEGORIES, compare_projection
 
 RARITY = {
     "magic": "mtg_rarity",
@@ -115,6 +115,40 @@ def prepare(capture, projection, projection_sha, parent, parent_sha, output, gen
                 ]  # Observed source contract, not editable defaults.
                 if type(properties) is not dict:
                     raise ValueError("invalid_fixed_properties")
+                family = CATEGORIES[row["category_id"]][2]
+                if family not in ("single", "sealed") or family != decision["productFamily"]:
+                    raise ValueError("source_family_mismatch")
+                image = urlsplit(row["image_url"])
+                if (
+                    image.scheme != "https"
+                    or not image.hostname
+                    or image.username
+                    or image.password
+                    or image.fragment
+                ):
+                    raise ValueError("invalid_source_image")
+                if family == "sealed":
+                    # Sealed uses its commercial source title, not a card-name
+                    # mapping. A card reference with the same ID is a conflict.
+                    if str(ids[0]) in existing_ids:
+                        raise ValueError("canonical_identity_conflict")
+                    title = row["name"]
+                    if type(title) is not str or not title.strip() or len(title) > 255:
+                        raise ValueError("invalid_sealed_title")
+                    candidates.append(
+                        {
+                            **binding,
+                            "game": game.value,
+                            "productFamily": family,
+                            "cardmarketId": str(ids[0]),
+                            "title": title,
+                            "imageUrl": row["image_url"],
+                            "canonicalMappingPreserved": False,
+                            "sourceNameDiffers": False,
+                            "creationApproved": False,
+                        }
+                    )
+                    continue
                 record = CanonicalNameRecordV1(
                     game,
                     str(ids[0]),
@@ -128,15 +162,6 @@ def prepare(capture, projection, projection_sha, parent, parent_sha, output, gen
                         optional(properties.get(RARITY[game.value])),
                     ),
                 )
-                image = urlsplit(row["image_url"])
-                if (
-                    image.scheme != "https"
-                    or not image.hostname
-                    or image.username
-                    or image.password
-                    or image.fragment
-                ):
-                    raise ValueError("invalid_source_image")
                 if record.source_id in ambiguous_ids:
                     raise ValueError("ambiguous_canonical_identity")
                 previous = existing_ids.get(record.source_id)
@@ -157,6 +182,7 @@ def prepare(capture, projection, projection_sha, parent, parent_sha, output, gen
                     {
                         **binding,
                         "game": game.value,
+                        "productFamily": family,
                         "cardmarketId": record.source_id,
                         "title": title,
                         "imageUrl": row["image_url"],

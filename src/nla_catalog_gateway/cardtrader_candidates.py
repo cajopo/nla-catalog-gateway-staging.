@@ -85,7 +85,7 @@ def compare_catalog(
             decision = "unclassified_expansion"
         elif expansions[expansion_id] != game_id:
             decision = "expansion_game_conflict"
-        elif category[1] != "single":
+        elif category[1] not in ("single", "sealed"):
             decision = "non_card_category"
         elif not ids_valid:
             decision = "invalid_cardmarket_ids"
@@ -99,7 +99,7 @@ def compare_catalog(
             decision = "multiple_shopify_products"
         elif matches and any(
             p["game"] != game
-            or p.get("productFamily") != "single"
+            or p.get("productFamily") != category[1]
             or p["syncSourceId"] != str(ids[0])
             or p["powerToolsSourceId"] != str(ids[0])
             for p in matches.values()
@@ -114,6 +114,7 @@ def compare_catalog(
                 "rowIndex": index,
                 "blueprintId": blueprint_id if _id(blueprint_id) else None,
                 "game": game,
+                "productFamily": category[1] if category else "unclassified",
                 "cardmarketIds": ids,
                 "shopifyProductGids": sorted(matches),
                 "decision": decision,
