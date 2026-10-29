@@ -241,6 +241,17 @@ def test_in_cycle_retention_keeps_latest_two_payloads_and_all_receipts(identity_
         assert (identity / "payload-expiry.json").exists() is (number <= 2)
 
 
+def test_in_cycle_retention_preserves_deferred_baseline_and_receipts(identity_batches):
+    run = identity_batches
+    batch, identity = market.batch_paths(run, 1)
+    (batch / "result.json").write_text('{"status":"batch_deferred"}')
+    before = {path: path.read_bytes() for root in (batch, identity) for path in root.iterdir()}
+    market.prune_batch_identities(run, 4)
+    assert all(path.read_bytes() == raw for path, raw in before.items())
+    assert not (identity / "payload-expiry.json").exists()
+    assert not (run / "identities-0002/identities.jsonl").exists()
+
+
 @pytest.mark.parametrize("unsafe", ["hash", "uncertain", "hardlink"])
 def test_in_cycle_retention_rejects_unsafe_or_uncertain_input(identity_batches, unsafe):
     run = identity_batches

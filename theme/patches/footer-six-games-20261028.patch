@@ -1,0 +1,9 @@
+--- a/sections/nla-footer.liquid
++++ b/sections/nla-footer.liquid
+@@ -11,5 +11,6 @@
+         {% for link in section.settings.menu.links %}
+           <li><a href="{{ link.url }}">{{ link.title | escape }}</a></li>
+         {% endfor %}
++        {% render 'nla-new-game-footer-links', menu: section.settings.menu %}
+       </ul>
+     </nav>

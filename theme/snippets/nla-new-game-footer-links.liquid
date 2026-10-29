@@ -1,0 +1,24 @@
+{% doc %}
+  Adds missing game links to the footer's existing menu.
+  @param {linklist} menu - The menu already rendered by the footer.
+{% enddoc %}
+
+{% assign new_games = 'riftbound,lorcana' | split: ',' %}
+{% for game in new_games %}
+  {% assign present = false %}
+  {% assign game_parameter = 'game=' | append: game %}
+  {% for link in menu.links %}
+    {% assign label = link.title | strip | downcase %}
+    {% assign parameters = link.url | split: '#' | first | split: '?' | last | split: '&' %}
+    {% if label == game or parameters contains game_parameter %}
+      {% assign present = true %}
+    {% elsif game == 'lorcana' and label == 'disney lorcana' %}
+      {% assign present = true %}
+    {% endif %}
+  {% endfor %}
+  {% unless present %}
+    {% assign label_key = 'nla_catalog.' | append: game %}
+    {% assign catalog_url = routes.search_url | append: '?view=nla-catalog&game=' | append: game | append: '&family=all' %}
+    <li><a href="{{ catalog_url | escape }}">{{ label_key | t | escape }}</a></li>
+  {% endunless %}
+{% endfor %}

@@ -1606,17 +1606,19 @@ def test_handle_state_rejects_uninspectable_or_nonregular_handles(
     monkeypatch: pytest.MonkeyPatch,
     failure: str,
 ) -> None:
-    if failure == "fstat":
-        handle = SimpleNamespace(fileno=lambda: (_ for _ in ()).throw(OSError("private")))
-    else:
-        handle = SimpleNamespace(fileno=lambda: 1)
-        monkeypatch.setattr(
-            generation_bundle.os,
-            "fstat",
-            lambda _fd: SimpleNamespace(st_mode=stat.S_IFDIR, st_nlink=1),
-        )
-    with pytest.raises(generation_bundle.GenerationBundleError, match=f"^{FILESYSTEM_ERROR}$"):
-        generation_bundle._handle_state(handle)
+    # Restore stdlib functions before pytest inspects its own capture handles.
+    with monkeypatch.context() as patch:
+        if failure == "fstat":
+            handle = SimpleNamespace(fileno=lambda: (_ for _ in ()).throw(OSError("private")))
+        else:
+            handle = SimpleNamespace(fileno=lambda: 1)
+            patch.setattr(
+                generation_bundle.os,
+                "fstat",
+                lambda _fd: SimpleNamespace(st_mode=stat.S_IFDIR, st_nlink=1),
+            )
+        with pytest.raises(generation_bundle.GenerationBundleError, match=f"^{FILESYSTEM_ERROR}$"):
+            generation_bundle._handle_state(handle)
 
 
 def test_pinned_state_detects_changed_metadata(bundle_case: BundleCase) -> None:

@@ -5,6 +5,7 @@ Retain cycle directories: an applied batch can own the active canonical referenc
 """
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -69,9 +70,14 @@ def prune_batch_identities(run, completed_batches):
         payload = identity / "identities.jsonl"
         if not os.path.lexists(payload):
             continue
+        batch_status = refresh.document(batch / "result.json")["status"]
+        if batch_status == "batch_deferred":
+            # Retain the entire baseline that produced an inconsistent read.
+            # A later successful batch does not rewrite this historical evidence.
+            continue
         receipt = refresh.document(identity / "completed.json")
         if (
-            refresh.document(batch / "result.json")["status"] != "batch_complete"
+            batch_status != "batch_complete"
             or receipt["status"] != "complete"
             or receipt["shopifyChanged"] is not False
         ):
@@ -230,6 +236,80 @@ def refresh_index(package, config_path):
     )
 
 
+def verified_ledger_rows(ledger, shop):
+    """No read deferral may conceal an uncertain write, including another shop's."""
+    with closing(sqlite3.connect(ledger.as_uri() + "?mode=ro", uri=True)) as db:
+        db.execute("PRAGMA query_only=ON")
+        if db.execute(
+            "SELECT 1 FROM draft_attempts WHERE state IS NOT 'draft_verified' LIMIT 1"
+        ).fetchone():
+            raise ValueError("previous_import_needs_reconciliation")
+        rows = db.execute(
+            "SELECT cardmarket_id,blueprint_id,product_gid FROM draft_attempts "
+            "WHERE shop=? ORDER BY cardmarket_id,blueprint_id",
+            (shop,),
+        ).fetchall()
+    if any(
+        any(type(identifier) is not int or not 0 < identifier < 2**63 for identifier in row[:2])
+        or not isinstance(row[2], str)
+        or re.fullmatch(r"gid://shopify/Product/[1-9][0-9]*", row[2]) is None
+        for row in rows
+    ):
+        raise ValueError("invalid_verified_ledger_identity")
+    return rows
+
+
+def resolve_deferrals(result, rows, shop, identity_path):
+    """Separate historical read failures from unresolved identities; never approve a write.
+
+    Only a later batch can resolve a deferral. Its complete fresh baseline can
+    prove an identity is now present, not that our importer created that product.
+    The ledger alternative requires the exact Cardmarket/blueprint pair.
+    """
+    latest = {}
+    for event in result["deferralHistory"]:
+        latest[event["cardmarketId"], event["blueprintId"]] = event
+    last_batch = result["batches"][-1]["number"]
+    unresolved, resolved = [], []
+    if any(event["batch"] < last_batch for event in latest.values()):
+        receipt, known = identities.read_fresh_identities(identity_path, shop)
+        if receipt["operationId"] != result["identityOperation"]:
+            raise ValueError("deferral_resolution_operation_changed")
+        result["deferralResolutionEvidence"] = dict(
+            batch=last_batch,
+            identityOperation=receipt["operationId"],
+            identityReceiptSha256=activation.digest(identity_path / "completed.json"),
+            identityPayloadSha256=receipt["sha256"],
+            verifiedLedgerSha256=hashlib.sha256(
+                json.dumps(rows, separators=(",", ":")).encode()
+            ).hexdigest(),
+        )
+    else:
+        known = set()
+    for (cardmarket_id, blueprint_id), event in latest.items():
+        original = {key: event[key] for key in ("cardmarketId", "blueprintId", "reason")}
+        if event["batch"] == last_batch:
+            unresolved.append(original)
+            continue
+        matches = [row for row in rows if row[0] == cardmarket_id or row[1] == blueprint_id]
+        if matches and (len(matches) != 1 or matches[0][:2] != (cardmarket_id, blueprint_id)):
+            raise ValueError("deferred_ledger_identity_conflict")
+        if matches:
+            resolution = dict(resolution="verified_ledger", productGid=matches[0][2])
+        elif str(cardmarket_id) in known:
+            resolution = dict(resolution="observed_in_fresh_identity_baseline")
+        else:
+            unresolved.append(original)
+            continue
+        resolved.append({**original, "lastDeferredBatch": event["batch"], **resolution})
+    result["deferred"] = unresolved
+    result["resolvedDeferrals"] = resolved
+    if unresolved:
+        if result["eligibleExhausted"]:
+            result["completionReason"] = "unresolved_identity_deferrals"
+        result["eligibleExhausted"] = False
+
+
 def cycle(
     state,
     refresh_config,
@@ -302,6 +382,9 @@ def cycle(
         batches=[],
         attempts=[],
         deferred=[],
+        deferralHistory=[],
+        resolvedDeferrals=[],
+        deferralResolutionEvidence=None,
         selected=0,
         maxBatches=max_batches,
         remaining=None,
@@ -318,6 +401,10 @@ def cycle(
             run / "source-summary.json", {k: v for k, v in source.items() if k != "files"}
         )
         for number in range(1, max_batches + 1):
+            # Deferred baselines are deliberately retained. Recheck capacity
+            # before another full export rather than accumulating without a bound.
+            if shutil.disk_usage(state).free < 6 * 1024**3:
+                raise ValueError("insufficient_market_cycle_space")
             batch_path, identity_path = batch_paths(run, number)
             _, config = drafts.config_values(refresh_config)
             # Poll only this batch's operation; uncertainty never starts another.
@@ -358,6 +445,10 @@ def cycle(
                     result["batchFailure"] = batch["failure"]
                 raise ValueError("draft_batch_requires_inspection")
             result["deferred"].extend(batch.get("deferred", []))
+            result["deferralHistory"].extend(
+                {**entry, "batch": number, "identityOperation": identity["operationId"]}
+                for entry in batch.get("deferred", [])
+            )
             verified = sum(
                 a["status"] == "draft_verified"
                 or (a["status"] == "already_reserved" and a.get("state") == "draft_verified")
@@ -378,8 +469,14 @@ def cycle(
             )
             if batch["status"] == "batch_deferred":
                 result["eligibleExhausted"] = False
-                result["completionReason"] = "precreate_identity_deferred"
-                break
+                with refresh.pipeline_lock(config["run_root"]):
+                    verified_ledger_rows(ledger, config["shop"])
+                if verified == 0:
+                    result["completionReason"] = "precreate_identity_deferred"
+                    break
+                # No candidate is excluded and no write is replayed. The next
+                # bounded batch obtains a new complete identity baseline first.
+                continue
             if apply_drafts:
                 prune_batch_identities(run, number)
             if not apply_drafts:
@@ -394,17 +491,12 @@ def cycle(
         else:
             result["completionReason"] = "batch_budget_exhausted"
         if apply_drafts:
-            if result["deferred"]:
+            if result["deferralHistory"]:
                 # A read-only deferral may not hide any earlier uncertain write.
                 _, config = drafts.config_values(refresh_config)
-                with (
-                    refresh.pipeline_lock(config["run_root"]),
-                    closing(sqlite3.connect(ledger.as_uri() + "?mode=ro", uri=True)) as db,
-                ):
-                    if db.execute(
-                        "SELECT 1 FROM draft_attempts WHERE state != 'draft_verified' LIMIT 1"
-                    ).fetchone():
-                        raise ValueError("previous_import_needs_reconciliation")
+                with refresh.pipeline_lock(config["run_root"]):
+                    rows = verified_ledger_rows(ledger, config["shop"])
+                    resolve_deferrals(result, rows, config["shop"], identity_path)
             if publish_online_store is not None:
                 _, config = drafts.config_values(refresh_config)
                 with refresh.pipeline_lock(config["run_root"]):
