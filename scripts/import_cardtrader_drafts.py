@@ -239,6 +239,7 @@ def run_locked(
                 blueprint_id=candidate["blueprintId"],
                 cardmarket_id=identifier,
                 game=candidate["game"],
+                product_family=candidate.get("productFamily", "single"),
                 title=candidate["title"],
                 image_url=candidate["imageUrl"],
                 graphql=client.graphql,

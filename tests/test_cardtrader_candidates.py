@@ -4,7 +4,7 @@ import pytest
 
 from nla_catalog_gateway.cardtrader_candidates import compare_catalog
 
-CATEGORIES = {10: (1, "single"), 20: (1, "sealed"), 30: (1, "unclassified")}
+CATEGORIES = {10: (1, "single"), 20: (1, "sealed"), 30: (1, "unclassified"), 40: (1, "accessory")}
 EXPANSIONS = {50: 1, 51: 1, 52: 5}
 
 
@@ -54,7 +54,7 @@ def test_existing_and_absent_are_read_only_and_do_not_use_title():
         ({"category_id": 99}, "unclassified_category"),
         ({"category_id": 30}, "unclassified_category"),
         ({"game_id": 4}, "category_game_conflict"),
-        ({"category_id": 20}, "non_card_category"),
+        ({"category_id": 40}, "non_card_category"),
         ({"card_market_ids": None}, "invalid_cardmarket_ids"),
         ({"card_market_ids": [True]}, "invalid_cardmarket_ids"),
         ({"card_market_ids": ["900"]}, "invalid_cardmarket_ids"),

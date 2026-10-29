@@ -15,7 +15,11 @@ from contextlib import closing
 from datetime import UTC, datetime
 
 from nla_catalog_gateway.shopify_capture_http import CaptureHttpError
-from nla_catalog_gateway.shopify_draft_import import ACCESS_QUERY, _initial_variant
+from nla_catalog_gateway.shopify_draft_import import (
+    ACCESS_QUERY,
+    _initial_variant,
+    verify_sealed_classification,
+)
 
 PUBLICATION = """
 query NlaOnlineStorePublication($id: ID!) {
@@ -34,6 +38,8 @@ query NlaImportedPublicationCheck($id: ID!, $publicationId: ID!) {
     publishedOnPublication(publicationId: $publicationId)
     syncProductId: metafield(namespace: "sync", key: "productid") { type value }
     powertoolsId: metafield(namespace: "powertools", key: "id") { type value }
+    nlaGame: metafield(namespace: "nla", key: "game") { type value }
+    sourceRecordType: metafield(namespace: "nla", key: "source_record_type") { type value }
     resourcePublicationsV2(first: 20, onlyPublished: false) {
       nodes { isPublished publication { id } } pageInfo { hasNextPage endCursor }
     }
@@ -89,6 +95,7 @@ def failure_reason(error):
         "publication_readback_mismatch",
         "unexpected_initial_variants",
         "unexpected_initial_variant",
+        "sealed_classification_mismatch",
     }
     if isinstance(error, CaptureHttpError):
         return "shopify_request_failed"
@@ -116,6 +123,7 @@ def commercial(product):
         k: v
         for k, v in product.items()
         if k not in ("status", "publishedOnPublication", "resourcePublicationsV2")
+        and not (k in ("nlaGame", "sourceRecordType") and v is None)
     }
 
 
@@ -246,6 +254,7 @@ def publish_verified_drafts(
                 ).fetchone()
                 product = graphql(PRODUCT, {"id": gid, "publicationId": publication_id})["product"]
                 expected = verify_identity(product, row)
+                verify_sealed_classification(product, expected)
                 if product["status"] == "ACTIVE" and product["publishedOnPublication"] is True:
                     if saved and (
                         saved[:2] != (gid, publication_id)
