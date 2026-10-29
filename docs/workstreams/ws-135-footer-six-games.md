@@ -84,3 +84,61 @@ create stock or commercial products. MAIN publication remains the owner's gate.
 - [Liquid routes](https://shopify.dev/docs/api/liquid/objects/routes): preserve locale-aware URLs.
 - [Liquid link](https://shopify.dev/docs/api/liquid/objects/link): menu titles and URLs; active/current flags ignore query parameters and cannot identify the selected game.
 - [Theme performance](https://shopify.dev/docs/storefronts/themes/best-practices/performance): no additional JavaScript, CSS or network requests.
+
+## Product share dependency follow-up, 2026-10-29
+
+The real populated clone smoke exposed a product-page `ReferenceError:
+DetailsDisclosure is not defined`. The existing `share.js` extends that class;
+the existing `assets/details-disclosure.js` defines it, but the Arena layout did
+not load it. `product-share-dependency-20261029.patch` adds exactly one deferred
+script after `global.js`, before the product section's deferred share consumer.
+The assets themselves and all other layout bytes remain unchanged.
+
+This follow-up stays in issue #135 and branch `agent/footer-six-games-135`, as
+authorized during #131 acceptance. Root independently reviewed the one-line
+patch and consumer test before the authorized clone-only installation.
+
+```text
+node tests/theme-product-share.mjs <private-disclosure-baseline>
+node --check tests/theme-product-share.mjs
+git diff --check
+```
+
+All four targeted checks passed: exact reversible patch, original exception
+reproduced from the real share asset, and successful native/fallback consumers
+with inherited close behavior and URL updates. Shopify Admin GraphQL queries
+and mutation validated against pinned 2026-07. The plugin bundle lacked
+`@shopify/theme-check-common`, so the existing private validator runtime from
+#124 was reused with byte-identical official helper code; no dependencies were
+installed. Stateless Liquid validation passed (artifact `product-share-135`,
+revision 1), with one existing non-error warning about `scheme_classes`.
+Repository preflight passed with 291 files and zero failures; syntax and
+staged diff checks passed. Full CI remains the pull-request merge gate.
+
+Fresh role/inventory gates confirmed UNPUBLISHED `210427412748` and MAIN
+`210373968140`. Only `layout/theme.liquid` was upserted, with no user errors or
+asynchronous job. Readback matched the candidate byte for byte: SHA-256
+`d747e9dea9efb819655ada6b30c08ac122ae7b587682c301da77f320a582d080`,
+20,863 bytes. All 329 other clone files and all 328 MAIN files were identical.
+Rollback restores the verified original layout, SHA-256
+`c1022da9f9a646708c9261b778e5233a1aae14d94e289bd88177208b00df0064`,
+after fresh role/hash checks. No publication, shared-menu change, product write
+or cart mutation occurred.
+
+The real populated wishlist/product smoke completed at 00:38:26 UTC on October
+29: four cases passed for Lorcana and Riftbound, with 12 screenshots across 375
+and 1280 pixels. Both wishlist identities, catalog links, product JSON, selected
+variants, loaded images and sold-out controls passed. Runtime exceptions: zero;
+cart unchanged. Request counts were 7 catalog POST, 11 functional GET, 5 document
+GET and 5 ancillary product GET. All 104 Shopify analytics POST attempts were
+blocked before dispatch. Five known child pixel sandbox documents returned
+404; those separately recorded nonfunctional iframe failures do not suppress
+main-frame or API errors. The final private receipt SHA-256 is
+`cf4a2c990333dd05c28a3568bc217ea4de3e8124d4d1e4de4f28ac1d54174cdd`;
+harness SHA-256 `b9ef6b1817f0a94626ceb6a6de449d0d3e55a81ca756d70511776e488012f966`.
+The independently supplied oracle and API responses bound generation
+`sha256:a43adeed9fdc827cd72eda34850f26b9d30714511093a57d2141844f237ebb08`.
+Full data acceptance and owner publication remain separate #131 gates.
+
+Official references: [ordered deferred theme scripts](https://shopify.dev/docs/storefronts/themes/best-practices/performance/defer-scripts)
+and [themeFilesUpsert 2026-07](https://shopify.dev/docs/api/admin-graphql/2026-07/mutations/themeFilesUpsert).
