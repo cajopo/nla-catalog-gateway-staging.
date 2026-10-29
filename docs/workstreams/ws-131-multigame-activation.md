@@ -503,12 +503,16 @@ L'import successivo resta soggetto agli stessi controlli di identità e ambito.
 | Accettazione dati | `f2f3ef7b3359283601bab29ff69ad90e6f3f840351bd9f546eb0d53fe36ceda0` |
 | Accettazione HTTP | `84dd02eb5f665c994e76ca78fa09dbbb1b81bccd4561b4a9eda7c204e615026b` |
 | Collaudo clone popolato | `4f1c3012cd2c62467966d2e281f7932f41773838b7b6bcdcbcc8f49dd214bc1a` |
+| Wishlist e pagine prodotto dopo correzione | `cf4a2c990333dd05c28a3568bc217ea4de3e8124d4d1e4de4f28ac1d54174cdd` |
 | Stato timer in sola lettura | `90d4e05a8936273b8365291d574def36ec34691ce22da80267bd082cc9d08163` |
 
 Il tema resta sul clone non pubblicato; il passaggio del negozio al tema è
-riservato al proprietario secondo il gate di cutover. I due casi wishlist hanno
-superato il controllo di identità e dell'indisponibilità, ma il collaudo completo
-si è arrestato sulla pagina prodotto per `DetailsDisclosure is not defined`.
+riservato al proprietario secondo il gate di cutover. La pagina prodotto del
+clone è stata corretta caricando un asset già presente, dopo che il collaudo
+aveva rilevato `DetailsDisclosure is not defined`. Il nuovo collaudo wishlist e
+pagine prodotto è passato su quattro casi e la stessa generazione, senza errori
+runtime o mutazioni. Il validatore Liquid non era disponibile per una dipendenza
+mancante; la correzione ha superato test mirati e verifica browser reale.
 
 Riferimenti operativi: [sostituzione immagine](ws-09-code-only-replacement.md),
 [importatore](ws-multigame-import.md), [tema](ws-10-multigame-20261027.md).
