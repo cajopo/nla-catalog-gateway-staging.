@@ -494,6 +494,12 @@ Cardmarket sono 169 Lorcana e 116 Riftbound, comprese categorie diverse dalle
 stampe ordinarie, come Oversized e Token; richiedono associazioni verificabili
 prima di un eventuale import.
 
+Un inventario in sola lettura dei 243 sigillati rileva 185 record con un solo
+ID Cardmarket, 45 senza ID e 13 con più ID; la presenza non ne verifica
+l'identità commerciale. La verifica usa un export Shopify
+del 28 ottobre e non sostituisce il confronto aggiornato necessario prima di
+qualsiasi creazione; non attesta prezzi o disponibilità commerciale.
+
 Il 29 ottobre alle 00:32 UTC una lettura in sola lettura ha confermato attivi
 i timer: import alle 02:00 e 14:00 UTC, refresh alle 03:00 e 15:00 UTC.
 L'import successivo resta soggetto agli stessi controlli di identità e ambito.
@@ -505,6 +511,7 @@ L'import successivo resta soggetto agli stessi controlli di identità e ambito.
 | Collaudo clone popolato | `4f1c3012cd2c62467966d2e281f7932f41773838b7b6bcdcbcc8f49dd214bc1a` |
 | Wishlist e pagine prodotto dopo correzione | `cf4a2c990333dd05c28a3568bc217ea4de3e8124d4d1e4de4f28ac1d54174cdd` |
 | Stato timer in sola lettura | `90d4e05a8936273b8365291d574def36ec34691ce22da80267bd082cc9d08163` |
+| Inventario sigillati in sola lettura | `426893ad75472c64bf8a1b0fc9c7e52eb6092de33fb2e4fae97923486f440727` |
 
 Il tema resta sul clone non pubblicato; il passaggio del negozio al tema è
 riservato al proprietario secondo il gate di cutover. La pagina prodotto del
