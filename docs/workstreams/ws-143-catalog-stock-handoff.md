@@ -72,13 +72,23 @@ including zero/negative stock, untracked/unavailable variants, unusable price,
 wrong identity/game/printing and unmet option constraints. All checks passed.
 Rendering stubs live in a separate temporary fixture, never in the upload candidate.
 
-Official Shopify validator: new snippet and wishlist JavaScript PASS. The three
-existing Liquid files are a partial export with missing dependencies/locales;
-baseline and candidate each report 492 identical diagnostics after removing line
-offsets, with zero new diagnostics. This is not full-theme validation or browser QA.
-Private source, validation comparison and candidate receipts are under
-`output/repair-audit-20261031/`. Fresh clone role/checksum verification and browser
-acceptance remain installation gates; publication belongs to the owner.
+Official Shopify validator: all five changed files VALID, exit 0, using 48 real
+dependencies and locale files read from the unpublished clone. The unchanged
+baseline also passes all four checks, exit 0. The earlier partial-export run's
+492 missing-dependency diagnostics were resolved by acquiring the actual files,
+without suppressing checks. This validates the changed files, not every unrelated
+file in the theme and not browser behavior.
+
+Fresh API read at 13:02 UTC confirms clone `210462933260`,
+`NLA Arena — Ripristino stock PowerTools`, is UNPUBLISHED. All four source hashes
+match the manifest and the new snippet is absent. Independent review of functional
+commit `00396b901e02f13f77a646d6dee83a9038c268d0` found no Blocker/High/Medium issue;
+the reviewer repeated the test and replayed actual Dawn JavaScript for PDP/modal
+selection, hidden variant ID, pending fetch, stale responses and price replacement.
+Private reads, validator reports and receipts are under
+`output/repair-audit-20261031/`. Browser acceptance remains a separate gate and
+fresh clone role/checksum verification must be repeated immediately before writing.
+Publication belongs to the owner.
 
 ## Install/rollback contract
 

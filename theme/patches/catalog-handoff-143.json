@@ -21,5 +21,8 @@
     }
   },
   "newFile": "snippets/nla-catalog-variant-ready.liquid",
-  "newFileSha256": "6bb40d1ceed5882e310a9eb600f74e871c2ff73d5c9c88b787621e3b193f4aae"
+  "newFileSha256": "6bb40d1ceed5882e310a9eb600f74e871c2ff73d5c9c88b787621e3b193f4aae",
+  "targetTheme": "gid://shopify/OnlineStoreTheme/210462933260",
+  "requiredTargetRole": "UNPUBLISHED",
+  "requireNewFileAbsent": true
 }
