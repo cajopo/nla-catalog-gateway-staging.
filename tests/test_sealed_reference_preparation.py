@@ -4,6 +4,7 @@ import csv
 import hashlib
 import json
 import sqlite3
+from contextlib import closing
 from types import SimpleNamespace
 
 import pytest
@@ -84,7 +85,7 @@ def sealed_reference_case(tmp_path):
         capture = tmp_path / "capture"
         capture_catalog(SimpleNamespace(collection=collection), capture)
         projection = tmp_path / "projection.sqlite3"
-        with sqlite3.connect(projection) as db:
+        with closing(sqlite3.connect(projection)) as db, db:
             db.execute("CREATE TABLE projection_metadata(dataset_manifest_json TEXT)")
             db.execute(
                 "INSERT INTO projection_metadata VALUES (?)",
@@ -188,5 +189,5 @@ def test_prepared_sealed_reference_candidate_still_needs_current_absence(
     )
     assert result["status"] == "not_verified_missing"
     assert api.calls and all(not query.lstrip().startswith("mutation") for query, _ in api.calls)
-    with sqlite3.connect(tmp_path / "ledger.sqlite") as db:
+    with closing(sqlite3.connect(tmp_path / "ledger.sqlite")) as db:
         assert db.execute("SELECT count(*) FROM draft_attempts").fetchone()[0] == 0
