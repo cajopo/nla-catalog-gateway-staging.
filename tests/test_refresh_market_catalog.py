@@ -46,6 +46,7 @@ def setup(tmp_path, monkeypatch):
 
     def batch(*args, **kwargs):
         events.append("batch")
+        behavior["expansion_collections"] = kwargs["expansion_collections"]
         assert args[3].parent == args[1].parent == args[2].parent
         assert args[4] == ledger and kwargs["max_attempts"] == 1
         if behavior["fail"] == "interrupt":
@@ -99,6 +100,21 @@ def test_stage_order_and_explicit_draft_apply(setup, apply):
     assert json.loads((args["state"] / "last-market-success.json").read_bytes()) == result
     run = args["state"] / result["run"]
     assert json.loads((run / "completed.json").read_bytes()) == result
+
+
+@pytest.mark.parametrize("enabled", [False, True])
+def test_expansion_collection_flag_is_explicit_and_forwarded(setup, enabled):
+    args, _, behavior = setup
+    result = market.cycle(**args, expansion_collections=enabled)
+    assert behavior["expansion_collections"] is enabled
+    assert result["expansionCollectionsEnabled"] is enabled
+
+
+def test_invalid_expansion_collection_control_starts_no_work(setup):
+    args, events, _ = setup
+    with pytest.raises(ValueError, match="invalid_cycle_controls"):
+        market.cycle(**args, expansion_collections=1)
+    assert not events
 
 
 @pytest.mark.parametrize("apply", [False, True])
@@ -215,7 +231,7 @@ def test_readonly_deferral_finalizes_partial_only_with_a_verified_ledger(
 
     def batch(*inputs, **kwargs):
         events.append("batch")
-        assert kwargs == dict(apply=True, max_attempts=3)
+        assert kwargs == dict(apply=True, max_attempts=3, expansion_collections=False)
         with closing(sqlite3.connect(args["ledger"])) as db:
             if failure == "ledger":
                 db.execute("UPDATE draft_attempts SET state='needs_reconciliation'")

@@ -147,7 +147,9 @@ def test_operator_main_binds_arguments_and_redacts_failures(
                 tmp_path / name
                 for name in ("refresh-config", "capture", "identities", "run", "ledger")
             )
-            assert args[5] == "c" * 40 and kwargs == dict(apply=True, max_attempts=2)
+            assert args[5] == "c" * 40 and kwargs == dict(
+                apply=True, max_attempts=2, expansion_collections=True
+            )
         elif module is publish_cli:
             assert args == (
                 tmp_path / "refresh-config",
@@ -169,6 +171,7 @@ def test_operator_main_binds_arguments_and_redacts_failures(
                 max_batches=3,
                 publish_online_store="gid://shopify/Publication/12",
                 game_scope="legacy",
+                expansion_collections=True,
             )
         if case == "failure":
             raise RuntimeError("private-error-must-not-be-printed")
@@ -201,7 +204,7 @@ def test_operator_main_binds_arguments_and_redacts_failures(
     monkeypatch.setattr(module, action, execute)
     argv = arguments(module, tmp_path)
     if module is import_cli:
-        argv += ["--apply", "--max-attempts", "2"]
+        argv += ["--apply", "--max-attempts", "2", "--expansion-collections"]
     elif module is publish_cli:
         argv += ["--apply", "--max-products", "2"]
     elif module is market_cli:
@@ -213,6 +216,7 @@ def test_operator_main_binds_arguments_and_redacts_failures(
             "3",
             "--publish-online-store",
             "gid://shopify/Publication/12",
+            "--expansion-collections",
         ]
     monkeypatch.setattr(sys, "argv", argv)
     assert module.main() == (0 if case == "success" else 1)

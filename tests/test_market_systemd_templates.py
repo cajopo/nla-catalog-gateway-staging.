@@ -14,6 +14,9 @@ def test_market_service_is_bounded_oneshot_and_restores_only_fallback_timer():
     assert "--max-attempts 100 --max-batches 50 --apply-drafts" in text
     assert "WorkingDirectory=@IMPORTER_PACKAGE@" in lines
     assert "Environment=PYTHONPATH=@IMPORTER_PACKAGE@/src" in lines
+    assert "Environment=NLA_EXPANSION_COLLECTIONS=" in lines
+    assert "--apply-drafts $NLA_EXPANSION_COLLECTIONS" in text
+    assert "${NLA_EXPANSION_COLLECTIONS}" not in text
     assert "--refresh-package @REFRESH_PACKAGE@" in text
     assert "--generator-sha @IMPORTER_CODE_SHA@" in text
     assert "--ledger /opt/nla-staging/importer-state/draft-attempts.sqlite3" in text
