@@ -1,0 +1,145 @@
+--- a/sections/main-product.liquid
++++ b/sections/main-product.liquid
+@@ -88,7 +88,13 @@
+     assign variant_images = product.images | where: 'attached_to_variant?', true | map: 'src'
+     assign catalog_only = false
+     if product.tags contains 'nla_catalog_only'
+-      assign catalog_only = true
++      capture catalog_ready
++        render 'nla-catalog-variant-ready', product: product, variant: product.selected_or_first_available_variant
++      endcapture
++      assign catalog_ready = catalog_ready | strip
++      if catalog_ready != 'true'
++        assign catalog_only = true
++      endif
+     endif
+   %}
+   <div class="page-width">
+@@ -482,11 +488,8 @@
+                 %}
+
+               {%- when 'variant_picker' -%}
+-                {% unless catalog_only %}
+-                  {% render 'product-variant-picker', product: product, block: block, product_form_id: product_form_id %}
+-                {% endunless %}
++                {% render 'product-variant-picker', product: product, block: block, product_form_id: product_form_id %}
+               {%- when 'buy_buttons' -%}
+-                {% unless catalog_only %}
+                   {%- render 'buy-buttons',
+                     block: block,
+                     product: product,
+@@ -494,7 +497,6 @@
+                     section_id: section.id,
+                     show_pickup_availability: true
+                   -%}
+-                {% endunless %}
+               {%- when 'rating' -%}
+                 {%- if product.metafields.reviews.rating.value != blank -%}
+                   <div class="rating-wrapper">
+--- a/snippets/buy-buttons.liquid
++++ b/snippets/buy-buttons.liquid
+@@ -13,13 +13,25 @@
+ <div {{ block.shopify_attributes }}>
+   {%- if product != blank -%}
+     {%- liquid
++      assign catalog_tagged = false
++      assign catalog_blocked = false
++      if product.tags contains 'nla_catalog_only'
++        assign catalog_tagged = true
++        capture catalog_ready
++          render 'nla-catalog-variant-ready', product: product, variant: product.selected_or_first_available_variant
++        endcapture
++        assign catalog_ready = catalog_ready | strip
++        if catalog_ready != 'true'
++          assign catalog_blocked = true
++        endif
++      endif
+       assign gift_card_recipient_feature_active = false
+       if block.settings.show_gift_card_recipient and product.gift_card?
+         assign gift_card_recipient_feature_active = true
+       endif
+
+       assign show_dynamic_checkout = false
+-      if block.settings.show_dynamic_checkout and gift_card_recipient_feature_active == false
++      if block.settings.show_dynamic_checkout and gift_card_recipient_feature_active == false and catalog_tagged == false
+         assign show_dynamic_checkout = true
+       endif
+     -%}
+@@ -55,7 +67,7 @@
+           type="hidden"
+           name="id"
+           value="{{ product.selected_or_first_available_variant.id }}"
+-          {% if product.selected_or_first_available_variant.available == false or quantity_rule_soldout %}
++          {% if product.selected_or_first_available_variant.available == false or quantity_rule_soldout or catalog_blocked %}
+             disabled
+           {% endif %}
+           class="product-variant-id"
+@@ -80,12 +92,12 @@
+             type="submit"
+             name="add"
+             class="product-form__submit button button--full-width {% if show_dynamic_checkout %}button--secondary{% else %}button--primary{% endif %}"
+-            {% if product.selected_or_first_available_variant.available == false or quantity_rule_soldout %}
++            {% if product.selected_or_first_available_variant.available == false or quantity_rule_soldout or catalog_blocked %}
+               disabled
+             {% endif %}
+           >
+             <span>
+-              {%- if product.selected_or_first_available_variant.available == false or quantity_rule_soldout -%}
++              {%- if product.selected_or_first_available_variant.available == false or quantity_rule_soldout or catalog_blocked -%}
+                 SOLD OUT
+               {%- else -%}
+                 {{ 'products.product.add_to_cart' | t }}
+--- a/snippets/card-product.liquid
++++ b/snippets/card-product.liquid
+@@ -39,8 +39,22 @@
+       assign ratio = 1
+     endif
+     assign catalog_only = false
++    assign catalog_tagged = false
+     if card_product.tags contains 'nla_catalog_only'
++      assign catalog_tagged = true
+       assign catalog_only = true
++      for catalog_variant in card_product.variants
++        capture catalog_ready
++          render 'nla-catalog-variant-ready', product: card_product, variant: catalog_variant
++        endcapture
++        assign catalog_ready = catalog_ready | strip
++        if catalog_ready == 'true'
++          if catalog_only or catalog_variant.price < catalog_price
++            assign catalog_price = catalog_variant.price
++          endif
++          assign catalog_only = false
++        endif
++      endfor
+     endif
+   -%}
+   <div class="card-wrapper product-card-wrapper underline-links-hover{% if catalog_only %} nla-card--catalog-only{% endif %}">
+@@ -209,6 +223,8 @@
+
+             {% if catalog_only %}
+               <span class="nla-card__unavailable">{{ 'products.product.sold_out' | t }}</span>
++            {% elsif catalog_tagged %}
++              <div class="price"><span class="price-item price-item--regular">{{ catalog_price | money }}</span></div>
+             {% else %}
+               {% render 'price', product: card_product, price_class: '', show_compare_at_price: true %}
+             {%- if card_product.quantity_price_breaks_configured? -%}
+@@ -391,7 +407,7 @@
+               </product-form>
+             {%- endif -%}
+           </div>
+-        {% elsif catalog_only == false and quick_add == 'bulk' %}
++        {% elsif catalog_only == false and catalog_tagged == false and quick_add == 'bulk' %}
+           {% if card_product.variants.size == 1 %}
+             <quick-add-bulk
+               data-min="{{ card_product.selected_or_first_available_variant.quantity_rule.min }}"
+--- a/assets/nla-wishlist-data.js
++++ b/assets/nla-wishlist-data.js
+@@ -365,7 +365,7 @@
+         }
+         if (!accepted) continue;
+         if (product.currency !== 'EUR') { warnings.add('currency_unsupported'); continue; }
+-        if (product.catalogOnly || product.requiresSellingPlan) continue;
++        if (product.requiresSellingPlan || (product.catalogOnly && !product.sourceId)) continue;
+         for (const variant of product.variants) {
+           const offer = offerFor(item, product, variant, item.productGid === anchorId);
+           offer.exact = item.productGid === anchorId && fits(offer, { ...row, exact: true });

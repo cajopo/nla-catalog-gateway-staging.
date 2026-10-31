@@ -1,0 +1,28 @@
+{
+  "sourceTheme": "gid://shopify/OnlineStoreTheme/210427412748",
+  "sourceRole": "MAIN",
+  "normalization": "UTF-8, LF, trailing EOF whitespace replaced with one newline",
+  "files": {
+    "sections/main-product.liquid": {
+      "beforeSha256": "e53203e023a67a445a86a74733207026b559b4a40ad08a8fbc5e12de849880b5",
+      "afterSha256": "ff80c70d59e2a9da83c011e6ec6f1e753d8a9a13f69847f702001f618cf40b21"
+    },
+    "snippets/buy-buttons.liquid": {
+      "beforeSha256": "fb1448f8ecddf3a9801c668eeb5ebc249ede5a15e5b9330a049b9278505c543c",
+      "afterSha256": "ff18ea0574ac76eb9c3ad0f8c6bfddfd149a93bc3f67a303b616fd24637a5f1b"
+    },
+    "snippets/card-product.liquid": {
+      "beforeSha256": "232eeaab03e0e0da15b652a8ba3e02c38309cf0feafc3d6d90fb13ef5098b4fe",
+      "afterSha256": "4695415a3f134347226dfca44032c3841f258467ba43add8009d36232abd4c5e"
+    },
+    "assets/nla-wishlist-data.js": {
+      "beforeSha256": "506dafee0ec1730d7ba05d65fab2092a57220db58f7fec00fd2643ebaa0c7fcf",
+      "afterSha256": "0b7befdd42c6ac3c51999a73a4e41b5b36221555b7c41c71ff312064ed6ad62b"
+    }
+  },
+  "newFile": "snippets/nla-catalog-variant-ready.liquid",
+  "newFileSha256": "6bb40d1ceed5882e310a9eb600f74e871c2ff73d5c9c88b787621e3b193f4aae",
+  "targetTheme": "gid://shopify/OnlineStoreTheme/210462933260",
+  "requiredTargetRole": "UNPUBLISHED",
+  "requireNewFileAbsent": true
+}
