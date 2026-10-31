@@ -1,8 +1,10 @@
 # #143 — Shopify stock replaces the legacy catalog-only presentation gate
 
 Branch `agent/catalog-handoff-theme-143`, base `12874fee8918d54de723004347f912070e105680`.
-This is a prepared theme correction. No Shopify writes, installation or publication
-have been performed. PowerTools synchronization remains a separate investigation.
+The correction is installed only on unpublished clone `210462933260`, with exact
+five-file readback verified on 31 October 2026 at 13:16 UTC. MAIN, publication,
+products and PowerTools were not modified. PowerTools synchronization remains a
+separate investigation.
 
 ## Observed problem and active consumers
 
@@ -85,10 +87,32 @@ match the manifest and the new snippet is absent. Independent review of function
 commit `00396b901e02f13f77a646d6dee83a9038c268d0` found no Blocker/High/Medium issue;
 the reviewer repeated the test and replayed actual Dawn JavaScript for PDP/modal
 selection, hidden variant ID, pending fetch, stale responses and price replacement.
+Independent browser fixture QA then passed 12 checks with eight screenshots using
+the captured Dawn scripts: PDP and quick-add blocked/ready/blocked transitions,
+correct hidden/FormData variant ID, blocked click/implicit submission, no tagged
+accelerated/bulk bypass and unchanged untagged behavior. Zero JavaScript errors,
+external requests or cart POSTs were observed. This is a controlled browser fixture,
+not proof of a completed PowerTools transaction or live stock arrival.
+
 Private reads, validator reports and receipts are under
-`output/repair-audit-20261031/`. Browser acceptance remains a separate gate and
-fresh clone role/checksum verification must be repeated immediately before writing.
-Publication belongs to the owner.
+`output/repair-audit-20261031/`. Browser receipt SHA-256:
+`32c388d992b5eac5e8573e62178606ef0f5923bbdd01009a0c025664d8c9d57a`.
+Publication belongs to the owner; actual clone preview acceptance is tracked separately.
+
+## Clone installation — 31 October 2026
+
+A fresh API read at 13:15:36 UTC reconfirmed the exact clone as UNPUBLISHED,
+all four before hashes and the new snippet's absence. Exact original API bodies
+were saved before the write. One `themeFilesUpsert` request uploaded exactly the
+five approved files: five successful results, no user errors and no async job.
+Fresh readback at 13:16:10 UTC verified all five after hashes and UNPUBLISHED.
+No write retry, publication, MAIN or commercial-data mutation occurred.
+
+Private evidence directory:
+`output/repair-audit-20261031/install/live-20261031T131534430Z/`.
+It contains the exact backup, request intent, upload response, rollback payloads
+and readback. `verified.json` SHA-256:
+`01a61309b35580724505c2cd3ae88cbfc2a39d99a06f2badb9295908f6e85caf`.
 
 ## Install/rollback contract
 
