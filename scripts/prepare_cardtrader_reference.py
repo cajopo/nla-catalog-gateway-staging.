@@ -19,6 +19,7 @@ from nla_catalog_gateway.canonical_reference_extension import build_extended_ref
 from nla_catalog_gateway.card_metadata import CardMetadataV1
 from nla_catalog_gateway.cardtrader_candidates import GAMES
 from nla_catalog_gateway.cardtrader_scope import game_ids_for_scope
+from nla_catalog_gateway.expansion_collections import expansion_collection_spec
 from nla_catalog_gateway.taxonomy import Game
 from scripts.compare_cardtrader_catalog import CATEGORIES, compare_projection
 
@@ -118,6 +119,23 @@ def prepare(capture, projection, projection_sha, parent, parent_sha, output, gen
                 family = CATEGORIES[row["category_id"]][2]
                 if family not in ("single", "sealed") or family != decision["productFamily"]:
                     raise ValueError("source_family_mismatch")
+                if game in (Game.LORCANA, Game.RIFTBOUND) and (
+                    family == "sealed" or row["category_id"] in (214, 258)
+                ):
+                    # Collection membership follows the verified expansion row,
+                    # never a product title or a token/oversize category.
+                    spec = expansion_collection_spec(
+                        dict(
+                            game=game.value,
+                            sourceExpansionId=expansion_id,
+                            sourceExpansionName=expansion["name"],
+                        )
+                    )
+                    binding.update(
+                        sourceExpansionId=expansion_id,
+                        sourceExpansionName=spec["sourceExpansionName"],
+                        collectionTags=spec["tags"],
+                    )
                 image = urlsplit(row["image_url"])
                 if (
                     image.scheme != "https"

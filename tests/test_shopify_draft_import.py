@@ -68,6 +68,8 @@ class FakeShopify:
                 },
             }
         if query == CREATE_DRAFT:
+            if "tags" in variables["product"]:
+                self.product["tags"] = deepcopy(variables["product"]["tags"])
             return {"productCreate": {"product": deepcopy(self.product), "userErrors": errors}}
         if query == SET_IDENTITIES:
             self.product["syncProductId"] = {"type": "number_integer", "value": "42"}

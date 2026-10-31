@@ -11,6 +11,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from urllib.parse import urlsplit
 
+from nla_catalog_gateway.expansion_collections import expansion_collection_spec
+
 ACCESS_QUERY = """
 query NlaDraftImportAccess {
   shop { myshopifyDomain }
@@ -36,7 +38,7 @@ mutation NlaSetNewDraftIdentities($metafields: [MetafieldsSetInput!]!) {
 VERIFY_DRAFT = """
 query NlaVerifyNewDraft($id: ID!) {
   product(id: $id) {
-    id handle productType status totalInventory publishedAt
+    id handle productType status totalInventory publishedAt tags
     nlaGame: metafield(namespace: "nla", key: "game") { type value }
     sourceRecordType: metafield(namespace: "nla", key: "source_record_type") { type value }
     syncProductId: metafield(namespace: "sync", key: "productid") { type value }
@@ -92,6 +94,15 @@ def verify_sealed_classification(product: dict, expected: dict) -> None:
         for alias, field in zip(("nlaGame", "sourceRecordType"), fields, strict=True)
     ):
         raise ValueError("sealed_classification_mismatch")
+
+
+def verify_collection_tags(product: dict, expected: dict) -> None:
+    """Read back initial tags only when they were part of this creation request."""
+    if "tags" in expected and (
+        not isinstance(product.get("tags"), list)
+        or sorted(product["tags"]) != sorted(expected["tags"])
+    ):
+        raise ValueError("initial_collection_tags_mismatch")
 
 
 def _safe_draft(product: dict, handle: str) -> str:
@@ -193,6 +204,7 @@ def inspect_draft_attempt(
         ):
             return {**result, "status": "identity_fields_require_review"}
         verify_sealed_classification(product, json.loads(encoded)["variables"]["product"])
+        verify_collection_tags(product, json.loads(encoded)["variables"]["product"])
         return {**result, "status": "recorded_draft_matches", "published": False}
     except Exception:
         return {**result, "status": "inspection_unconfirmed"}
@@ -211,6 +223,9 @@ def create_draft_once(
     verify_missing: Callable[[], bool],
     enabled: bool = False,
     product_family: str = "single",
+    source_expansion_id: int | None = None,
+    source_expansion_name: str | None = None,
+    collection_tags: list[str] | None = None,
 ) -> dict:
     """Create only after the caller's reviewed current-identity check succeeds.
 
@@ -275,7 +290,22 @@ def create_draft_once(
                 for key, value in (("game", game), ("source_record_type", "sealed"))
             ],
         )
-    encoded = json.dumps({"blueprintId": blueprint_id, "variables": variables}, sort_keys=True)
+    request = {"blueprintId": blueprint_id, "variables": variables}
+    if any(v is not None for v in (source_expansion_id, source_expansion_name, collection_tags)):
+        spec = expansion_collection_spec(
+            dict(
+                game=game,
+                sourceExpansionId=source_expansion_id,
+                sourceExpansionName=source_expansion_name,
+                collectionTags=collection_tags,
+            )
+        )
+        variables["product"]["tags"] = spec["tags"]
+        request.update(
+            sourceExpansionId=source_expansion_id,
+            sourceExpansionName=source_expansion_name,
+        )
+    encoded = json.dumps(request, sort_keys=True)
     digest = hashlib.sha256(encoded.encode()).hexdigest()
     # SQLite commits the reservation before the first network write. A crash at
     # any later point leaves a reservation, never permission to send again.
@@ -352,6 +382,7 @@ def create_draft_once(
                     raise ValueError("initial_identities_not_confirmed")
             variant = _initial_variant(verified)
             verify_sealed_classification(verified, variables["product"])
+            verify_collection_tags(verified, variables["product"])
             if not variant["inventoryItem"]["tracked"]:
                 initialized = graphql(
                     INITIALIZE_VARIANT,

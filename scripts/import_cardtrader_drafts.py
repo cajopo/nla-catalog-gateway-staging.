@@ -22,6 +22,7 @@ from nla_catalog_gateway.canonical_names import (
     load_canonical_names,
     load_canonical_names_manifest,
 )
+from nla_catalog_gateway.expansion_collections import reconcile_expansion_collections
 from nla_catalog_gateway.shopify_capture_http import CaptureHttpError, ShopifyCaptureHttp
 from nla_catalog_gateway.shopify_draft_import import create_draft_once
 from scripts import activate_staging_refresh as activation
@@ -51,6 +52,19 @@ def failure_reason(error):
         "invalid_import_identity",
         "invalid_import_product",
         "invalid_import_image",
+        "invalid_expansion_collection_identity",
+        "invalid_expansion_collection_handle",
+        "invalid_expansion_collection_tags",
+        "conflicting_expansion_collection_identity",
+        "conflicting_expansion_collection_handle",
+        "expansion_collection_source_drift",
+        "duplicate_expansion_collection_identity",
+        "expansion_collection_gid_changed",
+        "expansion_collection_missing_inspect",
+        "expansion_collection_handle_occupied",
+        "expansion_collection_create_rejected",
+        "expansion_collection_readback_mismatch",
+        "expansion_collection_handle_changed",
     }
     if isinstance(error, CaptureHttpError):
         return "shopify_request_failed"
@@ -100,9 +114,15 @@ def run_locked(
     *,
     apply=False,
     max_attempts=1,
+    expansion_collections=False,
 ):
     """Caller holds refresh.pipeline_lock. No automatic retry or publication."""
-    if type(apply) is not bool or type(max_attempts) is not int or not 1 <= max_attempts <= 100:
+    if (
+        type(apply) is not bool
+        or type(expansion_collections) is not bool
+        or type(max_attempts) is not int
+        or not 1 <= max_attempts <= 100
+    ):
         raise ValueError("invalid_batch_controls")
     if re.fullmatch(r"[0-9a-f]{40}", generator_sha) is None:
         raise ValueError("invalid_generator_sha")
@@ -228,6 +248,21 @@ def run_locked(
 
     identifier = None
     try:
+        # Reconcile before product creation: a crash after productCreate cannot
+        # strand a new release whose existing identity is skipped next cycle.
+        specs = [candidate for candidate in selected if "collectionTags" in candidate]
+        if expansion_collections and specs:
+            if any(candidate["creationApproved"] is not False for candidate in specs):
+                raise ValueError("unexpected_preparation_approval")
+            result["expansionCollections"] = dict(
+                status="started_inspect_journal", candidates=len(specs)
+            )
+            result["expansionCollections"] = reconcile_expansion_collections(
+                graphql=client.graphql,
+                specs=specs,
+                state_dir=ledger.parent / "expansion-collections",
+                enabled=True,
+            )
         for candidate in selected:
             identifier = None
             identifier = int(candidate["cardmarketId"])
@@ -240,6 +275,9 @@ def run_locked(
                 cardmarket_id=identifier,
                 game=candidate["game"],
                 product_family=candidate.get("productFamily", "single"),
+                source_expansion_id=candidate.get("sourceExpansionId"),
+                source_expansion_name=candidate.get("sourceExpansionName"),
+                collection_tags=candidate.get("collectionTags"),
                 title=candidate["title"],
                 image_url=candidate["imageUrl"],
                 graphql=client.graphql,
@@ -283,6 +321,7 @@ def main():
     parser.add_argument("--generator-sha", required=True)
     parser.add_argument("--max-attempts", type=int, default=1)
     parser.add_argument("--apply", action="store_true")
+    parser.add_argument("--expansion-collections", action="store_true")
     args = parser.parse_args()
     try:
         if not __debug__ or sys.platform != "linux" or os.geteuid() != 0:
@@ -307,6 +346,7 @@ def main():
                 client,
                 apply=args.apply,
                 max_attempts=args.max_attempts,
+                expansion_collections=args.expansion_collections,
             )
         print(json.dumps(result))
         return 0 if result["status"] in ("preview", "batch_complete") else 1

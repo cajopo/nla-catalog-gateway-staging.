@@ -324,6 +324,7 @@ def cycle(
     max_batches=1,
     publish_online_store=None,
     game_scope="legacy",
+    expansion_collections=False,
     pause=time.sleep,
 ):
     """Caller holds state's pipeline lock; individual stages use refresh's lock.
@@ -334,6 +335,7 @@ def cycle(
     game_ids_for_scope(game_scope)
     if (
         type(apply_drafts) is not bool
+        or type(expansion_collections) is not bool
         or type(max_attempts) is not int
         or not 1 <= max_attempts <= 100
         or type(max_batches) is not int
@@ -390,6 +392,7 @@ def cycle(
         remaining=None,
         eligibleExhausted=False,
         publicationEnabled=publish_online_store is not None,
+        expansionCollectionsEnabled=expansion_collections,
     )
     try:
         source = capture_catalog(cardtrader, run / "source", game_scope=game_scope)
@@ -431,6 +434,7 @@ def cycle(
                     shopify,
                     apply=apply_drafts,
                     max_attempts=max_attempts,
+                    expansion_collections=expansion_collections,
                 )
             result["batchStatus"] = batch["status"]
             result["attempts"].extend(batch["attempts"])
@@ -573,6 +577,7 @@ def main():
     parser.add_argument("--apply-drafts", action="store_true")
     parser.add_argument("--publish-online-store", default=None)
     parser.add_argument("--game-scope", choices=GAME_SCOPES, default="legacy")
+    parser.add_argument("--expansion-collections", action="store_true")
     args = parser.parse_args()
     try:
         if not __debug__ or sys.platform != "linux" or os.geteuid() != 0:
@@ -602,6 +607,7 @@ def main():
                 max_batches=args.max_batches,
                 publish_online_store=args.publish_online_store,
                 game_scope=args.game_scope,
+                expansion_collections=args.expansion_collections,
             )
         print(json.dumps(result))
         return 0

@@ -580,6 +580,26 @@ the filenames without `.in`, then validate with the VPS's `systemd-analyze verif
 and `systemd-analyze calendar '*-*-* 02,14:00:00 UTC'` before enabling anything.
 No template rendering or installation is performed by this change.
 
+Issue #140 adds an optional `--expansion-collections` control to the cycle and
+batch commands. The unit template keeps it disabled through the empty
+`NLA_EXPANSION_COLLECTIONS` environment variable. After deploying the reviewed
+package and retaining the current unit for rollback, enable it with a unit
+drop-in containing `[Service]` and
+`Environment=NLA_EXPANSION_COLLECTIONS=--expansion-collections`. Preserve the
+installed `--game-scope six-games`, publication channel, timer and package pins;
+the generic template does not supply those deployment-specific arguments.
+Validate the complete rendered unit with `systemd-analyze verify`, then use
+`systemctl daemon-reload`; do not restart an in-flight market cycle.
+The next cycle ensures verified Riftbound/Lorcana expansion collections before
+creating their first new products. Collections stay unpublished for owner review.
+Rollback removes this drop-in or restores the retained unit and reloads systemd;
+retain `/opt/nla-staging/importer-state/expansion-collections/collections.sqlite3`
+and remote collections, including uncertain intents, to prevent duplicate retries.
+An older deployed unit must first gain the template's empty environment variable
+and final `$NLA_EXPANSION_COLLECTIONS` argument for the drop-in to take effect.
+The bare `$NAME` form yields zero arguments when empty, as specified by the
+[systemd v255 command-line contract](https://raw.githubusercontent.com/systemd/systemd/v255/man/systemd.service.xml).
+
 The fixed existing paths are `/usr/bin/python3`,
 `/opt/nla-staging/operator/catalog-refresh.json`,
 `/opt/nla-staging/importer-state/draft-attempts.sqlite3` and

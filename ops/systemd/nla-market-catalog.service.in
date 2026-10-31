@@ -11,6 +11,8 @@ UMask=0077
 WorkingDirectory=@IMPORTER_PACKAGE@
 Environment=PYTHONPATH=@IMPORTER_PACKAGE@/src
 Environment=PYTHONNOUSERSITE=1
+# Empty by default; an approved drop-in may set this to --expansion-collections.
+Environment=NLA_EXPANSION_COLLECTIONS=
 ExecStartPre=/usr/bin/systemctl stop nla-catalog-refresh.timer
 ExecStart=/usr/bin/python3 -m scripts.refresh_market_catalog \
     --state /opt/nla-staging/importer-state \
@@ -19,6 +21,6 @@ ExecStart=/usr/bin/python3 -m scripts.refresh_market_catalog \
     --ledger /opt/nla-staging/importer-state/draft-attempts.sqlite3 \
     --cardtrader-credentials /opt/nla-staging/config/cardtrader-api-credentials.json \
     --generator-sha @IMPORTER_CODE_SHA@ \
-    --max-attempts 100 --max-batches 50 --apply-drafts
+    --max-attempts 100 --max-batches 50 --apply-drafts $NLA_EXPANSION_COLLECTIONS
 ExecStopPost=/usr/bin/systemctl start nla-catalog-refresh.timer
 TimeoutStartSec=23h

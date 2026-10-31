@@ -83,7 +83,11 @@ def test_sealed_capture_import_publication_to_real_runtime(
     assert (
         request["productType"] == "" and request["title"] == source.rows[100 + game_id][0]["name"]
     )
-    assert set(request) == {"title", "productType", "handle", "status", "metafields"}
+    assert set(request) == {"title", "productType", "handle", "status", "metafields"} | (
+        {"tags"} if game_id in (18, 22) else set()
+    )
+    if game_id in (18, 22):
+        assert request["tags"] == ["Lorcana" if game_id == 18 else "Riftbound", "Synthetic Set"]
     publisher = FakePublication(api.product)
     publisher.product.update(productType="", title=request["title"])
     assert publish(args["ledger"], publisher)["published"] == 1
