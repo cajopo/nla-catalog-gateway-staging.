@@ -1,0 +1,26 @@
+{% doc %}
+  Returns true only for an identified, priced Shopify variant with physical stock.
+  @param {product} product - The owning Shopify product.
+  @param {variant} variant - A variant from that product.
+{% enddoc %}
+{%- liquid
+  assign ready = false
+  assign sync_id = product.metafields.sync.productid
+  assign power_id = product.metafields.powertools.id
+  assign sync_value = sync_id.value | append: ''
+  assign power_value = power_id.value | append: ''
+  if product.id > 0 and variant.id > 0
+    if sync_id.type == 'number_integer' and power_id.type == 'single_line_text_field'
+      if sync_id.value > 0 and sync_value == power_value
+        if variant.available and variant.inventory_management != blank
+          if variant.inventory_quantity > 0 and variant.price > 0
+            if variant.inventory_policy == 'deny' or variant.inventory_policy == 'continue'
+              assign ready = true
+            endif
+          endif
+        endif
+      endif
+    endif
+  endif
+  echo ready
+-%}
