@@ -146,9 +146,13 @@ def prepare(capture, projection, projection_sha, parent, parent_sha, output, gen
                 ):
                     raise ValueError("invalid_source_image")
                 if family == "sealed":
-                    # Sealed uses its commercial source title, not a card-name
-                    # mapping. A card reference with the same ID is a conflict.
-                    if str(ids[0]) in existing_ids:
+                    # Canonical names have no family field. Same-game historical
+                    # metadata neither overrides verified sealed source data nor
+                    # proves that a Shopify product exists. Preserve it unchanged.
+                    if str(ids[0]) in ambiguous_ids:
+                        raise ValueError("ambiguous_canonical_identity")
+                    previous = existing_ids.get(str(ids[0]))
+                    if previous is not None and previous.game != game:
                         raise ValueError("canonical_identity_conflict")
                     title = row["name"]
                     if type(title) is not str or not title.strip() or len(title) > 255:
